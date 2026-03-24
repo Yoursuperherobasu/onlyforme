@@ -28,6 +28,7 @@ from agentcore.api.utils import (
     strip_sensitive_values_from_agent_data,
 )
 from agentcore.api.v1_schemas import AgentListCreate
+from agentcore.helpers.agent import generate_unique_agent_name
 from agentcore.helpers.user import get_user_by_agent_id_or_endpoint_name
 from agentcore.initial_setup.constants import STARTER_FOLDER_NAME
 from agentcore.logging import logger
@@ -52,6 +53,7 @@ from agentcore.services.database.models.agent_edit_lock.model import AgentEditLo
 from agentcore.services.database.models.user_department_membership.model import UserDepartmentMembership
 from agentcore.services.database.models.user_organization_membership.model import UserOrganizationMembership
 from agentcore.services.database.models.folder.model import Folder
+from agentcore.services.database.models.user.model import User
 from agentcore.services.auth.permissions import normalize_role
 from agentcore.services.database.models.tag.model import AgentTag, Tag
 from agentcore.api.tags import get_tags_for_agent, sync_agent_tags, _get_user_org_id
@@ -137,9 +139,10 @@ async def _get_scope_memberships(session: AsyncSession, user_id: UUID) -> tuple[
 async def _build_agent_visibility_statement(session: AsyncSession, current_user: CurrentActiveUser):
     own_condition = Agent.user_id == current_user.id
     role = normalize_role(getattr(current_user, "role", None))
+    active_condition = Agent.deleted_at.is_(None)
 
     if role == "root":
-        return select(Agent)
+        return select(Agent).where(active_condition)
 
     if role == "super_admin":
         org_ids, _ = await _get_scope_memberships(session, current_user.id)
@@ -151,13 +154,14 @@ async def _build_agent_visibility_statement(session: AsyncSession, current_user:
                 )
             )
             return select(Agent).where(
+                active_condition,
                 or_(
                     own_condition,
                     Agent.org_id.in_(list(org_ids)),
                     Agent.user_id.in_(org_user_subquery),
                 )
             )
-        return select(Agent).where(own_condition)
+        return select(Agent).where(active_condition, own_condition)
 
     if role == "department_admin":
         _, dept_ids = await _get_scope_memberships(session, current_user.id)
@@ -169,15 +173,16 @@ async def _build_agent_visibility_statement(session: AsyncSession, current_user:
                 )
             )
             return select(Agent).where(
+                active_condition,
                 or_(
                     own_condition,
                     Agent.dept_id.in_(list(dept_ids)),
                     Agent.user_id.in_(dept_user_subquery),
                 )
             )
-        return select(Agent).where(own_condition)
+        return select(Agent).where(active_condition, own_condition)
 
-    return select(Agent).where(own_condition)
+    return select(Agent).where(active_condition, own_condition)
 
 
 async def _agent_has_deployed_versions(session: AsyncSession, agent_id: UUID) -> tuple[bool, list[str]]:
@@ -345,13 +350,34 @@ async def create_agent(
     agent: AgentCreate,
     current_user: CurrentActiveUser,
 ):
+    candidate_agent = agent.model_copy(deep=True)
+    max_unique_name_attempts = 5
     try:
-        db_agent = await _new_agent(session=session, agent=agent, user_id=current_user.id)
-        await session.commit()
-        await session.refresh(db_agent)
+        for attempt in range(max_unique_name_attempts):
+            candidate_agent.name = await generate_unique_agent_name(
+                candidate_agent.name,
+                current_user.id,
+                session,
+            )
+            db_agent = await _new_agent(
+                session=session,
+                agent=candidate_agent,
+                user_id=current_user.id,
+            )
+            try:
+                await session.commit()
+                await session.refresh(db_agent)
+                break
+            except IntegrityError as e:
+                await session.rollback()
+                if "unique_agent_name" in str(e) and attempt < max_unique_name_attempts - 1:
+                    continue
+                raise
+        else:
+            raise HTTPException(status_code=409, detail="Unable to generate a unique agent name.")
 
         # ── Sync normalized tags ──
-        tag_names = agent.tags or []
+        tag_names = candidate_agent.tags or []
         if tag_names:
             org_id = await _get_user_org_id(session, current_user.id)
             await sync_agent_tags(session, db_agent.id, tag_names, org_id, current_user.id)
@@ -360,7 +386,12 @@ async def create_agent(
         await _save_agent_to_fs(db_agent)
 
     except Exception as e:
-        logger.exception("Failed to create agent {}", getattr(agent, "id", None) or agent.name)
+        logger.exception(
+            "Failed to create agent {}",
+            getattr(candidate_agent, "id", None) or candidate_agent.name,
+        )
+        if "unique_agent_name" in str(e):
+            raise HTTPException(status_code=409, detail="Unable to generate a unique agent name.") from e
         if "UNIQUE constraint failed" in str(e):
             # Get the name of the column that failed
             columns = str(e).split("UNIQUE constraint failed: ")[1].split(".")[1].split("\n")[0]
@@ -448,8 +479,33 @@ async def read_agents(
             if remove_example_agents and starter_project_id:
                 agents = [agent for agent in agents if agent.project_id != starter_project_id]
             if header_agents:
+                creator_ids = list({agent.user_id for agent in agents if agent.user_id})
+                creator_lookup: dict[UUID, tuple[str | None, str | None]] = {}
+                if creator_ids:
+                    creator_rows = (
+                        await session.exec(
+                            select(User.id, User.username, User.profile_image).where(User.id.in_(creator_ids))
+                        )
+                    ).all()
+                    creator_lookup = {
+                        row[0]: (row[1], row[2])
+                        for row in creator_rows
+                    }
+
                 # Convert to AgentHeader objects and compress the response
-                agent_headers = [AgentHeader.model_validate(agent, from_attributes=True) for agent in agents]
+                agent_headers = []
+                for agent in agents:
+                    creator_name, creator_image = creator_lookup.get(agent.user_id, (None, None))
+                    header = AgentHeader.model_validate(agent, from_attributes=True)
+                    agent_headers.append(
+                        header.model_copy(
+                            update={
+                                "created_by": creator_name,
+                                "created_by_id": agent.user_id,
+                                "profile_image": creator_image,
+                            }
+                        )
+                    )
                 return compress_response(agent_headers)
 
             # Compress the full agents response

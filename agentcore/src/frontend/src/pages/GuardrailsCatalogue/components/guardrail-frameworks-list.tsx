@@ -23,18 +23,14 @@ export default function GuardrailFrameworksList({
   return (
     <div className="flex h-full w-full flex-col overflow-hidden">
       {/* Header Section */}
-      <div className="relative flex flex-shrink-0 items-center justify-between border-b border-border/50 px-4 py-6 sm:px-6 md:px-8 md:py-8">
-        {/* Decorative line with red accent */}
-        <div className="absolute bottom-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-red-500/30 to-transparent" />
-        
+      <div className="flex flex-shrink-0 items-center justify-between border-b px-4 py-4 sm:px-6 md:px-8 md:py-5">
         <div>
-          <div className="mb-3 flex items-center gap-4">
-            
-            <h1 className="text-2xl font-bold text-foreground md:text-3xl">
+          <div className="mb-2 flex items-center gap-4">
+            <h1 className="text-2xl font-semibold text-foreground">
               Guardrails Catalogue
             </h1>
           </div>
-          <p className="text-sm text-muted-foreground/90">
+          <p className="text-sm text-muted-foreground">
             Choose a security framework to configure and manage AI safety policies
           </p>
         </div>
@@ -64,18 +60,15 @@ export default function GuardrailFrameworksList({
             {frameworks.map((framework) => (
               <div
                 key={framework.id}
-                className="group relative h-full overflow-hidden rounded-2xl border border-border/60 bg-card transition-all duration-300 hover:border-red-500/40 hover:shadow-lg hover:shadow-red-500/10"
+                className="group relative h-full overflow-hidden rounded-2xl border border-border/60 bg-card transition-all duration-300 hover:border-border hover:shadow-md"
               >
-                {/* Top accent bar on hover - red gradient */}
-                <div className="absolute top-0 left-0 right-0 h-1.5 bg-gradient-to-r from-red-500 via-red-400 to-red-500/60 opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
-
                 {/* Content */}
                 <div className="relative flex flex-col justify-between h-full p-6">
                   {/* Icon and Header */}
                   <div>
                     {framework.icon && (
-                      <div className="mb-4 inline-flex h-14 w-14 items-center justify-center rounded-xl bg-red-500/10 p-3 ring-1 ring-red-500/20 transition-all duration-300 group-hover:bg-red-500/15 group-hover:ring-red-500/40 group-hover:shadow-lg group-hover:shadow-red-500/20">
-                        <framework.icon className="h-full w-full text-red-600 dark:text-red-400" />
+                      <div className="mb-4 inline-flex h-14 w-14 items-center justify-center rounded-xl bg-muted/60 p-3 ring-1 ring-border transition-colors duration-300 group-hover:bg-muted">
+                        <framework.icon className="h-full w-full text-foreground" />
                       </div>
                     )}
 
@@ -101,14 +94,11 @@ export default function GuardrailFrameworksList({
                   {/* Action Button */}
                   <Button
                     onClick={() => onSelectFramework(framework)}
-                    className="relative mt-4 w-full gap-2 overflow-hidden font-semibold transition-all duration-300 hover:shadow-lg hover:shadow-red-500/20 active:scale-95 hover:border-red-500/50"
+                    className="relative mt-4 w-full gap-2 overflow-hidden font-semibold transition-all duration-300 active:scale-95"
                   >
                     <span>View Policies</span>
                     <ArrowRight className="h-4 w-4 transition-transform duration-300 group-hover:translate-x-1" />
                   </Button>
-
-                  {/* Hover indicator line at bottom - red accent */}
-                  <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-gradient-to-r from-transparent via-red-500/40 to-transparent opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
                 </div>
               </div>
             ))}

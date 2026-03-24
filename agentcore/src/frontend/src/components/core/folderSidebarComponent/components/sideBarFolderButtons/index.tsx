@@ -686,7 +686,7 @@ const SideBarFoldersButtonsComponent = ({
                 name="BookOpen"
                 className="h-4 w-4"
               />
-              {t("Knowledge Hub")}
+              {t("Knowledge Base")}
             </SidebarMenuButton>
           </SidebarMenuItem>
         )}
@@ -721,7 +721,7 @@ const SideBarFoldersButtonsComponent = ({
                 name="Tag"
                 className="h-4 w-4"
               />
-              {t("Release Management")}
+              {isRootAdmin ? t("Release Management") : t("Release Versions")}
             </SidebarMenuButton>
           </SidebarMenuItem>
         )}

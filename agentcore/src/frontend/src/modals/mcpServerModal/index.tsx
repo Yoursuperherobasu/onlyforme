@@ -38,7 +38,6 @@ import type {
 } from "@/types/mcp";
 import type { MCPServerType } from "@/types/mcp";
 import { extractMcpServersFromJson } from "@/utils/mcpUtils";
-import { parseString } from "@/utils/stringManipulation";
 import { cn } from "@/utils/utils";
 
 type VisibilityOptions = {
@@ -106,7 +105,7 @@ export default function AddMcpServerModal({
   const [sseHeaders, setSseHeaders] = useState<any>([]);
   const [sseDescription, setSseDescription] = useState(initialData?.description || "");
   const activeNameInput = type === "STDIO" ? stdioName : type === "SSE" ? sseName : "";
-  const normalizedActiveName = parseString(activeNameInput, ["snake_case", "no_blank", "lowercase"]).slice(0, MAX_MCP_SERVER_NAME_LENGTH);
+  const normalizedActiveName = activeNameInput.trim().slice(0, MAX_MCP_SERVER_NAME_LENGTH);
   const nameAvailability = useNameAvailability({
     entity: "mcp",
     name: normalizedActiveName,
@@ -185,6 +184,10 @@ export default function AddMcpServerModal({
     return JSON.stringify(payload);
   }
 
+  function formatServerName(value: string) {
+    return value.trim().slice(0, MAX_MCP_SERVER_NAME_LENGTH);
+  }
+
   function buildTenancyPayload() {
     const isPublic = visibilityScope !== "private";
     const resolvedPrivateDeptId = canMultiDept
@@ -246,7 +249,7 @@ export default function AddMcpServerModal({
 
     if (type === "STDIO") {
       if (!stdioName.trim() || !stdioCommand.trim()) return setError("Name and command are required.");
-      const serverName = parseString(stdioName, ["snake_case", "no_blank", "lowercase"]).slice(0, MAX_MCP_SERVER_NAME_LENGTH);
+      const serverName = formatServerName(stdioName);
       try {
         if (requiresTest) {
           const payload = buildTestPayload();
@@ -310,7 +313,7 @@ export default function AddMcpServerModal({
 
     if (type === "SSE") {
       if (!sseName.trim() || !sseUrl.trim()) return setError("Name and URL are required.");
-      const serverName = parseString(sseName, ["snake_case", "no_blank", "lowercase"]).slice(0, MAX_MCP_SERVER_NAME_LENGTH);
+      const serverName = formatServerName(sseName);
       try {
         if (requiresTest) {
           const payload = buildTestPayload();
@@ -382,7 +385,7 @@ export default function AddMcpServerModal({
       }
       try {
         for (const srv of servers) {
-          const serverName = parseString(srv.name, ["snake_case", "no_blank", "lowercase"]).slice(0, MAX_MCP_SERVER_NAME_LENGTH);
+          const serverName = formatServerName(srv.name);
           const mode: "sse" | "stdio" = srv.command ? "stdio" : "sse";
           const testPayload =
             mode === "stdio"

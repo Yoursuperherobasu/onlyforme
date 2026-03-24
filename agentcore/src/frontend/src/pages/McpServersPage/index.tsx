@@ -448,7 +448,12 @@ export default function MCPServersPage() {
                             </div>
                             <div className={server.is_active ? "" : "opacity-50"}>
                               <div className="flex items-center gap-2">
-                                <div className="font-semibold">{server.server_name}</div>
+                                <div
+                                  className="max-w-[260px] line-clamp-2 font-semibold leading-6"
+                                  title={server.server_name}
+                                >
+                                  {server.server_name}
+                                </div>
                                 {server.approval_status !== "approved" && (
                                   <span className={`inline-flex rounded-full px-2 py-0.5 text-xxs font-medium ${approvalBadge.cls}`}>
                                     {approvalBadge.label}
@@ -456,7 +461,10 @@ export default function MCPServersPage() {
                                 )}
                               </div>
                               {server.description && (
-                                <div className="mt-0.5 text-xs text-muted-foreground line-clamp-1">
+                                <div
+                                  className="mt-0.5 text-xs text-muted-foreground line-clamp-1"
+                                  title={server.description}
+                                >
                                   {server.description}
                                 </div>
                               )}
@@ -496,7 +504,7 @@ export default function MCPServersPage() {
                           <td className="px-6 py-4 text-sm text-muted-foreground">
                             <div
                               className="max-w-[170px] truncate"
-                              title={server.created_by || "-"}
+                              title={server.created_by_email || server.created_by || "-"}
                             >
                               {server.created_by || "-"}
                             </div>
@@ -504,7 +512,10 @@ export default function MCPServersPage() {
                         ) : null}
                         {isSuperAdmin ? (
                           <td className="px-6 py-4 text-sm text-muted-foreground">
-                            <span className="text-sm text-muted-foreground">
+                            <span
+                              className="inline-block max-w-[160px] truncate text-sm text-muted-foreground"
+                              title={getDepartmentScopeLabel(server)}
+                            >
                               {getDepartmentScopeLabel(server)}
                             </span>
                           </td>

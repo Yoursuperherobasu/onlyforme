@@ -28,6 +28,7 @@ export type GetTransitivePackagesParams = {
   include_history?: boolean;
   include_full_graph?: boolean;
   service?: string;
+  regionCode?: string | null;
 };
 
 export const useGetTransitivePackages: useQueryFunctionType<
@@ -39,6 +40,7 @@ export const useGetTransitivePackages: useQueryFunctionType<
   const includeHistory = params?.include_history ?? false;
   const includeFullGraph = params?.include_full_graph ?? false;
   const service = params?.service ?? "all";
+  const regionCode = params?.regionCode ?? null;
 
   const getTransitivePackagesFn = async (): Promise<TransitivePackage[]> => {
     if (!isAuthenticated) return [];
@@ -48,12 +50,13 @@ export const useGetTransitivePackages: useQueryFunctionType<
         include_full_graph: includeFullGraph,
         service,
       },
+      headers: regionCode ? { "X-Region-Code": regionCode } : undefined,
     });
     return res.data;
   };
 
   const queryResult: UseQueryResult<TransitivePackage[], any> = query(
-    ["useGetTransitivePackages", includeHistory, includeFullGraph, service],
+    ["useGetTransitivePackages", includeHistory, includeFullGraph, service, regionCode ?? "local"],
     getTransitivePackagesFn,
     {
       refetchOnWindowFocus: false,

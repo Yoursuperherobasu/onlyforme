@@ -466,7 +466,10 @@ async def read_project(
 
     try:
         if params and params.page and params.size:
-            stmt = select(Agent).where(Agent.project_id == project_id)
+            stmt = select(Agent).where(
+                Agent.project_id == project_id,
+                Agent.deleted_at.is_(None),
+            )
             current_role = normalize_role(getattr(current_user, "role", None))
             if current_role in {"developer", "business_user"}:
                 stmt = stmt.where(Agent.user_id == current_user.id)
@@ -501,21 +504,21 @@ async def read_project(
         raise HTTPException(status_code=500, detail=str(e)) from e
 
     current_role = normalize_role(getattr(current_user, "role", None))
-    agents_in_scope = project.agents
+    agents_in_scope = [agent for agent in project.agents if agent.deleted_at is None]
     if current_role in {"developer", "business_user"}:
-        agents_in_scope = [agent for agent in project.agents if agent.user_id == current_user.id]
+        agents_in_scope = [agent for agent in agents_in_scope if agent.user_id == current_user.id]
     elif current_role == "department_admin":
         _, dept_ids = await _get_scope_memberships(session, current_user.id)
         if dept_ids:
-            agents_in_scope = [agent for agent in project.agents if agent.dept_id in dept_ids]
+            agents_in_scope = [agent for agent in agents_in_scope if agent.dept_id in dept_ids]
         else:
-            agents_in_scope = [agent for agent in project.agents if agent.user_id == current_user.id]
+            agents_in_scope = [agent for agent in agents_in_scope if agent.user_id == current_user.id]
     elif current_role == "super_admin":
         org_ids, _ = await _get_scope_memberships(session, current_user.id)
         if org_ids:
-            agents_in_scope = [agent for agent in project.agents if agent.org_id in org_ids]
+            agents_in_scope = [agent for agent in agents_in_scope if agent.org_id in org_ids]
         else:
-            agents_in_scope = [agent for agent in project.agents if agent.user_id == current_user.id]
+            agents_in_scope = [agent for agent in agents_in_scope if agent.user_id == current_user.id]
 
     return ProjectReadWithAgents(
         id=project.id,

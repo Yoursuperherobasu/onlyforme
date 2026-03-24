@@ -227,7 +227,7 @@ export default function VectorDBView(): JSX.Element {
                     ].map((h, i) => (
                       <th
                         key={h || `col-${i}`}
-                        className="px-6 py-4 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground"
+                        className="px-4 py-4 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground"
                       >
                         {h ? t(h) : ""}
                       </th>
@@ -240,7 +240,7 @@ export default function VectorDBView(): JSX.Element {
                     <tr>
                       <td
                         colSpan={canDelete ? 8 : 7}
-                        className="px-6 py-12 text-center text-muted-foreground"
+                        className="px-4 py-12 text-center text-muted-foreground"
                       >
                         {displayVectorDBs.length === 0
                           ? t("No vector databases tracked yet. Entries appear automatically when agents with vector stores are deployed or promoted to PROD.")
@@ -255,15 +255,23 @@ export default function VectorDBView(): JSX.Element {
                       return (
                         <tr key={db.id} className="group hover:bg-muted/50">
                           {/* Name */}
-                          <td className="px-6 py-4">
+                          <td className="px-4 py-4">
                             <div className="flex items-center gap-2">
                               <div className="flex h-8 w-8 items-center justify-center rounded border">
                                 {getProviderLogo(db.provider)}
                               </div>
                               <div>
-                                <div className="font-semibold">{db.name}</div>
+                                <div
+                                  className="max-w-[240px] line-clamp-2 font-semibold leading-6"
+                                  title={db.name}
+                                >
+                                  {db.name}
+                                </div>
                                 {db.description && (
-                                  <div className="mt-0.5 max-w-[220px] truncate text-xs text-muted-foreground">
+                                  <div
+                                    className="mt-0.5 max-w-[240px] truncate text-xs text-muted-foreground"
+                                    title={db.description}
+                                  >
                                     {db.description}
                                   </div>
                                 )}
@@ -272,7 +280,7 @@ export default function VectorDBView(): JSX.Element {
                           </td>
 
                           {/* Environment */}
-                          <td className="px-6 py-4">
+                          <td className="px-4 py-4">
                             <span
                               className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-medium uppercase ${
                                 ENV_BADGE_CLASSES[db.environment] ??
@@ -284,32 +292,40 @@ export default function VectorDBView(): JSX.Element {
                           </td>
 
                           {/* Index / Namespace */}
-                          <td className="px-6 py-4">
+                          <td className="px-4 py-4">
                             {db.indexName ? (
                               <div>
-                                <div className="font-mono text-sm">{db.indexName}</div>
-                                <div className="mt-0.5 font-mono text-xs text-muted-foreground">
+                                <div
+                                  className="max-w-[220px] truncate font-mono text-sm"
+                                  title={db.indexName}
+                                >
+                                  {db.indexName}
+                                </div>
+                                <div
+                                  className="mt-0.5 max-w-[220px] truncate font-mono text-xs text-muted-foreground"
+                                  title={db.namespace || "(default)"}
+                                >
                                   ns: {db.namespace || "(default)"}
                                 </div>
                               </div>
                             ) : (
-                              <span className="text-sm text-muted-foreground">—</span>
+                              <span className="text-sm text-muted-foreground">-</span>
                             )}
                           </td>
 
                           {/* Agent */}
-                          <td className="px-6 py-4">
+                          <td className="px-4 py-4">
                             {db.agentName ? (
                               <div className="max-w-[150px] truncate text-sm" title={db.agentName}>
                                 {db.agentName}
                               </div>
                             ) : (
-                              <span className="text-sm text-muted-foreground">—</span>
+                              <span className="text-sm text-muted-foreground">-</span>
                             )}
                           </td>
 
                           {/* Status */}
-                          <td className="px-6 py-4">
+                          <td className="px-4 py-4">
                             <div className="flex items-center gap-2">
                               <span
                                 className={`h-2 w-2 rounded-full ${getStatusColor(db.status)}`}
@@ -321,7 +337,7 @@ export default function VectorDBView(): JSX.Element {
                           </td>
 
                           {/* Vectors */}
-                          <td className="px-6 py-4">
+                          <td className="px-4 py-4">
                             <div className="flex items-center gap-1">
                               <Activity className="h-3 w-3 text-muted-foreground" />
                               <span className="text-sm font-medium">
@@ -333,7 +349,7 @@ export default function VectorDBView(): JSX.Element {
                           </td>
 
                           {/* Migration */}
-                          <td className="px-6 py-4">
+                          <td className="px-4 py-4">
                             {db.environment === "prod" && migBadge && MigIcon ? (
                               <div>
                                 <span className={`inline-flex items-center gap-1 text-xs font-medium ${migBadge.cls}`}>
@@ -349,7 +365,7 @@ export default function VectorDBView(): JSX.Element {
                             ) : db.environment === "uat" ? (
                               <span className="text-xs text-muted-foreground">{t("Source")}</span>
                             ) : (
-                              <span className="text-xs text-muted-foreground">—</span>
+                              <span className="text-xs text-muted-foreground">-</span>
                             )}
                           </td>
 

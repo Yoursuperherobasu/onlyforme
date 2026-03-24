@@ -135,6 +135,7 @@ dependencies = [
     "apscheduler>=3.10",
     "tabulate",
     "dill>=0.4.1",
+    "boltons>=25.0.0",
 ]
 
 [tool.hatch.build.targets.wheel]

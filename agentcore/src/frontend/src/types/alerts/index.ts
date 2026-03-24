@@ -24,6 +24,13 @@ export type AlertDropdownType = {
   children: JSX.Element;
   notificationRef?: React.RefObject<HTMLDivElement>;
   onClose?: () => void;
+  serverNotifications?: Array<{
+    id: string;
+    title: string;
+    link?: string | null;
+  }>;
+  markServerNotificationRead?: (id: string) => void;
+  markAllServerNotificationsRead?: () => void;
 };
 export type AlertItemType = {
   type: "notice" | "error" | "success";

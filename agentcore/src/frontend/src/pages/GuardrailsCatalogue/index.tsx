@@ -409,7 +409,7 @@ export default function GuardrailsView({
                         ].map((h) => (
                           <th
                             key={h}
-                            className="px-6 py-4 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground"
+                            className="px-4 py-4 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground"
                           >
                             {h}
                           </th>
@@ -422,7 +422,7 @@ export default function GuardrailsView({
                         <tr>
                           <td
                             colSpan={5 + (isDepartmentAdmin ? 1 : 0) + (isSuperAdmin ? 1 : 0) + (canManage || isProdView ? 1 : 0)}
-                            className="px-6 py-12 text-center text-muted-foreground"
+                            className="px-4 py-12 text-center text-muted-foreground"
                           >
                             No guardrails found matching your criteria
                           </td>
@@ -433,9 +433,12 @@ export default function GuardrailsView({
                             key={guardrail.id}
                             className="group hover:bg-muted/50"
                           >
-                            <td className="px-6 py-4">
+                            <td className="px-4 py-4">
                               <div className="flex items-center gap-2">
-                                <div className="font-semibold">
+                                <div
+                                  className="max-w-[260px] line-clamp-2 font-semibold leading-6"
+                                  title={guardrail.name}
+                                >
                                   {guardrail.name}
                                 </div>
                                 {guardrail.isCustom && (
@@ -458,9 +461,14 @@ export default function GuardrailsView({
                                   </span>
                                 )}
                               </div>
-                              <div className="mt-1 text-xs text-muted-foreground">
-                                {guardrail.description}
-                              </div>
+                              {guardrail.description && (
+                                <div
+                                  className="mt-1 max-w-[260px] line-clamp-1 text-xs text-muted-foreground"
+                                  title={guardrail.description}
+                                >
+                                  {guardrail.description}
+                                </div>
+                              )}
                               {guardrail.runtimeReady === true && (
                                 <div className="mt-1 text-xxs text-emerald-600 dark:text-emerald-400">
                                   Runtime ready
@@ -480,21 +488,31 @@ export default function GuardrailsView({
                               )}
                             </td>
 
-                            <td className="px-6 py-4">
-                              <div className="text-sm font-medium">
+                            <td className="px-4 py-4">
+                              <div
+                                className="max-w-[220px] line-clamp-2 text-sm font-medium leading-6"
+                                title={
+                                  guardrail.modelDisplayName ||
+                                  guardrail.modelName ||
+                                  "Not linked"
+                                }
+                              >
                                 {guardrail.modelDisplayName ||
                                   guardrail.modelName ||
                                   "Not linked"}
                               </div>
                               {guardrail.modelName &&
                                 guardrail.modelDisplayName && (
-                                  <div className="mt-1 text-xs text-muted-foreground">
+                                  <div
+                                    className="mt-1 max-w-[220px] truncate text-xs text-muted-foreground"
+                                    title={guardrail.modelName}
+                                  >
                                     {guardrail.modelName}
                                   </div>
                                 )}
                             </td>
 
-                            <td className="px-6 py-4">
+                            <td className="px-4 py-4">
                               <span
                                 className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-medium ${getVisibilityBadgeClass(guardrail)}`}
                               >
@@ -503,10 +521,10 @@ export default function GuardrailsView({
                             </td>
 
                             {isDepartmentAdmin && (
-                              <td className="px-6 py-4 text-sm text-muted-foreground">
+                              <td className="px-4 py-4 text-sm text-muted-foreground">
                                 <div
                                   className="max-w-[170px] truncate"
-                                  title={guardrail.created_by || "-"}
+                                  title={guardrail.created_by_email || guardrail.created_by || "-"}
                                 >
                                   {guardrail.created_by || "-"}
                                 </div>
@@ -514,12 +532,17 @@ export default function GuardrailsView({
                             )}
 
                             {isSuperAdmin && (
-                              <td className="px-6 py-4 text-sm text-muted-foreground">
-                                {getDepartmentScopeLabel(guardrail)}
+                              <td className="px-4 py-4 text-sm text-muted-foreground">
+                                <div
+                                  className="max-w-[170px] truncate"
+                                  title={getDepartmentScopeLabel(guardrail)}
+                                >
+                                  {getDepartmentScopeLabel(guardrail)}
+                                </div>
                               </td>
                             )}
 
-                            <td className="px-6 py-4">
+                            <td className="px-4 py-4">
                               <span
                                 className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-medium ${getCategoryBadgeColor(guardrail.category)}`}
                               >
@@ -527,7 +550,7 @@ export default function GuardrailsView({
                               </span>
                             </td>
 
-                            <td className="px-6 py-4">
+                            <td className="px-4 py-4">
                               <div className="flex items-center gap-2">
                                 <span
                                   className={`h-2 w-2 rounded-full ${guardrail.status === "active" ? "bg-green-500" : "bg-gray-400"}`}
@@ -539,7 +562,7 @@ export default function GuardrailsView({
                             </td>
 
                             {isProdView && (
-                              <td className="px-6 py-4">
+                              <td className="px-4 py-4">
                                 <button
                                   onClick={() => handleEditGuardrail(guardrail)}
                                   className="inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
@@ -550,7 +573,7 @@ export default function GuardrailsView({
                               </td>
                             )}
                             {canManage && !isProdView && (
-                              <td className="px-6 py-4">
+                              <td className="px-4 py-4">
                                 {canEditGuardrail(guardrail) ||
                                 canDeleteGuardrail(guardrail) ? (
                                   <DropdownMenu>

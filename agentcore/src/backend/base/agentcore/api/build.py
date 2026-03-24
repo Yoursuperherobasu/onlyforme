@@ -117,6 +117,17 @@ async def _ensure_hitl_record(
                 org_id=org_id_val,
             )
             db.add(hitl_req)
+            if user_id:
+                from agentcore.services.approval_notifications import upsert_approval_notification
+
+                await upsert_approval_notification(
+                    db,
+                    recipient_user_id=uuid.UUID(user_id),
+                    entity_type="hitl_assignment",
+                    entity_id=str(hitl_req.id),
+                    title="A HITL approval task is awaiting your review.",
+                    link="/hitl-approvals",
+                )
             await db.commit()
             logger.info(
                 f"[HITL] Fallback: created HITLRequest for thread_id={thread_id!r} "

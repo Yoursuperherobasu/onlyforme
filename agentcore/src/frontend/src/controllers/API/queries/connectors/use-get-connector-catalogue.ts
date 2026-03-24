@@ -27,6 +27,7 @@ export interface ConnectorInfo {
   public_dept_ids?: string[];
   shared_user_ids?: string[];
   created_by?: string | null;
+  created_by_email?: string | null;
   created_by_id?: string | null;
 }
 

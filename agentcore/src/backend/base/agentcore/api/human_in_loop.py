@@ -31,7 +31,10 @@ from agentcore.services.database.models.hitl_request.model import (
     HITLResumeRequest,
     HITLStatus,
 )
+from agentcore.services.database.models.user_department_membership.model import UserDepartmentMembership
+from agentcore.services.database.models.approval_notification.model import ApprovalNotification
 from agentcore.services.database.models.user.model import User
+from agentcore.services.approval_notifications import upsert_approval_notification
 
 router = APIRouter(prefix="/v1/hitl", tags=["Human-in-the-Loop"])
 
@@ -132,6 +135,31 @@ async def _enrich_with_agent_names(rows: list[HITLRequest], session) -> list[dic
         }
         for r in rows
     ]
+
+
+async def _mark_hitl_notification_read(
+    *,
+    session: DbSession,
+    hitl_request_id: str,
+    recipient_user_id: UUID | None,
+) -> None:
+    if not recipient_user_id:
+        return
+
+    notification = (
+        await session.exec(
+            select(ApprovalNotification).where(
+                ApprovalNotification.recipient_user_id == recipient_user_id,
+                ApprovalNotification.entity_type == "hitl_assignment",
+                ApprovalNotification.entity_id == hitl_request_id,
+                ApprovalNotification.is_read == False,  # noqa: E712
+            )
+        )
+    ).first()
+    if notification:
+        notification.is_read = True
+        notification.read_at = datetime.now(timezone.utc)
+        session.add(notification)
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
@@ -348,6 +376,11 @@ async def resume_hitl(
             # Update this record as resolved, create a new pending record.
             _resolve_request(hitl_req, decision, body.action, current_user.id)
             session.add(hitl_req)
+            await _mark_hitl_notification_read(
+                session=session,
+                hitl_request_id=str(hitl_req.id),
+                recipient_user_id=hitl_req.assigned_to or current_user.id,
+            )
 
             new_req = HITLRequest(
                 thread_id=thread_id,
@@ -377,6 +410,11 @@ async def resume_hitl(
         # Run completed normally.
         _resolve_request(hitl_req, decision, body.action, current_user.id)
         session.add(hitl_req)
+        await _mark_hitl_notification_read(
+            session=session,
+            hitl_request_id=str(hitl_req.id),
+            recipient_user_id=hitl_req.assigned_to or current_user.id,
+        )
         await session.commit()
 
         # Extract the output text from the output vertex and check if
@@ -464,6 +502,11 @@ async def cancel_hitl(
     hitl_req.decided_at = datetime.now(timezone.utc)
     hitl_req.decided_by_user_id = current_user.id
     session.add(hitl_req)
+    await _mark_hitl_notification_read(
+        session=session,
+        hitl_request_id=str(hitl_req.id),
+        recipient_user_id=hitl_req.assigned_to or current_user.id,
+    )
     await session.commit()
 
     logger.info(f"[HITL] Run {thread_id!r} cancelled by user {current_user.id}.")
@@ -486,7 +529,13 @@ async def delegate_hitl(
     hitl_req = await _get_pending_request(thread_id, session)
     _check_hitl_authorization(hitl_req, current_user)
 
-    # Validate target user exists and is active.
+    if not hitl_req.dept_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="This HITL request cannot be delegated without a department scope.",
+        )
+
+    # Validate target user exists, is active, and belongs to the same department.
     target_user = (
         await session.exec(select(User).where(User.id == body.delegate_to_user_id))
     ).first()
@@ -500,11 +549,44 @@ async def delegate_hitl(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Target user is not active",
         )
+    target_membership = (
+        await session.exec(
+            select(UserDepartmentMembership).where(
+                UserDepartmentMembership.user_id == body.delegate_to_user_id,
+                UserDepartmentMembership.department_id == hitl_req.dept_id,
+                UserDepartmentMembership.status == "active",
+            )
+        )
+    ).first()
+    if not target_membership:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Target user must be an active member of the same department.",
+        )
 
+    previous_assignee = hitl_req.assigned_to
     hitl_req.assigned_to = body.delegate_to_user_id
     hitl_req.delegated_by = current_user.id
     hitl_req.delegated_at = datetime.now(timezone.utc)
     session.add(hitl_req)
+
+    if previous_assignee and previous_assignee != body.delegate_to_user_id:
+        await _mark_hitl_notification_read(
+            session=session,
+            hitl_request_id=str(hitl_req.id),
+            recipient_user_id=previous_assignee,
+        )
+
+    if body.delegate_to_user_id != current_user.id:
+        await upsert_approval_notification(
+            session,
+            recipient_user_id=body.delegate_to_user_id,
+            entity_type="hitl_assignment",
+            entity_id=str(hitl_req.id),
+            title="A HITL task was delegated to you.",
+            link="/hitl-approvals",
+        )
+
     await session.commit()
 
     logger.info(

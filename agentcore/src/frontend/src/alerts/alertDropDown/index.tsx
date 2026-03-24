@@ -12,7 +12,17 @@ import type { AlertDropdownType } from "../../types/alerts";
 import SingleAlert from "./components/singleAlertComponent";
 
 const AlertDropdown = forwardRef<HTMLDivElement, AlertDropdownType>(
-  function AlertDropdown({ children, notificationRef, onClose }, ref) {
+  function AlertDropdown(
+    {
+      children,
+      notificationRef,
+      onClose,
+      serverNotifications = [],
+      markServerNotificationRead,
+      markAllServerNotificationsRead,
+    },
+    ref,
+  ) {
     const notificationList = useAlertStore((state) => state.notificationList);
     const clearNotificationList = useAlertStore(
       (state) => state.clearNotificationList,
@@ -25,6 +35,23 @@ const AlertDropdown = forwardRef<HTMLDivElement, AlertDropdownType>(
     );
 
     const [open, setOpen] = useState(false);
+    const mergedNotifications = [
+      ...serverNotifications.map((item) => {
+        const loweredTitle = item.title.toLowerCase();
+        const type = loweredTitle.includes("was approved") || loweredTitle.includes("was deployed")
+          ? ("success" as const)
+          : loweredTitle.includes("was rejected")
+            ? ("error" as const)
+            : ("notice" as const);
+
+        return {
+          id: `server:${item.id}`,
+          type,
+          title: item.title,
+        };
+      }),
+      ...notificationList,
+    ];
 
     useEffect(() => {
       if (!open) {
@@ -56,6 +83,7 @@ const AlertDropdown = forwardRef<HTMLDivElement, AlertDropdownType>(
                 className="text-muted-foreground hover:text-status-red"
                 onClick={() => {
                   setOpen(false);
+                  markAllServerNotificationsRead?.();
                   setTimeout(clearNotificationList, 100);
                 }}
               >
@@ -72,12 +100,18 @@ const AlertDropdown = forwardRef<HTMLDivElement, AlertDropdownType>(
             </div>
           </div>
           <div className="text-high-foreground mt-3 flex h-full w-full flex-col overflow-y-scroll scrollbar-hide">
-            {notificationList.length !== 0 ? (
-              notificationList.map((alertItem) => (
+            {mergedNotifications.length !== 0 ? (
+              mergedNotifications.map((alertItem) => (
                 <SingleAlert
                   key={alertItem.id}
                   dropItem={alertItem}
-                  removeAlert={removeFromNotificationList}
+                  removeAlert={(id) => {
+                    if (id.startsWith("server:")) {
+                      markServerNotificationRead?.(id.replace("server:", ""));
+                      return;
+                    }
+                    removeFromNotificationList(id);
+                  }}
                 />
               ))
             ) : (

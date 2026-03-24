@@ -520,7 +520,7 @@ def _hydrate_guardrail_update_payload(payload: GuardrailUpdatePayload, row: dict
 def _serialize_guardrail(
     row: dict[str, Any],
     model_row: ModelRegistry | None = None,
-    created_by_lookup: dict[str, str] | None = None,
+    created_by_lookup: dict[str, dict[str, str | None]] | None = None,
 ) -> dict:
     model_provider = row.get("provider")
     model_name: str | None = None
@@ -556,7 +556,8 @@ def _serialize_guardrail(
         "visibility": row.get("visibility"),
         "public_scope": row.get("public_scope"),
         "public_dept_ids": row.get("public_dept_ids") or [],
-        "created_by": (created_by_lookup or {}).get(str(row.get("created_by"))) if row.get("created_by") else None,
+        "created_by": (created_by_lookup or {}).get(str(row.get("created_by")), {}).get("display") if row.get("created_by") else None,
+        "created_by_email": (created_by_lookup or {}).get(str(row.get("created_by")), {}).get("email") if row.get("created_by") else None,
         "created_by_id": str(row["created_by"]) if row.get("created_by") else None,
         # Environment separation fields
         "environment": row.get("environment") or "uat",
@@ -566,6 +567,29 @@ def _serialize_guardrail(
         "prodRefCount": int(row.get("prod_ref_count") or 0),
     }
     return serialized
+
+
+def _creator_display_name(display_name: str | None, email: str | None, username: str | None) -> str | None:
+    name = str(display_name or "").strip()
+    if name:
+        return name
+    normalized_email = str(email or "").strip()
+    if normalized_email:
+        return normalized_email.split("@", 1)[0] if "@" in normalized_email else normalized_email
+    normalized_username = str(username or "").strip()
+    if normalized_username:
+        return normalized_username.split("@", 1)[0] if "@" in normalized_username else normalized_username
+    return None
+
+
+def _creator_email(email: str | None, username: str | None) -> str | None:
+    normalized_email = str(email or "").strip()
+    if normalized_email:
+        return normalized_email
+    normalized_username = str(username or "").strip()
+    if normalized_username and "@" in normalized_username:
+        return normalized_username
+    return None
 
 
 async def _resolve_guardrail_model_registry(
@@ -601,6 +625,7 @@ async def list_guardrails_catalogue(
     # Filter by environment if specified (default: show only UAT guardrails)
     env_filter = environment or "uat"
     rows = [row for row in rows if (row.get("environment") or "uat") == env_filter]
+    rows.sort(key=lambda row: str(row.get("name") or "").strip().lower())
 
     model_ids = {UUID(row["model_registry_id"]) for row in rows if row.get("model_registry_id")}
     model_by_id: dict[str, ModelRegistry] = {}
@@ -612,13 +637,18 @@ async def list_guardrails_catalogue(
         model_by_id = {str(model.id): model for model in model_rows}
 
     creator_ids = [UUID(row["created_by"]) for row in rows if row.get("created_by")]
-    created_by_lookup: dict[str, str] = {}
+    created_by_lookup: dict[str, dict[str, str | None]] = {}
     if creator_ids:
         creator_rows = (
-            await session.exec(select(User.id, User.username, User.email).where(User.id.in_(creator_ids)))
+            await session.exec(
+                select(User.id, User.display_name, User.email, User.username).where(User.id.in_(creator_ids))
+            )
         ).all()
         created_by_lookup = {
-            str(row[0]): (row[1] or row[2] or str(row[0]))
+            str(row[0]): {
+                "display": _creator_display_name(row[1], row[2], row[3]) or str(row[0]),
+                "email": _creator_email(row[2], row[3]),
+            }
             for row in creator_rows
         }
 

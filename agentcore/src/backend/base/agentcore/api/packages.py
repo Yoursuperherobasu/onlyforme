@@ -13,10 +13,13 @@ from __future__ import annotations
 from collections import defaultdict
 from collections import deque
 from datetime import date, datetime, timezone
+import logging
+import os
 from typing import Any
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Query, status
+import httpx
+from fastapi import APIRouter, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
 from sqlmodel import select
 
@@ -25,11 +28,15 @@ from agentcore.services.auth.permissions import get_permissions_for_role
 from agentcore.services.database.models.package.model import Package
 from agentcore.services.database.models.package_request.model import PackageRequest
 from agentcore.services.database.models.user.model import User
+from agentcore.services.approval_notifications import notify_root_approvers, upsert_approval_notification
 
 router = APIRouter(prefix="/packages", tags=["Packages"])
 ACTIVE_END_DATE = date(9999, 12, 31)
 DEFAULT_SERVICE_NAME = "all"
 PACKAGE_REQUEST_STATUSES = {"PENDING", "APPROVED", "REJECTED", "DEPLOYED", "CANCELLED"}
+logger = logging.getLogger(__name__)
+_REGION_CODE = os.getenv("REGION_CODE", "").strip()
+_REGION_GATEWAY_URL = os.getenv("REGION_GATEWAY_URL", "").strip()
 
 
 def _normalize(name: str) -> str:
@@ -56,6 +63,66 @@ async def _require_package_permission(current_user: CurrentActiveUser, permissio
     user_permissions = await get_permissions_for_role(str(current_user.role))
     if permission not in user_permissions:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Missing required permissions.")
+
+
+def _get_requested_region(request: Request) -> str | None:
+    return request.headers.get("X-Region-Code", "").strip() or None
+
+
+def _should_proxy_packages(request: Request, current_user: CurrentActiveUser) -> str | None:
+    requested_region = _get_requested_region(request)
+    if not requested_region or not _is_root_user(current_user):
+        return None
+    if not _REGION_GATEWAY_URL:
+        raise HTTPException(status_code=500, detail="Region gateway is not configured.")
+    if requested_region == _REGION_CODE:
+        return None
+    return requested_region
+
+
+async def _proxy_package_json(
+    *,
+    request: Request,
+    current_user: CurrentActiveUser,
+    path: str,
+    method: str = "GET",
+    query_params: dict[str, Any] | None = None,
+    json_body: dict[str, Any] | None = None,
+) -> Any | None:
+    target_region = _should_proxy_packages(request, current_user)
+    if not target_region:
+        return None
+
+    caller = str(getattr(current_user, "id", "") or "")
+    base_url = _REGION_GATEWAY_URL.rstrip("/")
+    target_path = path.lstrip("/")
+    params = {k: v for k, v in (query_params or {}).items() if v is not None}
+    if caller:
+        params["caller"] = caller
+
+    timeout = httpx.Timeout(60.0, connect=10.0)
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            response = await client.request(
+                method.upper(),
+                f"{base_url}/api/regions/{target_region}/{target_path}",
+                params=params,
+                json=json_body,
+            )
+            response.raise_for_status()
+            return response.json()
+    except httpx.HTTPStatusError as exc:
+        detail: Any
+        try:
+            detail = exc.response.json()
+        except Exception:
+            detail = exc.response.text or "Failed to proxy package request."
+        if isinstance(detail, dict) and "detail" in detail:
+            detail = detail["detail"]
+        raise HTTPException(status_code=exc.response.status_code, detail=detail) from exc
+    except httpx.HTTPError as exc:
+        logger.error("Package region proxy failed for %s: %s", target_region, exc)
+        raise HTTPException(status_code=502, detail="Failed to reach target region.") from exc
 
 
 class PackageRequestCreate(BaseModel):
@@ -127,9 +194,19 @@ async def _get_package_request_or_404(
 @router.post("/requests")
 async def create_package_request(
     payload: PackageRequestCreate,
+    request: Request,
     current_user: CurrentActiveUser,
     session: DbSession,
 ) -> dict[str, Any]:
+    proxied = await _proxy_package_json(
+        request=request,
+        current_user=current_user,
+        path="packages/requests",
+        method="POST",
+        json_body=payload.model_dump(),
+    )
+    if proxied is not None:
+        return proxied
     await _require_package_permission(current_user, "request_packages")
     now = datetime.now(timezone.utc)
     row = PackageRequest(
@@ -144,6 +221,14 @@ async def create_package_request(
         updated_at=now,
     )
     session.add(row)
+    await session.flush()
+    await notify_root_approvers(
+        session,
+        entity_type="package_request",
+        entity_id=str(row.id),
+        title=f'Package "{row.package_name}" awaiting your approval.',
+        link="/approval",
+    )
     await session.commit()
     await session.refresh(row)
     requested_by_user = await session.get(User, row.requested_by)
@@ -152,9 +237,17 @@ async def create_package_request(
 
 @router.get("/requests/mine")
 async def get_my_package_requests(
+    request: Request,
     current_user: CurrentActiveUser,
     session: DbSession,
 ) -> list[dict[str, Any]]:
+    proxied = await _proxy_package_json(
+        request=request,
+        current_user=current_user,
+        path="packages/requests/mine",
+    )
+    if proxied is not None:
+        return proxied
     rows = (
         await session.exec(
             select(PackageRequest)
@@ -167,10 +260,19 @@ async def get_my_package_requests(
 
 @router.get("/requests")
 async def get_package_requests_for_root(
+    request: Request,
     current_user: CurrentActiveUser,
     session: DbSession,
     status: str | None = Query(default=None),
 ) -> list[dict[str, Any]]:
+    proxied = await _proxy_package_json(
+        request=request,
+        current_user=current_user,
+        path="packages/requests",
+        query_params={"status": status},
+    )
+    if proxied is not None:
+        return proxied
     if not _is_root_user(current_user):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -197,9 +299,19 @@ async def get_package_requests_for_root(
 async def approve_package_request(
     request_id: str,
     payload: PackageRequestAction,
+    request: Request,
     current_user: CurrentActiveUser,
     session: DbSession,
 ) -> dict[str, Any]:
+    proxied = await _proxy_package_json(
+        request=request,
+        current_user=current_user,
+        path=f"packages/requests/{request_id}/approve",
+        method="POST",
+        json_body=payload.model_dump(),
+    )
+    if proxied is not None:
+        return proxied
     if not _is_root_user(current_user):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only root users can approve package requests.")
 
@@ -214,6 +326,15 @@ async def approve_package_request(
     row.review_comments = payload.comments.strip() if payload.comments else None
     row.updated_at = now
     session.add(row)
+    if row.requested_by and row.requested_by != current_user.id:
+        await upsert_approval_notification(
+            session,
+            recipient_user_id=row.requested_by,
+            entity_type="package_request_result",
+            entity_id=str(row.id),
+            title=f'Package "{row.package_name}" was approved.',
+            link="/approval",
+        )
     await session.commit()
     await session.refresh(row)
     requested_by_user = await session.get(User, row.requested_by)
@@ -224,9 +345,19 @@ async def approve_package_request(
 async def reject_package_request(
     request_id: str,
     payload: PackageRequestAction,
+    request: Request,
     current_user: CurrentActiveUser,
     session: DbSession,
 ) -> dict[str, Any]:
+    proxied = await _proxy_package_json(
+        request=request,
+        current_user=current_user,
+        path=f"packages/requests/{request_id}/reject",
+        method="POST",
+        json_body=payload.model_dump(),
+    )
+    if proxied is not None:
+        return proxied
     if not _is_root_user(current_user):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only root users can reject package requests.")
 
@@ -241,6 +372,15 @@ async def reject_package_request(
     row.review_comments = payload.comments.strip() if payload.comments else None
     row.updated_at = now
     session.add(row)
+    if row.requested_by and row.requested_by != current_user.id:
+        await upsert_approval_notification(
+            session,
+            recipient_user_id=row.requested_by,
+            entity_type="package_request_result",
+            entity_id=str(row.id),
+            title=f'Package "{row.package_name}" was rejected.',
+            link="/approval",
+        )
     await session.commit()
     await session.refresh(row)
     requested_by_user = await session.get(User, row.requested_by)
@@ -251,9 +391,19 @@ async def reject_package_request(
 async def deploy_package_request(
     request_id: str,
     payload: PackageRequestDeploy,
+    request: Request,
     current_user: CurrentActiveUser,
     session: DbSession,
 ) -> dict[str, Any]:
+    proxied = await _proxy_package_json(
+        request=request,
+        current_user=current_user,
+        path=f"packages/requests/{request_id}/deploy",
+        method="POST",
+        json_body=payload.model_dump(),
+    )
+    if proxied is not None:
+        return proxied
     if not _is_root_user(current_user):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only root users can deploy package requests.")
 
@@ -268,6 +418,15 @@ async def deploy_package_request(
     row.deployment_notes = payload.deployment_notes.strip() if payload.deployment_notes else None
     row.updated_at = now
     session.add(row)
+    if row.requested_by and row.requested_by != current_user.id:
+        await upsert_approval_notification(
+            session,
+            recipient_user_id=row.requested_by,
+            entity_type="package_request_result",
+            entity_id=str(row.id),
+            title=f'Package "{row.package_name}" was deployed.',
+            link="/approval",
+        )
     await session.commit()
     await session.refresh(row)
     requested_by_user = await session.get(User, row.requested_by)
@@ -277,9 +436,18 @@ async def deploy_package_request(
 @router.post("/requests/{request_id}/cancel")
 async def cancel_package_request(
     request_id: str,
+    request: Request,
     current_user: CurrentActiveUser,
     session: DbSession,
 ) -> dict[str, Any]:
+    proxied = await _proxy_package_json(
+        request=request,
+        current_user=current_user,
+        path=f"packages/requests/{request_id}/cancel",
+        method="POST",
+    )
+    if proxied is not None:
+        return proxied
     row = await _get_package_request_or_404(session=session, request_id=request_id)
     if row.requested_by != current_user.id and not _is_root_user(current_user):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed to cancel this request.")
@@ -385,12 +553,24 @@ def _compute_managed_root_data(
 
 @router.get("/managed")
 async def get_managed_packages(
+    request: Request,
     current_user: CurrentActiveUser,
     session: DbSession,
     include_history: bool = Query(default=False),
     service: str = Query(default=DEFAULT_SERVICE_NAME),
 ) -> list[dict[str, Any]]:
     """Return declared dependencies with their resolved version."""
+    proxied = await _proxy_package_json(
+        request=request,
+        current_user=current_user,
+        path="packages/managed",
+        query_params={
+            "include_history": str(include_history).lower(),
+            "service": service,
+        },
+    )
+    if proxied is not None:
+        return proxied
     normalized_service = _normalize_service_param(service)
     conditions = [Package.package_type == "managed"]
     if not _is_all_services(normalized_service):
@@ -424,11 +604,20 @@ async def get_managed_packages(
 
 @router.get("/services")
 async def get_package_services(
+    request: Request,
     current_user: CurrentActiveUser,
     session: DbSession,
     include_history: bool = Query(default=False),
 ) -> list[str]:
     """Return distinct service names available in package snapshots."""
+    proxied = await _proxy_package_json(
+        request=request,
+        current_user=current_user,
+        path="packages/services",
+        query_params={"include_history": str(include_history).lower()},
+    )
+    if proxied is not None:
+        return proxied
     conditions = []
     if not include_history:
         conditions.append(Package.end_date == ACTIVE_END_DATE)
@@ -447,6 +636,7 @@ async def get_package_services(
 
 @router.get("/transitive")
 async def get_transitive_packages(
+    request: Request,
     current_user: CurrentActiveUser,
     session: DbSession,
     include_history: bool = Query(default=False),
@@ -454,6 +644,18 @@ async def get_transitive_packages(
     service: str = Query(default=DEFAULT_SERVICE_NAME),
 ) -> list[dict[str, Any]]:
     """Return transitive deps with strict managed-closure scope by default."""
+    proxied = await _proxy_package_json(
+        request=request,
+        current_user=current_user,
+        path="packages/transitive",
+        query_params={
+            "include_history": str(include_history).lower(),
+            "include_full_graph": str(include_full_graph).lower(),
+            "service": service,
+        },
+    )
+    if proxied is not None:
+        return proxied
     normalized_service = _normalize_service_param(service)
     conditions = [Package.package_type == "transitive"]
     if not _is_all_services(normalized_service):

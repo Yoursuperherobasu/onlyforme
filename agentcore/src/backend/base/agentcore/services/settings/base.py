@@ -203,6 +203,10 @@ class Settings(BaseSettings):
 
 
     storage_type: str = "local"
+    azure_release_documents_container_name: str = Field(
+        default="",
+        validation_alias="AZURE_RELEASE_DOCUMENTS_CONTAINER_NAME",
+    )
 
     fallback_to_env_var: bool = True
     """If set to True, Global Variables set in the UI will fallback to a environment variable
@@ -361,6 +365,27 @@ class Settings(BaseSettings):
     manifest_file_path: str = ""
     """Absolute or relative path to the manifest.yaml file used by the publish/notify flow.
     When empty, defaults to <project_root>/manifest.yaml."""
+
+    # Git manifest sync
+    git_provider: str = ""
+    """Which Git provider(s) to push the manifest to.
+    Accepted values: 'github', 'ado', 'both'.
+    Leave empty to disable remote git sync entirely."""
+    github_repo_url: str = ""
+    """GitHub repo URL — required when git_provider is 'github' or 'both'.
+    Example: https://github.com/owner/repo"""
+    github_token: str = ""
+    """PAT token with Contents read/write access for the GitHub repo."""
+    ado_repo_url: str = ""
+    """Azure DevOps repo URL — required when git_provider is 'ado' or 'both'.
+    Example: https://dev.azure.com/org/project/_git/repo"""
+    ado_token: str = ""
+    """PAT token with repo write access for the Azure DevOps repo."""
+    git_branch: str = "main"
+    """Branch to commit the manifest file to (applies to both providers)."""
+    git_manifest_file: str = "manifest.yaml"
+    """Path of the manifest file inside the repo (e.g. 'helm-chart/manifest.yaml').
+    Applies to both providers."""
 
     # Public Agent Settings
     public_agent_cleanup_interval: int = Field(default=3600, gt=600)

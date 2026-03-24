@@ -27,6 +27,7 @@ from agentcore.services.database.models.approval_request.model import (
     ApprovalDecisionEnum,
     ApprovalRequest,
 )
+from agentcore.services.database.models.approval_notification.model import ApprovalNotification
 from agentcore.services.database.models.department.model import Department
 from agentcore.services.database.models.folder.model import Folder
 from agentcore.services.database.models.mcp_registry.model import McpRegistry, McpRegistryRead, McpRegistryUpdate
@@ -49,6 +50,7 @@ from agentcore.services.mcp_service_client import update_mcp_server_via_service
 from agentcore.services.database.models.user.model import User
 from agentcore.services.database.models.agent_api_key.model import AgentApiKey
 from agentcore.services.database.registry_service import sync_agent_registry
+from agentcore.services.approval_notifications import upsert_approval_notification
 from agentcore.services.auth.utils import generate_agent_api_key
 
 
@@ -99,6 +101,13 @@ class ApprovalResponse(BaseModel):
     api_key: str | None = None
 
 
+class ApprovalNotificationRead(BaseModel):
+    id: str
+    title: str
+    link: str | None = None
+    created_at: str
+
+
 class GuardrailPromotionResult(BaseModel):
     uat_guardrail_id: str
     prod_guardrail_id: str | None = None
@@ -117,6 +126,71 @@ class ProdPromotionHandoffResponse(BaseModel):
 
 
 router = APIRouter(prefix="/approvals", tags=["approvals"])
+
+
+@router.get("/notifications", response_model=list[ApprovalNotificationRead])
+async def list_approval_notifications(
+    session: DbSession,
+    current_user: CurrentActiveUser,
+):
+    rows = (
+        await session.exec(
+            select(ApprovalNotification)
+            .where(
+                ApprovalNotification.recipient_user_id == current_user.id,
+                ApprovalNotification.is_read == False,  # noqa: E712
+            )
+            .order_by(ApprovalNotification.created_at.desc())
+        )
+    ).all()
+    return [
+        ApprovalNotificationRead(
+            id=str(row.id),
+            title=row.title,
+            link=row.link,
+            created_at=row.created_at.isoformat(),
+        )
+        for row in rows
+    ]
+
+
+@router.post("/notifications/{notification_id}/read", status_code=204)
+async def mark_approval_notification_read(
+    notification_id: UUID,
+    session: DbSession,
+    current_user: CurrentActiveUser,
+):
+    row = await session.get(ApprovalNotification, notification_id)
+    if row is None or row.recipient_user_id != current_user.id:
+        raise HTTPException(status_code=404, detail="Notification not found")
+    row.is_read = True
+    row.read_at = datetime.now(timezone.utc)
+    session.add(row)
+    await session.commit()
+    return None
+
+
+@router.post("/notifications/read-all", status_code=204)
+async def mark_all_approval_notifications_read(
+    session: DbSession,
+    current_user: CurrentActiveUser,
+):
+    rows = (
+        await session.exec(
+            select(ApprovalNotification).where(
+                ApprovalNotification.recipient_user_id == current_user.id,
+                ApprovalNotification.is_read == False,  # noqa: E712
+            )
+        )
+    ).all()
+    if rows:
+        now = datetime.now(timezone.utc)
+        for row in rows:
+            row.is_read = True
+            row.read_at = now
+            session.add(row)
+        await session.commit()
+    return None
 
 
 def _build_approver_info(user: User | None) -> ApproverInfo | None:
@@ -1416,6 +1490,15 @@ async def approve_agent(
                 logger.warning("MCP registry sync failed after approval %s: %s", mcp_req.id, reg_err)
         session.add(mcp_req)
         session.add(mcp_row)
+        if mcp_req.requested_by and mcp_req.requested_by != current_user.id:
+            await upsert_approval_notification(
+                session,
+                recipient_user_id=mcp_req.requested_by,
+                entity_type="mcp_request_result",
+                entity_id=str(mcp_req.id),
+                title=f'MCP server "{mcp_row.server_name}" was approved.',
+                link="/approval",
+            )
         await session.commit()
         approver_name = getattr(current_user, "username", None)
         response_payload = ApprovalResponse(
@@ -1554,6 +1637,16 @@ async def approve_agent(
             # CREATE requests are completed in a single approval step.
         session.add(model_req)
         session.add(model_row)
+        if model_req.requested_by and model_req.requested_by != current_user.id:
+            model_label = model_row.display_name or model_row.model_name or "Model request"
+            await upsert_approval_notification(
+                session,
+                recipient_user_id=model_req.requested_by,
+                entity_type="model_request_result",
+                entity_id=str(model_req.id),
+                title=f'Model "{model_label}" was approved.',
+                link="/approval",
+            )
         await session.commit()
         approver_name = getattr(current_user, "username", None)
         response_payload = ApprovalResponse(
@@ -1609,6 +1702,16 @@ async def approve_agent(
 
     # Shadow deployment: keep previous versions active so
     # multiple versions can run side-by-side.
+
+    if req.requested_by and req.requested_by != current_user.id:
+        await upsert_approval_notification(
+            session,
+            recipient_user_id=req.requested_by,
+            entity_type="agent_publish_result",
+            entity_id=str(req.id),
+            title=f'Agent "{deployment.agent_name}" was approved.',
+            link="/approval",
+        )
 
     await session.commit()
 
@@ -1914,6 +2017,15 @@ async def reject_agent(
         mcp_row.updated_at = now
         session.add(mcp_req)
         session.add(mcp_row)
+        if mcp_req.requested_by and mcp_req.requested_by != current_user.id:
+            await upsert_approval_notification(
+                session,
+                recipient_user_id=mcp_req.requested_by,
+                entity_type="mcp_request_result",
+                entity_id=str(mcp_req.id),
+                title=f'MCP server "{mcp_row.server_name}" was rejected.',
+                link="/approval",
+            )
         await session.commit()
         approver_name = getattr(current_user, "username", None)
         return ApprovalResponse(
@@ -1973,6 +2085,16 @@ async def reject_agent(
             dept_id=model_row.dept_id,
             details={"request_type": str(model_req.request_type)},
         )
+        if model_req.requested_by and model_req.requested_by != current_user.id:
+            model_label = model_row.display_name or model_row.model_name or "Model request"
+            await upsert_approval_notification(
+                session,
+                recipient_user_id=model_req.requested_by,
+                entity_type="model_request_result",
+                entity_id=str(model_req.id),
+                title=f'Model "{model_label}" was rejected.',
+                link="/approval",
+            )
         await session.commit()
         approver_name = getattr(current_user, "username", None)
         return ApprovalResponse(
@@ -2023,6 +2145,16 @@ async def reject_agent(
     if agent:
         agent.lifecycle_status = LifecycleStatusEnum.DRAFT
         session.add(agent)
+
+    if req.requested_by and req.requested_by != current_user.id:
+        await upsert_approval_notification(
+            session,
+            recipient_user_id=req.requested_by,
+            entity_type="agent_publish_result",
+            entity_id=str(req.id),
+            title=f'Agent "{deployment.agent_name}" was rejected.',
+            link="/approval",
+        )
 
     await session.commit()
 

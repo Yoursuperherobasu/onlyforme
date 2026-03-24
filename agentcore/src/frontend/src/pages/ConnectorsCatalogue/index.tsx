@@ -1050,7 +1050,31 @@ export default function ConnectorsCatalogueView(): JSX.Element {
                     ].map((h) => (
                       <th
                         key={h}
-                        className="px-6 py-4 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground"
+                        className={
+                          h === "Connector Name"
+                            ? "w-[260px] min-w-[260px] px-4 py-4 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground"
+                            : h === "Host / Container / Site"
+                              ? "w-[210px] min-w-[210px] px-4 py-4 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground"
+                              : h === "Created By"
+                                ? "w-[150px] min-w-[150px] px-4 py-4 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground"
+                                : h === "Department Scope"
+                                  ? "w-[140px] min-w-[140px] px-4 py-4 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground"
+                                  : h === "Provider"
+                                    ? "w-[140px] min-w-[140px] px-4 py-4 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground"
+                                    : h === "Database"
+                                      ? "w-[96px] min-w-[96px] px-4 py-4 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground"
+                                      : h === "Schema"
+                                        ? "w-[88px] min-w-[88px] px-4 py-4 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground"
+                                        : h === "Visibility"
+                                          ? "w-[110px] min-w-[110px] px-4 py-4 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground"
+                                          : h === "Status"
+                                            ? "w-[120px] min-w-[120px] px-4 py-4 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground"
+                                            : h === "Tables"
+                                              ? "w-[70px] min-w-[70px] px-4 py-4 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground"
+                                              : h === "Actions"
+                                                ? "w-[140px] min-w-[140px] px-4 py-4 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground"
+                                                : "px-4 py-4 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground"
+                        }
                       >
                         {h}
                       </th>
@@ -1062,7 +1086,7 @@ export default function ConnectorsCatalogueView(): JSX.Element {
                     <tr>
                       <td
                         colSpan={7 + (isDepartmentAdmin ? 1 : 0) + (isSuperAdmin ? 1 : 0) + (canSeeVisibilityColumn ? 1 : 0) + (canAddConnector ? 1 : 0)}
-                        className="px-6 py-12 text-center text-muted-foreground"
+                        className="px-4 py-12 text-center text-muted-foreground"
                       >
                         <div className="flex flex-col items-center gap-3">
                           <Cable className="h-10 w-10 text-muted-foreground/50" />
@@ -1081,17 +1105,25 @@ export default function ConnectorsCatalogueView(): JSX.Element {
                   ) : (
                     filteredConnectors.map((c) => (
                       <tr key={c.id} className="group hover:bg-muted/50">
-                        <td className="px-6 py-4">
-                          <div className="font-semibold">{c.name}</div>
+                        <td className="w-[260px] min-w-[260px] px-4 py-4">
+                          <div
+                            className="max-w-[240px] line-clamp-2 font-semibold leading-6"
+                            title={c.name}
+                          >
+                            {c.name}
+                          </div>
                           {c.description && (
-                            <div className="mt-1 text-xs text-muted-foreground">
+                            <div
+                              className="mt-1 max-w-[240px] line-clamp-1 text-xs text-muted-foreground"
+                              title={c.description}
+                            >
                               {c.description}
                             </div>
                           )}
                         </td>
-                        <td className="px-6 py-4">
+                        <td className="w-[140px] min-w-[140px] px-4 py-4">
                           <span
-                            className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium ${getProviderBadge(c.provider)}`}
+                            className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium ${getProviderBadge(c.provider)}`}
                           >
                             {STORAGE_PROVIDERS.has(c.provider) ? (
                               <Cloud className="h-3 w-3" />
@@ -1102,46 +1134,60 @@ export default function ConnectorsCatalogueView(): JSX.Element {
                           </span>
                         </td>
                         {isDepartmentAdmin && (
-                          <td className="px-6 py-4 text-sm text-muted-foreground">
+                          <td className="w-[150px] min-w-[150px] px-4 py-4 text-sm text-muted-foreground">
                             <div
-                              className="max-w-[170px] truncate"
-                              title={c.created_by || "-"}
+                              className="max-w-[140px] truncate"
+                              title={c.created_by_email || c.created_by || "-"}
                             >
                               {c.created_by || "-"}
                             </div>
                           </td>
                         )}
                         {isSuperAdmin && (
-                          <td className="px-6 py-4">
-                            <span className="text-sm text-muted-foreground">
+                          <td className="w-[140px] min-w-[140px] px-4 py-4">
+                            <span
+                              className="inline-block max-w-[140px] truncate text-sm text-muted-foreground"
+                              title={getDepartmentScopeLabel(c)}
+                            >
                               {getDepartmentScopeLabel(c)}
                             </span>
                           </td>
                         )}
-                        <td className="px-6 py-4">
-                          <span className="text-sm font-mono">
+                        <td className="w-[210px] min-w-[210px] px-4 py-4">
+                          <span
+                            className="inline-block max-w-[210px] truncate text-sm font-mono"
+                            title={getConnectorTarget(c)}
+                          >
                             {getConnectorTarget(c)}
                           </span>
                         </td>
-                        <td className="px-6 py-4">
-                          <span className="text-sm">{getConnectorDb(c)}</span>
+                        <td className="w-[96px] min-w-[96px] px-4 py-4">
+                          <span
+                            className="inline-block max-w-[96px] truncate text-sm"
+                            title={getConnectorDb(c)}
+                          >
+                            {getConnectorDb(c)}
+                          </span>
                         </td>
-                        <td className="px-6 py-4">
-                          <span className="text-sm text-muted-foreground">
+                        <td className="w-[88px] min-w-[88px] px-4 py-4">
+                          <span
+                            className="inline-block max-w-[88px] truncate text-sm text-muted-foreground"
+                            title={getConnectorSchema(c)}
+                          >
                             {getConnectorSchema(c)}
                           </span>
                         </td>
                         {canSeeVisibilityColumn && (
-                          <td className="px-6 py-4">
+                          <td className="w-[110px] min-w-[110px] px-4 py-4">
                             <span
-                              className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-medium ${getVisibilityBadgeClass(c)}`}
+                              className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${getVisibilityBadgeClass(c)}`}
                             >
                               {getConnectorVisibilityLabel(c)}
                             </span>
                           </td>
                         )}
-                        <td className="px-6 py-4">
-                          <div className="flex items-center gap-2">
+                        <td className="w-[120px] min-w-[120px] px-4 py-4">
+                          <div className="flex items-center gap-1.5">
                             {getStatusIcon(c.status)}
                             <span
                               className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${getStatusBadge(c.status)}`}
@@ -1150,15 +1196,15 @@ export default function ConnectorsCatalogueView(): JSX.Element {
                             </span>
                           </div>
                         </td>
-                        <td className="px-6 py-4">
+                        <td className="w-[70px] min-w-[70px] px-4 py-4">
                           <span className="text-sm font-medium">
                             {STORAGE_PROVIDERS.has(c.provider) || EMAIL_PROVIDERS.has(c.provider)
-                              ? "—"
-                              : (c.tables_metadata?.length ?? "—")}
+                              ? "-"
+                              : (c.tables_metadata?.length ?? "-")}
                           </span>
                         </td>
                         {canAddConnector && (
-                          <td className="px-6 py-4">
+                          <td className="w-[140px] min-w-[140px] px-4 py-4">
                             <div className="flex items-center gap-1">
                               <button
                                 onClick={() => handleToggleConnection(c)}

@@ -22,7 +22,7 @@ export type ReleasePackageRecord = {
 };
 
 export const useGetReleasePackages: useQueryFunctionType<
-  { releaseId: string; service?: string },
+  { releaseId: string; service?: string; regionCode?: string | null },
   ReleasePackageRecord[]
 > = (params, options?) => {
   const { query } = UseRequestProcessor();
@@ -34,12 +34,13 @@ export const useGetReleasePackages: useQueryFunctionType<
       params: {
         service: params?.service ?? "all",
       },
+      ...(params?.regionCode ? { headers: { "X-Region-Code": params.regionCode } } : {}),
     });
     return res.data;
   };
 
   const queryResult: UseQueryResult<ReleasePackageRecord[], any> = query(
-    ["useGetReleasePackages", params?.releaseId, params?.service ?? "all"],
+    ["useGetReleasePackages", params?.releaseId, params?.service ?? "all", params?.regionCode ?? "local"],
     getReleasePackagesFn,
     {
       enabled: Boolean(params?.releaseId) && isAuthenticated,

@@ -17,7 +17,7 @@ const entityLabel = (entityType?: string) =>
  * Custom hook to handle approval and rejection actions
  * Combines API mutations and user feedback notifications
  */
-export const useApprovalActions = () => {
+export const useApprovalActions = (regionCode?: string | null) => {
   const setSuccessData = useAlertStore((s) => s.setSuccessData);
   const setErrorData = useAlertStore((s) => s.setErrorData);
 
@@ -44,6 +44,7 @@ export const useApprovalActions = () => {
               {
                 requestId: agent.id,
                 comments,
+                regionCode,
               },
               {
                 onSuccess: () => {
@@ -88,7 +89,7 @@ export const useApprovalActions = () => {
         console.error("Approval error:", error);
       }
     },
-    [approveAgentMutation, approvePackageMutation, setSuccessData, setErrorData],
+    [approveAgentMutation, approvePackageMutation, regionCode, setSuccessData, setErrorData],
   );
 
   /**
@@ -108,6 +109,7 @@ export const useApprovalActions = () => {
               {
                 requestId: agent.id,
                 comments,
+                regionCode,
               },
               {
                 onSuccess: () => {
@@ -152,7 +154,7 @@ export const useApprovalActions = () => {
         console.error("Rejection error:", error);
       }
     },
-    [rejectAgentMutation, rejectPackageMutation, setSuccessData, setErrorData],
+    [rejectAgentMutation, rejectPackageMutation, regionCode, setSuccessData, setErrorData],
   );
 
   return {

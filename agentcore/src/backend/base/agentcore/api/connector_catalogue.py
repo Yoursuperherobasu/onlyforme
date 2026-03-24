@@ -326,7 +326,10 @@ async def _ensure_connector_name_available(
 
 # ---------- Serialization ----------
 
-def _serialize_connector(row: ConnectorCatalogue, created_by_lookup: dict[str, str] | None = None) -> dict:
+def _serialize_connector(
+    row: ConnectorCatalogue,
+    created_by_lookup: dict[str, dict[str, str | None]] | None = None,
+) -> dict:
     # Return provider_config with secrets masked (not decrypted) for display
     safe_config: dict | None = None
     if row.provider_config:
@@ -376,9 +379,33 @@ def _serialize_connector(row: ConnectorCatalogue, created_by_lookup: dict[str, s
         "public_scope": row.public_scope,
         "public_dept_ids": row.public_dept_ids or [],
         "shared_user_ids": row.shared_user_ids or [],
-        "created_by": (created_by_lookup or {}).get(str(row.created_by)) if row.created_by else None,
+        "created_by": (created_by_lookup or {}).get(str(row.created_by), {}).get("display") if row.created_by else None,
+        "created_by_email": (created_by_lookup or {}).get(str(row.created_by), {}).get("email") if row.created_by else None,
         "created_by_id": str(row.created_by) if row.created_by else None,
     }
+
+
+def _creator_display_name(display_name: str | None, email: str | None, username: str | None) -> str | None:
+    name = str(display_name or "").strip()
+    if name:
+        return name
+    normalized_email = str(email or "").strip()
+    if normalized_email:
+        return normalized_email.split("@", 1)[0] if "@" in normalized_email else normalized_email
+    normalized_username = str(username or "").strip()
+    if normalized_username:
+        return normalized_username.split("@", 1)[0] if "@" in normalized_username else normalized_username
+    return None
+
+
+def _creator_email(email: str | None, username: str | None) -> str | None:
+    normalized_email = str(email or "").strip()
+    if normalized_email:
+        return normalized_email
+    normalized_username = str(username or "").strip()
+    if normalized_username and "@" in normalized_username:
+        return normalized_username
+    return None
 
 
 async def _validate_departments_exist_for_org(session: DbSession, org_id: UUID, dept_ids: list[UUID]) -> None:
@@ -946,13 +973,18 @@ async def list_connectors(
     org_ids, dept_pairs = await _get_scope_memberships(session, current_user.id)
     visible_rows = [row for row in rows if _can_access_connector(row, current_user, org_ids, dept_pairs)]
     creator_ids = [row.created_by for row in visible_rows if row.created_by]
-    created_by_lookup: dict[str, str] = {}
+    created_by_lookup: dict[str, dict[str, str | None]] = {}
     if creator_ids:
         creator_rows = (
-            await session.exec(select(User.id, User.username, User.email).where(User.id.in_(creator_ids)))
+            await session.exec(
+                select(User.id, User.display_name, User.email, User.username).where(User.id.in_(creator_ids))
+            )
         ).all()
         created_by_lookup = {
-            str(row[0]): (row[1] or row[2] or str(row[0]))
+            str(row[0]): {
+                "display": _creator_display_name(row[1], row[2], row[3]) or str(row[0]),
+                "email": _creator_email(row[2], row[3]),
+            }
             for row in creator_rows
         }
     return [_serialize_connector(row, created_by_lookup) for row in visible_rows]

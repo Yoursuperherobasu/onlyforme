@@ -110,11 +110,8 @@ const useAddAgent = () => {
         reject(error);
         return;
       }
-      const agentsToCheckNames = agents?.filter(
-        (f) => f.project_id === project_id,
-      );
       const newAgent = createNewAgent(agentData!, project_id, agent);
-      const newName = addVersionToDuplicates(newAgent, agentsToCheckNames ?? []);
+      const newName = addVersionToDuplicates(newAgent, agents ?? []);
       newAgent.name = newName;
       newAgent.project_id = project_id;
 

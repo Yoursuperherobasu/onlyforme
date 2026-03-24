@@ -9,6 +9,4 @@ export type DarkStoreType = {
   refreshLatestVersion: (v: string) => void;
   refreshCurrentReleaseVersion: (v: string) => void;
   refreshStars: () => void;
-  discordCount: number;
-  refreshDiscordCount: () => void;
 };

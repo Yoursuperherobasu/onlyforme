@@ -15,10 +15,15 @@ import useAuthStore from "@/stores/authStore";
 import { useUtilityStore } from "@/stores/utilityStore";
 import useAlertStore from "@/stores/alertStore";
 import useAgentStore from "@/stores/agentStore";
+import useAgentsManagerStore from "@/stores/agentsManagerStore";
+import { useFolderStore } from "@/stores/foldersStore";
 
 import { BuildStatus, type EventDeliveryType } from "../../constants/enums";
 import { checkDuplicateRequestAndStoreRequest } from "./helpers/check-duplicate-requests";
 import { useLogout, useRefreshAccessToken } from "./queries/auth";
+
+let refreshAccessTokenPromise: Promise<unknown> | null = null;
+let isHandlingSessionExpiry = false;
 
 /* =========================================================
    AXIOS INSTANCE
@@ -31,6 +36,30 @@ const api: AxiosInstance = axios.create({
 
 const _cookies = new Cookies();
 
+function forceSessionExpiryLogout() {
+  if (isHandlingSessionExpiry) {
+    return;
+  }
+
+  isHandlingSessionExpiry = true;
+
+  void useAuthStore.getState().logout();
+  useAgentStore.getState().resetAgentState();
+  useAgentsManagerStore.getState().resetStore();
+  useFolderStore.getState().resetStore();
+  useUtilityStore.getState().setHealthCheckTimeout(null);
+
+  const currentPath = `${window.location.pathname}${window.location.search}`;
+  const isHomePath = currentPath === "/" || currentPath === "/agents";
+  const isLoginPage = window.location.pathname.includes("login");
+  const redirectSuffix =
+    !isHomePath && !isLoginPage
+      ? `?redirect=${encodeURIComponent(currentPath)}`
+      : "";
+
+  window.location.replace(`/login${redirectSuffix}`);
+}
+
 /* =========================================================
    API INTERCEPTOR
 ========================================================= */
@@ -38,9 +67,6 @@ const _cookies = new Cookies();
 function ApiInterceptor() {
   const setErrorData = useAlertStore((state) => state.setErrorData);
   const accessToken = useAuthStore((state) => state.accessToken);
-  const authenticationErrorCount = useAuthStore(
-    (state) => state.authenticationErrorCount,
-  );
   const setAuthenticationErrorCount = useAuthStore(
     (state) => state.setAuthenticationErrorCount,
   );
@@ -199,11 +225,16 @@ function ApiInterceptor() {
   function checkErrorCount() {
     if (isLoginPage) return;
 
-    setAuthenticationErrorCount(authenticationErrorCount + 1);
+    const currentErrorCount =
+      useAuthStore.getState().authenticationErrorCount ?? 0;
+    const nextErrorCount = currentErrorCount + 1;
 
-    if (authenticationErrorCount > 3) {
+    setAuthenticationErrorCount(nextErrorCount);
+
+    if (nextErrorCount > 3) {
       setAuthenticationErrorCount(0);
       mutationLogout();
+      forceSessionExpiryLogout();
       return false;
     }
 
@@ -218,7 +249,15 @@ function ApiInterceptor() {
       }
     }
     try {
-      await mutationRenewAccessTokenAsync(undefined);
+      if (!refreshAccessTokenPromise) {
+        refreshAccessTokenPromise = mutationRenewAccessTokenAsync(undefined).finally(
+          () => {
+            refreshAccessTokenPromise = null;
+          },
+        );
+      }
+
+      await refreshAccessTokenPromise;
       setAuthenticationErrorCount(0);
       return await remakeRequest(error);
     } catch (refreshError) {
@@ -228,6 +267,7 @@ function ApiInterceptor() {
       } catch {
         // ignore logout API failure; useLogout handles local state cleanup
       }
+      forceSessionExpiryLogout();
       return null;
     }
   }

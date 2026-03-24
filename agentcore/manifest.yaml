@@ -114,3 +114,8 @@ deployments:
   version_number: v1
   environment: uat
   deployment_id: a17143cc-3d24-4216-99ea-be3951c383b7
+- agent_id: dd373b79-87d9-4abc-93ab-aef26a45d474
+  agent_name: testdev
+  version_number: v1
+  environment: prod
+  deployment_id: cf9448bb-ae9b-42dc-a338-7150e640c3c1

@@ -197,6 +197,9 @@ class AgentHeader(BaseModel):
     data: dict | None = Field(None, description="The data of the component")
     access_type: AccessTypeEnum | None = Field(None, description="The access type of the agent")
     tags: list[str] | None = Field(None, description="The tags of the agent")
+    created_by: str | None = Field(None, description="The username of the agent creator")
+    created_by_id: UUID | None = Field(None, description="The ID of the agent creator")
+    profile_image: str | None = Field(None, description="The profile image of the agent creator")
 
 class AgentUpdate(SQLModel):
     name: str | None = None

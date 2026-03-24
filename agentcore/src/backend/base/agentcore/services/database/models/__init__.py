@@ -26,6 +26,7 @@ from .agent_deployment_prod import AgentDeploymentProd
 from .agent_deployment_uat import AgentDeploymentUAT
 from .agent_registry import AgentRegistry, AgentRegistryRating
 from .approval_request import ApprovalRequest
+from .approval_notification import ApprovalNotification
 from .mcp_approval_request import McpApprovalRequest
 from .model_approval_request import ModelApprovalRequest
 from .model_audit_log import ModelAuditLog
@@ -66,6 +67,7 @@ __all__ = [
     "AgentDeploymentUAT",
     "AgentRegistry",
     "ApprovalRequest",
+    "ApprovalNotification",
     "McpApprovalRequest",
     "ModelApprovalRequest",
     "ModelAuditLog",
@@ -77,6 +79,7 @@ __all__ = [
     "Project",
     "Permission",
     "ApprovalRequest",
+    "ApprovalNotification",
     "McpApprovalRequest",
     "ModelApprovalRequest",
     "ModelAuditLog",

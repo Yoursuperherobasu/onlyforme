@@ -740,6 +740,17 @@ async def _persist_hitl_request(
                 is_deployed_run=is_deployed,
             )
             _db.add(_hitl)
+            if assigned_to:
+                from agentcore.services.approval_notifications import upsert_approval_notification
+
+                await upsert_approval_notification(
+                    _db,
+                    recipient_user_id=assigned_to,
+                    entity_type="hitl_assignment",
+                    entity_id=str(_hitl.id),
+                    title="A HITL approval task is awaiting your review.",
+                    link="/hitl-approvals",
+                )
             await _db.commit()
             logger.info(f"[HITL] Persisted HITLRequest for thread_id={thread_id!r} (deployed={is_deployed})")
     except Exception as _err:

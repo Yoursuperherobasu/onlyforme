@@ -11,6 +11,11 @@ import type {
   QueryFunctionType,
 } from "../../../types/api";
 
+const isAuthenticationError = (error: unknown) => {
+  const status = (error as { response?: { status?: number } })?.response?.status;
+  return status === 401 || status === 403;
+};
+
 export function UseRequestProcessor(): {
   query: QueryFunctionType;
   mutate: MutationFunctionType;
@@ -26,7 +31,12 @@ export function UseRequestProcessor(): {
     return useQuery({
       queryKey,
       queryFn,
-      retry: 5,
+      retry: (failureCount, error) => {
+        if (isAuthenticationError(error)) {
+          return false;
+        }
+        return failureCount < 5;
+      },
       retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 30000),
       ...options,
     });
@@ -45,7 +55,14 @@ export function UseRequestProcessor(): {
         options.onSettled && options.onSettled(data, error, variables, context);
       },
       ...options,
-      retry: options.retry ?? 3,
+      retry:
+        options.retry ??
+        ((failureCount, error) => {
+          if (isAuthenticationError(error)) {
+            return false;
+          }
+          return failureCount < 3;
+        }),
       retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 30000),
     });
   }

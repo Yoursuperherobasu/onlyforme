@@ -52,6 +52,7 @@ from agentcore.services.database.models.user.model import User
 from agentcore.services.database.models.agent_api_key.model import AgentApiKey
 from agentcore.services.database.registry_service import sync_agent_registry
 from agentcore.services.auth.utils import generate_agent_api_key
+from agentcore.services.approval_notifications import upsert_approval_notification
 
 router = APIRouter(prefix="/control-panel", tags=["Control Panel"])
 
@@ -1134,6 +1135,10 @@ async def promote_uat_to_prod(
                 ),
             )
 
+        # Validate all models and MCP servers are available for PROD
+        from agentcore.api.publish import _validate_resources_for_prod
+        await _validate_resources_for_prod((uat_dep.agent_snapshot or {}), session)
+
         new_record = AgentDeploymentProd(
             agent_id=uat_dep.agent_id,
             org_id=uat_dep.org_id,
@@ -1186,6 +1191,14 @@ async def promote_uat_to_prod(
             )
             session.add(approval)
             await session.flush()
+            await upsert_approval_notification(
+                session,
+                recipient_user_id=department.admin_user_id,
+                entity_type="agent_publish_request",
+                entity_id=str(approval.id),
+                title=f'Agent "{new_record.agent_name}" awaiting your approval.',
+                link="/approval",
+            )
             new_record.approval_id = approval.id
             session.add(new_record)
 
