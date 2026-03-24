@@ -18,9 +18,28 @@ type RegionStoreState = {
   clearRegion: () => void;
 };
 
+const normalizeRegionCode = (code: string | null | undefined) => {
+  const trimmedCode = code?.trim() ?? "";
+  return trimmedCode.length > 0 ? trimmedCode : null;
+};
+
+const sanitizeRegions = (regions: RegionInfo[]) =>
+  regions
+    .map((region) => {
+      const code = normalizeRegionCode(region.code);
+      if (!code) return null;
+
+      return {
+        ...region,
+        code,
+        name: region.name?.trim() || code,
+      };
+    })
+    .filter((region): region is RegionInfo => region !== null);
+
 const useRegionStore = create<RegionStoreState>((set, get) => ({
   regions: [],
-  selectedRegionCode: sessionStorage.getItem("selected_region") || null,
+  selectedRegionCode: normalizeRegionCode(sessionStorage.getItem("selected_region")),
   loading: false,
   error: null,
 
@@ -28,16 +47,21 @@ const useRegionStore = create<RegionStoreState>((set, get) => ({
     set({ loading: true, error: null });
     try {
       const response = await api.get<RegionInfo[]>("/api/dashboard/regions");
-      const regions = response.data ?? [];
-      set({ regions, loading: false });
-
-      // If no region selected yet, default to hub region
+      const regions = sanitizeRegions(response.data ?? []);
       const current = get().selectedRegionCode;
-      if (!current && regions.length > 0) {
-        const hub = regions.find((r) => r.is_hub);
-        const defaultCode = hub ? hub.code : regions[0].code;
-        set({ selectedRegionCode: defaultCode });
-        sessionStorage.setItem("selected_region", defaultCode);
+      const hasCurrentRegion = !!current && regions.some((region) => region.code === current);
+      const nextSelectedRegionCode = hasCurrentRegion
+        ? current
+        : regions.length > 0
+          ? (regions.find((r) => r.is_hub)?.code ?? regions[0].code)
+          : null;
+
+      set({ regions, selectedRegionCode: nextSelectedRegionCode, loading: false });
+
+      if (nextSelectedRegionCode) {
+        sessionStorage.setItem("selected_region", nextSelectedRegionCode);
+      } else {
+        sessionStorage.removeItem("selected_region");
       }
     } catch (e: any) {
       set({ loading: false, error: e?.message ?? "Failed to load regions" });
@@ -45,8 +69,14 @@ const useRegionStore = create<RegionStoreState>((set, get) => ({
   },
 
   setSelectedRegion: (code: string) => {
-    set({ selectedRegionCode: code });
-    sessionStorage.setItem("selected_region", code);
+    const normalizedCode = normalizeRegionCode(code);
+    set({ selectedRegionCode: normalizedCode });
+
+    if (normalizedCode) {
+      sessionStorage.setItem("selected_region", normalizedCode);
+    } else {
+      sessionStorage.removeItem("selected_region");
+    }
   },
 
   clearRegion: () => {
