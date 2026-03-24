@@ -7,7 +7,6 @@ from agentcore.custom.custom_node.node import Node
 from agentcore.helpers.data import data_to_text
 from agentcore.inputs.inputs import BoolInput, DropdownInput, HandleInput, IntInput, MessageTextInput, MultilineInput, TabInput
 from agentcore.memory import aget_messages, astore_message
-from agentcore.schema.content_block import ContentBlock
 from agentcore.schema.data import Data
 from agentcore.schema.dataframe import DataFrame
 from agentcore.schema.dotdict import dotdict
@@ -16,10 +15,8 @@ from agentcore.template.field.base import Output
 from agentcore.utils.component_utils import set_current_fields, set_field_display
 from agentcore.utils.constants import MESSAGE_SENDER_AI, MESSAGE_SENDER_NAME_AI, MESSAGE_SENDER_USER
 
-# STM Redis cache settings
+# STM Redis cache - used for playground mode only (orch/PROD/UAT always read from DB)
 STM_CACHE_PREFIX = "stm:history:"
-# LTM Redis cache settings
-LTM_CACHE_PREFIX = "ltm:context:"
 
 
 class MemoryComponent(Node):
@@ -30,7 +27,7 @@ class MemoryComponent(Node):
     mode_config = {
         "Store": ["message", "memory", "sender", "sender_name", "session_id"],
         "Retrieve": ["n_messages", "order", "template", "memory"],
-        "Short Term Memory": ["input_value", "n_messages", "session_id", "enable_ltm", "ltm_retrieval_mode", "ltm_max_summary_tokens", "ltm_max_context_chars", "ltm_pinecone_top_k", "ltm_neo4j_top_k", "template", "memory"],
+        "Short Term Memory": ["input_value", "n_messages", "session_id", "enable_ltm", "ltm_share_across_sessions", "ltm_retrieval_mode", "ltm_max_summary_tokens", "ltm_max_context_chars", "ltm_pinecone_top_k", "ltm_neo4j_top_k", "template", "memory"],
     }
 
     inputs = [
@@ -73,6 +70,13 @@ class MemoryComponent(Node):
             info="When enabled, cross-session memory from Pinecone/Neo4j is also included alongside session history.",
             show=False,
             real_time_refresh=True,
+        ),
+        BoolInput(
+            name="ltm_share_across_sessions",
+            display_name="Share LTM Across Sessions",
+            value=False,
+            info="When enabled, LTM retrieval includes summaries from all of this user's past sessions (not just the current one). Storage remains per-session.",
+            show=False,
         ),
         HandleInput(
             name="llm",
@@ -243,6 +247,8 @@ class MemoryComponent(Node):
             ]
         return frontend_node
 
+    # ── Redis STM cache (playground only) ──────────────────────────────
+
     def _get_redis_client_and_ttl(self):
         """Get the Redis client and STM TTL from settings. Returns (None, 300) if Redis is unavailable."""
         try:
@@ -257,43 +263,29 @@ class MemoryComponent(Node):
             logger.debug("[STM] Redis not available, skipping cache layer")
         return None, 300
 
-    def _detect_env(self) -> str:
-        """Detect the execution environment from graph flags.
-        Returns: 'orch', 'dev' (default).
-        """
-        if (
-            hasattr(self, "graph")
-            and getattr(self.graph, "skip_dev_logging", False)
-            and getattr(self.graph, "orch_deployment_id", None)
-        ):
-            return "orch"
-        return "dev"
-
     async def _get_stm_cache(self, session_id: str, n_messages: int) -> list[dict] | None:
-        """Try to get cached STM history from Redis."""
+        """Try to get cached STM history from Redis (playground only)."""
         redis, _ = self._get_redis_client_and_ttl()
         if not redis:
             return None
         try:
-            env = self._detect_env()
-            cache_key = f"{STM_CACHE_PREFIX}{env}:{session_id}:{n_messages}"
+            cache_key = f"{STM_CACHE_PREFIX}{session_id}:{n_messages}"
             data = await redis.get(cache_key)
             if data:
-                logger.info(f"[STM] Cache HIT for session={session_id}, n={n_messages}, env={env}")
+                logger.info(f"[STM] Cache HIT for session={session_id}, n={n_messages}")
                 return json.loads(data)
-            logger.debug(f"[STM] Cache MISS for session={session_id}, n={n_messages}, env={env}")
+            logger.debug(f"[STM] Cache MISS for session={session_id}, n={n_messages}")
         except Exception as e:
             logger.warning(f"[STM] Redis cache read failed: {e}")
         return None
 
     async def _set_stm_cache(self, session_id: str, n_messages: int, messages: list[Message]) -> None:
-        """Cache STM history in Redis with TTL from settings (STM_CACHE_TTL env var)."""
+        """Cache STM history in Redis (playground only)."""
         redis, ttl = self._get_redis_client_and_ttl()
         if not redis:
             return
         try:
-            env = self._detect_env()
-            cache_key = f"{STM_CACHE_PREFIX}{env}:{session_id}:{n_messages}"
+            cache_key = f"{STM_CACHE_PREFIX}{session_id}:{n_messages}"
             data = []
             for m in messages:
                 entry = {
@@ -303,6 +295,7 @@ class MemoryComponent(Node):
                     "files": [str(f.path) if hasattr(f, "path") else str(f) for f in (m.files or [])],
                 }
                 if m.content_blocks:
+                    from agentcore.schema.content_block import ContentBlock
                     entry["content_blocks"] = [
                         cb.model_dump() if hasattr(cb, "model_dump") else cb
                         for cb in m.content_blocks
@@ -313,27 +306,7 @@ class MemoryComponent(Node):
         except Exception as e:
             logger.warning(f"[STM] Redis cache write failed: {e}")
 
-    async def _invalidate_stm_cache(self, session_id: str, env: str | None = None) -> None:
-        """Invalidate all STM cache entries for a session (any n_messages value).
-        If env is None, invalidates across all environments for safety.
-        """
-        redis, _ = self._get_redis_client_and_ttl()
-        if not redis:
-            return
-        try:
-            if env:
-                pattern = f"{STM_CACHE_PREFIX}{env}:{session_id}:*"
-            else:
-                # Invalidate all envs for this session
-                pattern = f"{STM_CACHE_PREFIX}*:{session_id}:*"
-            keys = []
-            async for key in redis.scan_iter(match=pattern, count=100):
-                keys.append(key)
-            if keys:
-                await redis.delete(*keys)
-                logger.debug(f"[STM] Invalidated {len(keys)} cache entries for session={session_id}")
-        except Exception as e:
-            logger.warning(f"[STM] Redis cache invalidation failed: {e}")
+    # ── DB fetch helpers ───────────────────────────────────────────────
 
     async def _fetch_orch_messages(self, session_id: str, limit: int) -> list[Message]:
         """Fetch messages from orch_conversation table (for deployed agents via orchestrator)."""
@@ -579,95 +552,89 @@ class MemoryComponent(Node):
                 else:
                     await astore_message(user_message, agent_id=self.graph.agent_id if hasattr(self, "graph") else None)
 
-        # Fetch the top K latest messages — try Redis cache first, fall back to DB
+        # Fetch the top K latest messages — always from DB (no Redis cache)
         history_messages: list[Message] = []
         history_source = "none"
         if session_id:
             if self.memory:
-                # External memory — always fetch directly, no Redis caching
+                # External memory — fetch directly
                 self.memory.session_id = session_id
                 lc_messages = await self.memory.aget_messages()
                 history_messages = [Message.from_lc_message(m) for m in lc_messages] if lc_messages else []
                 history_messages = history_messages[-n_messages:]
                 history_source = "external_memory"
             else:
-                # Try Redis cache first
-                cached = await self._get_stm_cache(session_id, n_messages)
-                if cached is not None:
-                    history_messages = []
-                    for m in cached:
-                        msg = Message(
-                            text=m["text"],
-                            sender=m.get("sender", ""),
-                            sender_name=m.get("sender_name", ""),
-                            files=m.get("files") or [],
-                        )
-                        if m.get("content_blocks"):
-                            msg.content_blocks = [
-                                ContentBlock(**cb) for cb in m["content_blocks"]
-                            ]
-                        history_messages.append(msg)
-                    # Check if the current user message is already in the cached history
-                    # (ChatInput stored it in DB but cache may not have it yet)
-                    if current_text and already_stored:
-                        last_cached_text = cached[-1]["text"] if cached else ""
-                        if last_cached_text != current_text:
-                            # Append current user message to cached history
-                            user_msg = Message(
-                                text=current_text,
-                                sender=current_input.sender if isinstance(current_input, Message) else MESSAGE_SENDER_USER,
-                                sender_name=current_input.sender_name if isinstance(current_input, Message) else "User",
-                                files=current_input.files if isinstance(current_input, Message) else [],
-                            )
-                            history_messages.append(user_msg)
-                            # Trim to n_messages limit
-                            if len(history_messages) > n_messages:
-                                history_messages = history_messages[-n_messages:]
-                            # Update cache with appended user message
-                            await self._set_stm_cache(session_id, n_messages, history_messages)
-                            logger.info(f"[STM] Appended current user message to cache for session={session_id}")
-                    history_source = "redis_cache"
-                else:
-                    # Cache miss — fetch from DB
-                    # Detect orchestrator mode from graph flags
-                    is_orch = (
-                        hasattr(self, "graph")
-                        and getattr(self.graph, "skip_dev_logging", False)
-                        and getattr(self.graph, "orch_deployment_id", None)
-                    )
+                # Detect orchestrator mode from graph flags
+                is_orch = (
+                    hasattr(self, "graph")
+                    and getattr(self.graph, "skip_dev_logging", False)
+                    and getattr(self.graph, "orch_deployment_id", None)
+                )
 
-                    if is_orch:
-                        # Orchestrator mode — read from orch_conversation directly
-                        orch_dep_id = getattr(self.graph, "orch_deployment_id", "?")
-                        logger.info(f"[STM] Orchestrator mode detected (deployment_id={orch_dep_id}), reading from orch_conversation")
-                        history_messages = await self._fetch_orch_messages(session_id, n_messages)
-                        history_source = "orch_database"
+                if is_orch:
+                    orch_dep_id = getattr(self.graph, "orch_deployment_id", "?")
+                    logger.info(f"[STM] Orchestrator mode detected (deployment_id={orch_dep_id}), reading from orch_conversation")
+                    history_messages = await self._fetch_orch_messages(session_id, n_messages)
+                    history_messages = list(reversed(history_messages))
+                    history_source = "orch_database"
+                else:
+                    # Non-orchestrator: check PROD → UAT → Dev (priority order)
+                    # PROD/UAT always read from DB; playground uses Redis cache
+                    history_messages = await self._fetch_prod_messages(session_id, n_messages)
+                    if history_messages:
+                        history_source = "prod_database"
+                        history_messages = list(reversed(history_messages))
                     else:
-                        # Non-orchestrator: check PROD → UAT → Dev (priority order)
-                        # PROD first
-                        history_messages = await self._fetch_prod_messages(session_id, n_messages)
+                        history_messages = await self._fetch_uat_messages(session_id, n_messages)
                         if history_messages:
-                            history_source = "prod_database"
+                            history_source = "uat_database"
+                            history_messages = list(reversed(history_messages))
                         else:
-                            # UAT second
-                            history_messages = await self._fetch_uat_messages(session_id, n_messages)
-                            if history_messages:
-                                history_source = "uat_database"
+                            # Playground — try Redis cache first, fall back to DB
+                            cached = await self._get_stm_cache(session_id, n_messages)
+                            if cached is not None:
+                                from agentcore.schema.content_block import ContentBlock
+                                history_messages = []
+                                for m in cached:
+                                    msg = Message(
+                                        text=m["text"],
+                                        sender=m.get("sender", ""),
+                                        sender_name=m.get("sender_name", ""),
+                                        files=m.get("files") or [],
+                                    )
+                                    if m.get("content_blocks"):
+                                        msg.content_blocks = [
+                                            ContentBlock(**cb) for cb in m["content_blocks"]
+                                        ]
+                                    history_messages.append(msg)
+                                # Append current user message if not in cache yet
+                                if current_text and already_stored:
+                                    last_cached_text = cached[-1]["text"] if cached else ""
+                                    if last_cached_text != current_text:
+                                        user_msg = Message(
+                                            text=current_text,
+                                            sender=current_input.sender if isinstance(current_input, Message) else MESSAGE_SENDER_USER,
+                                            sender_name=current_input.sender_name if isinstance(current_input, Message) else "User",
+                                            files=current_input.files if isinstance(current_input, Message) else [],
+                                        )
+                                        history_messages.append(user_msg)
+                                        if len(history_messages) > n_messages:
+                                            history_messages = history_messages[-n_messages:]
+                                        await self._set_stm_cache(session_id, n_messages, history_messages)
+                                        logger.info(f"[STM] Appended current user message to cache for session={session_id}")
+                                history_source = "redis_cache"
                             else:
-                                # Dev/playground fallback
+                                # Cache miss — fetch from Dev DB
                                 history_messages = await aget_messages(
                                     session_id=session_id,
                                     order="DESC",
                                     limit=n_messages,
                                 )
+                                history_messages = list(reversed(history_messages))
+                                # Cache for next request
+                                if history_messages:
+                                    await self._set_stm_cache(session_id, n_messages, history_messages)
                                 history_source = "database"
-
-                    # Reverse to chronological order (oldest first)
-                    history_messages = list(reversed(history_messages))
-
-                    # Cache the fresh DB result in Redis for rapid re-fetches
-                    if history_messages:
-                        await self._set_stm_cache(session_id, n_messages, history_messages)
 
         # Log file info for each history message to trace image flow
         for i, msg in enumerate(history_messages):
@@ -695,30 +662,73 @@ class MemoryComponent(Node):
         connected_llm = getattr(self, "llm", None)
         agent_id = self._effective_agent_id()
 
-        if enable_ltm and agent_id and current_text:
-            logger.info(f"[LTM] LTM enabled for agent={agent_id}")
-            # Retrieve LTM context
+        if enable_ltm and agent_id and current_text and session_id:
+            ltm_share = getattr(self, "ltm_share_across_sessions", False)
+            logger.info(f"[LTM] LTM enabled | session={session_id} | agent={agent_id} | cross_session={ltm_share}")
             try:
                 from agentcore.services.ltm import LTM_DEFAULTS
                 retrieval_mode = getattr(self, "ltm_retrieval_mode", "Both") or "Both"
                 pinecone_top_k = getattr(self, "ltm_pinecone_top_k", LTM_DEFAULTS["pinecone_top_k"]) or LTM_DEFAULTS["pinecone_top_k"]
                 neo4j_top_k = getattr(self, "ltm_neo4j_top_k", LTM_DEFAULTS["neo4j_top_k"]) or LTM_DEFAULTS["neo4j_top_k"]
                 max_context_chars = getattr(self, "ltm_max_context_chars", LTM_DEFAULTS["max_context_chars"]) or LTM_DEFAULTS["max_context_chars"]
-                from agentcore.services.ltm.retriever import retrieve
-                # Let retriever auto-detect environment (PROD/UAT/Dev)
-                # from deployment tables — it resolves the exact env
-                ltm_context = await retrieve(
-                    query=current_text,
-                    agent_id=agent_id,
-                    mode=retrieval_mode,
-                    pinecone_top_k=pinecone_top_k,
-                    neo4j_top_k=neo4j_top_k,
-                )
+
+                if ltm_share:
+                    # Cross-session: query all of this user's past sessions
+                    from agentcore.services.ltm.retriever import (
+                        retrieve_cross_session, _get_playground_sessions,
+                        _get_orch_sessions, _get_uat_api_sessions,
+                        _get_prod_api_sessions,
+                    )
+
+                    # Detect context from graph flags (set by orchestrator.py / endpoints.py)
+                    graph = self.graph if hasattr(self, "graph") else None
+                    orch_dep_id = getattr(graph, "orch_deployment_id", None) if graph else None
+                    prod_dep_id = getattr(graph, "prod_deployment_id", None) if graph else None
+                    uat_dep_id = getattr(graph, "uat_deployment_id", None) if graph else None
+                    user_id = getattr(graph, "user_id", None) if graph else None
+
+                    if orch_dep_id:
+                        # Orchestrator — use orch_conversation table
+                        session_ids = await _get_orch_sessions(str(user_id), str(agent_id))
+                    elif prod_dep_id:
+                        # Direct API — PROD agent
+                        session_ids = await _get_prod_api_sessions(str(prod_dep_id))
+                    elif uat_dep_id:
+                        # Direct API — UAT agent
+                        session_ids = await _get_uat_api_sessions(str(uat_dep_id))
+                    else:
+                        # Playground
+                        session_ids = await _get_playground_sessions(str(agent_id))
+
+                    # Always include current session
+                    if session_id not in session_ids:
+                        session_ids.insert(0, session_id)
+
+                    logger.info(f"[LTM] Cross-session: {len(session_ids)} sessions")
+
+                    ltm_context = await retrieve_cross_session(
+                        query=current_text,
+                        session_ids=session_ids,
+                        mode=retrieval_mode,
+                        pinecone_top_k=pinecone_top_k,
+                        neo4j_top_k=neo4j_top_k,
+                    )
+                else:
+                    # Single session: current behavior
+                    from agentcore.services.ltm.retriever import retrieve
+                    ltm_context = await retrieve(
+                        query=current_text,
+                        session_id=session_id,
+                        mode=retrieval_mode,
+                        pinecone_top_k=pinecone_top_k,
+                        neo4j_top_k=neo4j_top_k,
+                    )
+
                 # Truncate LTM context to max chars
                 if ltm_context and len(ltm_context) > max_context_chars:
                     ltm_context = ltm_context[:max_context_chars] + "\n... (truncated)"
                 if ltm_context:
-                    logger.info(f"[LTM] Retrieved {len(ltm_context)} chars of cross-session context")
+                    logger.info(f"[LTM] Retrieved {len(ltm_context)} chars of LTM context for session={session_id}")
             except Exception as e:
                 logger.error(f"[LTM] Retrieval failed: {e}")
 

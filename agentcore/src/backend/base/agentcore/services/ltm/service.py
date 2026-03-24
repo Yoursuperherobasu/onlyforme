@@ -1,9 +1,12 @@
 """LTM Background Processor Service.
 
 Manages the Long Term Memory pipeline using in-memory tracking + Redis cache:
-1. Tracks message counts per agent_id (in-memory dict + Redis for persistence)
-2. Marks agents as "ready for processing" after N messages OR time interval
+1. Tracks message counts per session_id (in-memory dict + Redis for persistence)
+2. Marks sessions as "ready for processing" after N messages OR time interval
 3. Actual processing happens inline when the Memory component runs with a connected LLM
+
+Data isolation: LTM is scoped by session_id so each session's summaries are
+completely isolated. No cross-session or cross-user data sharing.
 """
 
 from __future__ import annotations
@@ -26,7 +29,7 @@ class LTMService(Service):
 
     The LLM for summarization/fact extraction always comes from the agent's flow
     (connected via HandleInput on the Memory component). This service only:
-    - Tracks message counts per agent_id (in-memory + Redis)
+    - Tracks message counts per session_id (in-memory + Redis)
     - Checks if threshold is reached
     - Runs the pipeline when called with an LLM by the Memory component
     """
@@ -36,7 +39,7 @@ class LTMService(Service):
     def __init__(self) -> None:
         self._scheduler = None
         self._started = False
-        self._agents_in_progress: set[str] = set()
+        self._sessions_in_progress: set[str] = set()
         # In-memory fallback when Redis is unavailable
         self._message_counts: dict[str, int] = defaultdict(int)
 
@@ -98,8 +101,9 @@ class LTMService(Service):
     async def on_message_stored(self, agent_id: str | UUID, session_id: str | None = None) -> None:
         """Called by ChatOutput after storing a message. Increments the message counter.
 
-        When the count reaches the threshold, the LTM pipeline is scheduled immediately
-        as a background task via asyncio.create_task so it never blocks the chat flow.
+        Counter is keyed by session_id for data isolation — each session's LTM
+        is completely separate. When the count reaches the threshold, the LTM
+        pipeline is scheduled as a background task.
         """
         from agentcore.services.deps import get_settings_service
 
@@ -107,35 +111,38 @@ class LTMService(Service):
         if not settings.ltm_enabled:
             return
 
-        agent_id_str = str(agent_id)
+        session_id_str = str(session_id) if session_id else None
+        if not session_id_str:
+            return  # No session = no LTM tracking
+
         count = 0  # track final count for threshold check
 
         try:
             # Try Redis first, fall back to in-memory
             redis = self._get_redis()
             if redis:
-                key = f"{LTM_COUNT_PREFIX}{agent_id_str}"
+                key = f"{LTM_COUNT_PREFIX}{session_id_str}"
                 count = await redis.incr(key)
                 # Set TTL of 24h so keys don't accumulate forever
                 await redis.expire(key, 86400)
             else:
-                self._message_counts[agent_id_str] += 1
-                count = self._message_counts[agent_id_str]
+                self._message_counts[session_id_str] += 1
+                count = self._message_counts[session_id_str]
 
-            logger.info(f"[LTM] Message count for agent={agent_id_str}: {count}/{settings.ltm_message_threshold}")
+            logger.info(f"[LTM] Message count for session={session_id_str}: {count}/{settings.ltm_message_threshold}")
         except Exception as e:
             # Fallback to in-memory
-            self._message_counts[agent_id_str] += 1
-            count = self._message_counts[agent_id_str]
+            self._message_counts[session_id_str] += 1
+            count = self._message_counts[session_id_str]
             logger.debug(f"[LTM] on_message_stored (in-memory fallback): {e}")
 
         # Fire the pipeline when threshold is reached or exceeded, but only if not already running
-        if count >= settings.ltm_message_threshold and agent_id_str not in self._agents_in_progress:
+        if count >= settings.ltm_message_threshold and session_id_str not in self._sessions_in_progress:
             logger.info(
                 f"[LTM] Threshold reached ({count}/{settings.ltm_message_threshold}), "
-                f"scheduling pipeline for agent={agent_id_str}"
+                f"scheduling pipeline for session={session_id_str}"
             )
-            asyncio.create_task(self.process_with_llm(agent_id_str))
+            asyncio.create_task(self.process_with_llm(session_id_str, agent_id=str(agent_id)))
 
     async def _time_based_sweep(self) -> None:
         """Periodic sweep: process sessions with pending messages that have reached the threshold."""
@@ -145,28 +152,26 @@ class LTMService(Service):
         threshold = settings.ltm_message_threshold
 
         try:
-            agents_to_process = []
+            sessions_to_process = []
             redis = self._get_redis()
             if redis:
                 async for key in redis.scan_iter(match=f"{LTM_COUNT_PREFIX}*", count=100):
                     val = await redis.get(key)
                     if val and int(val) >= threshold:
-                        # Extract agent_id from key: "ltm:msg_count:{agent_id}"
-                        agent_id = key.decode() if isinstance(key, bytes) else key
-                        agent_id = agent_id.replace(LTM_COUNT_PREFIX, "")
-                        agents_to_process.append(agent_id)
+                        # Extract session_id from key: "ltm:msg_count:{session_id}"
+                        session_id = key.decode() if isinstance(key, bytes) else key
+                        session_id = session_id.replace(LTM_COUNT_PREFIX, "")
+                        sessions_to_process.append(session_id)
             elif self._message_counts:
-                for agent_id, count in self._message_counts.items():
+                for session_id, count in self._message_counts.items():
                     if count >= threshold:
-                        agents_to_process.append(agent_id)
+                        sessions_to_process.append(session_id)
 
-            if agents_to_process:
-                logger.info(f"[LTM] Time sweep: {len(agents_to_process)} agents ready for processing")
-                for agent_id in agents_to_process:
-                    # Fire each agent's pipeline as an independent background task
-                    # so multiple agents are processed in parallel, not sequentially
-                    logger.info(f"[LTM] Time sweep: scheduling pipeline for agent={agent_id}")
-                    asyncio.create_task(self.process_with_llm(agent_id))
+            if sessions_to_process:
+                logger.info(f"[LTM] Time sweep: {len(sessions_to_process)} sessions ready for processing")
+                for session_id in sessions_to_process:
+                    logger.info(f"[LTM] Time sweep: scheduling pipeline for session={session_id}")
+                    asyncio.create_task(self.process_with_llm(session_id))
         except Exception as e:
             logger.debug(f"[LTM] Time-based sweep failed: {e}")
 
@@ -191,36 +196,37 @@ class LTMService(Service):
         except Exception:
             return self._message_counts.get(agent_id, 0) >= settings.ltm_message_threshold
 
-    async def process_with_llm(self, agent_id: str, llm=None) -> None:
-        """Run the LTM pipeline for an agent (across all sessions).
+    async def process_with_llm(self, session_id: str, llm=None, agent_id: str | None = None) -> None:
+        """Run the LTM pipeline for a specific session.
 
-        Uses the provided LLM or creates one from LTM settings (LTM_LLM_PROVIDER/MODEL).
+        Data isolation: each session's summaries are stored in a session-scoped
+        Pinecone namespace and Neo4j graph_kb_id. No cross-session data sharing.
 
         Pipeline:
-        1. Fetch recent messages since last processed (all sessions for this agent)
+        1. Fetch unsummarized messages for this session
         2. Summarize via LLM
         3. Extract facts/entities via LLM
-        4. Store entities to Neo4j
-        5. Store summary embedding to Pinecone
-        6. Reset counter
+        4. Store entities to Neo4j (session-scoped)
+        5. Store summary embedding to Pinecone (session-scoped)
+        6. Mark messages as summarized, reset counter
         """
-        logger.info(f"[LTM] process_with_llm called for agent={agent_id}")
+        logger.info(f"[LTM] process_with_llm called for session={session_id}")
 
-        if agent_id in self._agents_in_progress:
-            logger.info(f"[LTM] Skipping — agent {agent_id} already in progress")
+        if session_id in self._sessions_in_progress:
+            logger.info(f"[LTM] Skipping — session {session_id} already in progress")
             return
 
-        self._agents_in_progress.add(agent_id)
+        self._sessions_in_progress.add(session_id)
         try:
-            messages, env, message_ids = await self._get_recent_messages(agent_id)
+            messages, env, message_ids, source_table = await self._get_recent_messages(session_id)
             if not messages:
-                logger.info(f"[LTM] No recent messages found for agent={agent_id}, resetting counter")
-                await self._reset_counter(agent_id)
+                logger.info(f"[LTM] No recent messages found for session={session_id}, resetting counter")
+                await self._reset_counter(session_id)
                 return
 
-            logger.info(f"[LTM] Processing {len(messages)} messages for agent={agent_id} (env={env})")
+            logger.info(f"[LTM] Processing {len(messages)} messages for session={session_id} (env={env}, source={source_table})")
 
-            # 2. Summarize (uses agent's flow LLM — same model user selected in canvas)
+            # 2. Summarize via LLM
             from agentcore.services.deps import get_settings_service
             max_summary_tokens = get_settings_service().settings.ltm_max_summary_tokens
             from agentcore.services.ltm.summarizer import summarize_conversation
@@ -228,54 +234,54 @@ class LTMService(Service):
             if not summary:
                 return
 
-            # 3. Extract facts (uses agent's flow LLM)
+            # 3. Extract facts via LLM
             from agentcore.services.ltm.fact_extractor import extract_facts
             facts = await extract_facts(summary, llm, agent_id=agent_id)
 
-            # 4. Store to Neo4j (namespaced by environment)
-            await self._store_to_neo4j(agent_id, facts, env=env)
+            # 4. Store to Neo4j (session-scoped namespace, env for suffix)
+            await self._store_to_neo4j(session_id, facts, env=env)
 
-            # 5. Store summary to Pinecone (namespaced by environment)
-            await self._store_to_pinecone(agent_id, summary, env=env)
+            # 5. Store summary to Pinecone (session-scoped namespace, env for suffix)
+            await self._store_to_pinecone(session_id, summary, env=env)
 
-            # 6. Mark messages as summarized in DB (permanent — survives Redis flush/TTL/restart)
-            await self._mark_messages_summarized(message_ids, env)
+            # 6. Mark messages as summarized in DB (source_table determines which table)
+            await self._mark_messages_summarized(message_ids, source_table)
 
             # 7. Reset counter
-            await self._reset_counter(agent_id)
+            await self._reset_counter(session_id)
 
-            logger.info(f"[LTM] ========== PIPELINE COMPLETED for agent={agent_id} ==========")
+            logger.info(f"[LTM] ========== PIPELINE COMPLETED for session={session_id} ==========")
         except Exception as e:
-            logger.error(f"[LTM] Pipeline failed for agent={agent_id}: {e}")
+            logger.error(f"[LTM] Pipeline failed for session={session_id}: {e}")
         finally:
-            self._agents_in_progress.discard(agent_id)
+            self._sessions_in_progress.discard(session_id)
 
-    async def _get_recent_messages(self, agent_id: str) -> tuple[list, str, list]:
-        """Fetch messages not yet LTM-summarized for this agent (all sessions).
+    async def _get_recent_messages(self, session_id: str) -> tuple[list, str, list, str]:
+        """Fetch messages not yet LTM-summarized for this session.
 
-        DB query filters WHERE ltm_summarized_at IS NULL — permanent dedup guarantee.
+        DB query filters WHERE session_id = X AND ltm_summarized_at IS NULL.
+        Returns (messages, env, row_ids, source_table).
         """
-        all_messages, env, row_ids = await self._query_messages_by_priority(agent_id)
-        logger.info(f"[LTM] Found {len(all_messages)} unsummarized messages for agent={agent_id}")
-        return all_messages, env, row_ids
+        all_messages, env, row_ids, source_table = await self._query_messages_by_priority(session_id)
+        logger.info(f"[LTM] Found {len(all_messages)} unsummarized messages for session={session_id}")
+        return all_messages, env, row_ids, source_table
 
-    async def _query_messages_by_priority(self, agent_id: str) -> tuple[list, str, list]:
-        """Query all messages for this agent from orch_conversation first, then dev conversation.
-
-        For orch_conversation, resolves environment (PROD/UAT) by checking
-        the deployment_id against AgentDeploymentProd/AgentDeploymentUAT tables.
+    async def _query_messages_by_priority(self, session_id: str) -> tuple[list, str, list, str]:
+        """Query unsummarized messages for this session from all tables (priority order).
 
         Priority:
           1. orch_conversation (deployed agents — both UAT & PROD)
-          2. conversation (dev/playground — fallback)
+          2. conversation_prod
+          3. conversation_uat
+          4. conversation (dev/playground — fallback)
 
-        Returns (messages, environment_name).
+        Returns (messages, environment_name, row_ids, source_table).
+        - environment_name: "UAT"/"PROD"/"Dev" — for Pinecone/Neo4j namespace suffix
+        - source_table: "Orchestrator"/"PROD"/"UAT"/"Dev" — for _mark_messages_summarized
         """
         from sqlmodel import col, select
         from agentcore.services.deps import session_scope
         from agentcore.schema.message import Message
-
-        agent_uuid = UUID(agent_id)
 
         # 1. Check orch_conversation first (all deployed agents)
         try:
@@ -284,7 +290,7 @@ class LTMService(Service):
             async with session_scope() as session:
                 stmt = (
                     select(OrchConversationTable)
-                    .where(OrchConversationTable.agent_id == agent_uuid)
+                    .where(OrchConversationTable.session_id == session_id)
                     .where(OrchConversationTable.error == False)  # noqa: E712
                     .where(OrchConversationTable.ltm_summarized_at.is_(None))
                     .order_by(col(OrchConversationTable.timestamp).asc())
@@ -294,26 +300,25 @@ class LTMService(Service):
                 rows = list(results.all())
 
                 if rows:
-                    # Resolve environment from deployment_id
                     env = await self._resolve_orch_environment(rows, session)
                     logger.info(
-                        f"[LTM] Fetched {len(rows)} messages from orch_conversation [pre-filter] "
-                        f"(env={env}) for agent={agent_id}"
+                        f"[LTM] Fetched {len(rows)} messages from orch_conversation "
+                        f"(env={env}) for session={session_id}"
                     )
                     row_ids = [r.id for r in rows]
                     messages = [await Message.create(**r.model_dump()) for r in rows]
-                    return messages, env, row_ids
+                    return messages, env, row_ids, "Orchestrator"
         except Exception as e:
             logger.debug(f"[LTM] Skipping orch_conversation: {e}")
 
-        # 2. Check conversation_prod table (PROD deployed agents)
+        # 2. Check conversation_prod table
         try:
             from agentcore.services.database.models.conversation_prod.model import ConversationProdTable
 
             async with session_scope() as session:
                 stmt = (
                     select(ConversationProdTable)
-                    .where(ConversationProdTable.agent_id == agent_uuid)
+                    .where(ConversationProdTable.session_id == session_id)
                     .where(ConversationProdTable.error == False)  # noqa: E712
                     .where(ConversationProdTable.ltm_summarized_at.is_(None))
                     .order_by(col(ConversationProdTable.timestamp).asc())
@@ -324,23 +329,23 @@ class LTMService(Service):
 
                 if rows:
                     logger.info(
-                        f"[LTM] Fetched {len(rows)} messages from conversation_prod (PROD) [pre-filter] "
-                        f"for agent={agent_id}"
+                        f"[LTM] Fetched {len(rows)} messages from conversation_prod (PROD) "
+                        f"for session={session_id}"
                     )
                     row_ids = [r.id for r in rows]
                     messages = [await Message.create(**r.model_dump()) for r in rows]
-                    return messages, "PROD", row_ids
+                    return messages, "PROD", row_ids, "PROD"
         except Exception as e:
             logger.debug(f"[LTM] Skipping conversation_prod: {e}")
 
-        # 3. Check conversation_uat table (UAT deployed agents)
+        # 3. Check conversation_uat table
         try:
             from agentcore.services.database.models.conversation_uat.model import ConversationUATTable
 
             async with session_scope() as session:
                 stmt = (
                     select(ConversationUATTable)
-                    .where(ConversationUATTable.agent_id == agent_uuid)
+                    .where(ConversationUATTable.session_id == session_id)
                     .where(ConversationUATTable.error == False)  # noqa: E712
                     .where(ConversationUATTable.ltm_summarized_at.is_(None))
                     .order_by(col(ConversationUATTable.timestamp).asc())
@@ -351,12 +356,12 @@ class LTMService(Service):
 
                 if rows:
                     logger.info(
-                        f"[LTM] Fetched {len(rows)} messages from conversation_uat (UAT) [pre-filter] "
-                        f"for agent={agent_id}"
+                        f"[LTM] Fetched {len(rows)} messages from conversation_uat (UAT) "
+                        f"for session={session_id}"
                     )
                     row_ids = [r.id for r in rows]
                     messages = [await Message.create(**r.model_dump()) for r in rows]
-                    return messages, "UAT", row_ids
+                    return messages, "UAT", row_ids, "UAT"
         except Exception as e:
             logger.debug(f"[LTM] Skipping conversation_uat: {e}")
 
@@ -367,7 +372,7 @@ class LTMService(Service):
             async with session_scope() as session:
                 stmt = (
                     select(ConversationTable)
-                    .where(ConversationTable.agent_id == agent_uuid)
+                    .where(ConversationTable.session_id == session_id)
                     .where(ConversationTable.error == False)  # noqa: E712
                     .where(ConversationTable.ltm_summarized_at.is_(None))
                     .order_by(col(ConversationTable.timestamp).asc())
@@ -378,16 +383,16 @@ class LTMService(Service):
 
                 if rows:
                     logger.info(
-                        f"[LTM] Fetched {len(rows)} messages from conversation (Dev) [pre-filter] "
-                        f"for agent={agent_id}"
+                        f"[LTM] Fetched {len(rows)} messages from conversation (Dev) "
+                        f"for session={session_id}"
                     )
                     row_ids = [r.id for r in rows]
                     messages = [await Message.create(**r.model_dump()) for r in rows]
-                    return messages, "Dev", row_ids
+                    return messages, "Dev", row_ids, "Dev"
         except Exception as e:
             logger.debug(f"[LTM] Skipping conversation: {e}")
 
-        return [], "Dev", []
+        return [], "Dev", [], "Dev"
 
     async def _resolve_orch_environment(self, rows: list, session) -> str:
         """Resolve PROD vs UAT from orch_conversation deployment_id.
@@ -460,21 +465,21 @@ class LTMService(Service):
         except Exception as e:
             logger.error(f"[LTM] Failed to mark messages summarized: {e}")
 
-    async def _reset_counter(self, agent_id: str) -> None:
+    async def _reset_counter(self, session_id: str) -> None:
         """Reset message counter after pipeline run."""
         try:
             redis = self._get_redis()
             if redis:
-                await redis.set(f"{LTM_COUNT_PREFIX}{agent_id}", 0)
+                await redis.set(f"{LTM_COUNT_PREFIX}{session_id}", 0)
             else:
-                self._message_counts[agent_id] = 0
+                self._message_counts[session_id] = 0
         except Exception:
-            self._message_counts[agent_id] = 0
+            self._message_counts[session_id] = 0
 
-    async def _store_to_neo4j(self, agent_id: str, facts: dict, env: str = "Dev") -> None:
+    async def _store_to_neo4j(self, session_id: str, facts: dict, env: str = "Dev") -> None:
         """Store extracted entities and relationships to Neo4j (direct connection).
 
-        Namespaces data by environment so PROD/UAT/Dev data stays separate.
+        Namespaces by session_id + environment for complete data isolation.
         """
         from agentcore.services.deps import get_settings_service
 
@@ -488,9 +493,8 @@ class LTMService(Service):
         if not entities:
             return
 
-        # Namespace by environment: ltm_{agent_id}_prod, ltm_{agent_id}_uat, ltm_{agent_id}
-        env_suffix = f"_{env.lower()}" if env != "Dev" else ""
-        graph_kb_id = f"{settings.ltm_neo4j_graph_kb_id}_{agent_id}{env_suffix}"
+        # Namespace by session + environment: ltm_{session_id}_prod, ltm_{session_id}
+        graph_kb_id = f"{settings.ltm_neo4j_graph_kb_id}_{session_id}"
 
         try:
             from neo4j import GraphDatabase
@@ -546,12 +550,12 @@ class LTMService(Service):
                 logger.info(f"[LTM]   Neo4j Rel: {r.get('source')} --[{r.get('type')}]--> {r.get('target')}")
             logger.info(f"[LTM] === END NEO4J ===")
         except Exception as e:
-            logger.error(f"[LTM] Neo4j ingestion failed for agent={agent_id}: {e}")
+            logger.error(f"[LTM] Neo4j ingestion failed for session={session_id}: {e}")
 
-    async def _store_to_pinecone(self, agent_id: str, summary: str, env: str = "Dev") -> None:
+    async def _store_to_pinecone(self, session_id: str, summary: str, env: str = "Dev") -> None:
         """Store conversation summary embedding to Pinecone (direct connection).
 
-        Namespaces data by environment so PROD/UAT/Dev data stays separate.
+        Namespaces by session_id + environment for complete data isolation.
         """
         from agentcore.services.deps import get_settings_service
 
@@ -586,9 +590,8 @@ class LTMService(Service):
 
             embedding = await self._embed_text(summary)
 
-            # Namespace by environment: {agent_id}_prod, {agent_id}_uat, {agent_id}
-            env_suffix = f"_{env.lower()}" if env != "Dev" else ""
-            namespace = f"{agent_id}{env_suffix}"
+            # Namespace by session + environment: {session_id}_prod, {session_id}
+            namespace = f"{session_id}"
 
             # Dedup check: query existing summaries with this embedding
             # If a very similar summary already exists (cosine > 0.95), skip storage
@@ -616,7 +619,7 @@ class LTMService(Service):
                     "values": embedding,
                     "metadata": {
                         "summary": summary[:40000],
-                        "agent_id": agent_id,
+                        "session_id": session_id,
                         "environment": env,
                         "timestamp": timestamp,
                     },
@@ -629,7 +632,7 @@ class LTMService(Service):
             logger.info(f"[LTM] Embedding dimension: {len(embedding)}")
             logger.info(f"[LTM] === END PINECONE ===")
         except Exception as e:
-            logger.error(f"[LTM] Pinecone ingestion failed for agent={agent_id}: {e}")
+            logger.error(f"[LTM] Pinecone ingestion failed for session={session_id}: {e}")
 
     async def _embed_text(self, text: str) -> list[float]:
         """Generate embedding using the configured provider (OpenAI or Azure OpenAI)."""
