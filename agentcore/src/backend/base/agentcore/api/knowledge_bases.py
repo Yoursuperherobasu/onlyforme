@@ -449,15 +449,40 @@ async def list_knowledge_bases(
     payload: list[dict] = []
     role = normalize_role(getattr(current_user, "role", None) or "")
     creator_ids = {row.created_by for row in rows if row.created_by}
+    creator_display_map: dict[UUID, str] = {}
     creator_email_map: dict[UUID, str] = {}
     dept_name_map: dict[UUID, str] = {}
     org_name_map: dict[UUID, str] = {}
 
     if creator_ids:
         creator_rows = (
-            await session.exec(select(User.id, User.email, User.username).where(User.id.in_(list(creator_ids))))
+            await session.exec(
+                select(User.id, User.display_name, User.email, User.username).where(User.id.in_(list(creator_ids)))
+            )
         ).all()
-        creator_email_map = {uid: (email or username) for uid, email, username in creator_rows}
+        creator_display_map = {
+            uid: (
+                (str(display_name or "").strip())
+                or (
+                    str(email).split("@", 1)[0]
+                    if email and str(email).strip()
+                    else (
+                        str(username).split("@", 1)[0]
+                        if username and str(username).strip()
+                        else str(uid)
+                    )
+                )
+            )
+            for uid, display_name, email, username in creator_rows
+        }
+        creator_email_map = {
+            uid: (
+                str(email).strip()
+                if email and str(email).strip()
+                else (str(username).strip() if username and "@" in str(username) else "")
+            )
+            for uid, _display_name, email, username in creator_rows
+        }
 
         if role in {"super_admin", "root"}:
             dept_ids = {row.dept_id for row in rows if row.dept_id}
@@ -484,6 +509,7 @@ async def list_knowledge_bases(
         timestamps = [ts for ts in timestamps if ts is not None]
         last_activity = max(timestamps) if timestamps else None
         is_own = row.created_by == current_user.id
+        created_by_display = creator_display_map.get(row.created_by, str(row.created_by))
         created_by_email = creator_email_map.get(row.created_by)
         department_name = dept_name_map.get(row.dept_id) if row.dept_id else None
         organization_name = org_name_map.get(row.org_id) if row.org_id else None
@@ -512,7 +538,7 @@ async def list_knowledge_bases(
                 "org_id": str(row.org_id) if row.org_id else None,
                 "dept_id": str(row.dept_id) if row.dept_id else None,
                 "public_dept_ids": [str(v) for v in (row.public_dept_ids or [])],
-                "created_by": str(row.created_by),
+                "created_by": created_by_display,
                 "size": int(row.size or 0),
                 "words": 0,
                 "characters": 0,
@@ -528,6 +554,12 @@ async def list_knowledge_bases(
             }
         )
 
+    payload.sort(
+        key=lambda item: (
+            str(item.get("last_activity") or item.get("updated_at") or "")
+        ),
+        reverse=True,
+    )
     return payload
 
 

@@ -195,6 +195,7 @@ class McpRegistryRead(BaseModel):
     tools_checked_at: datetime | None = None
     tools_snapshot: list[dict] | None = None
     created_by: str | None = None
+    created_by_email: str | None = None
     created_by_id: UUID | None = None
     created_at: datetime
     updated_at: datetime

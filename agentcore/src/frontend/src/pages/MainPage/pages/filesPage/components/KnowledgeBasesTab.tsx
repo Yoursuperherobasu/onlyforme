@@ -628,7 +628,7 @@ const KnowledgeBasesTab = ({
               <div className="flex w-full items-center justify-between">
                 <div className="flex min-w-0 items-center gap-2 font-medium">
                   <button
-                    className="flex items-center"
+                    className="flex shrink-0 items-center"
                     onClick={(e) => {
                       e.stopPropagation();
                       setExpandedKBs((prev) => ({
@@ -639,26 +639,28 @@ const KnowledgeBasesTab = ({
                   >
                     <ForwardedIconComponent
                       name={isExpanded ? "ChevronDown" : "ChevronRight"}
-                      className="h-4 w-4"
+                      className="h-4 w-4 shrink-0"
                     />
                   </button>
                   <ForwardedIconComponent
                     name="Folder"
-                    className="h-4 w-4"
+                    className="h-4 w-4 shrink-0"
                   />
-                  <span
-                    className="truncate text-sm font-medium"
-                    title={params.value}
-                  >
-                    {params.value}
-                  </span>
-                  <span className="shrink-0 text-xs text-muted-foreground">
-                    ({fileCount} file{fileCount !== 1 ? "s" : ""})
-                  </span>
+                  <div className="flex min-w-0 items-center gap-2">
+                    <span
+                      className="truncate text-sm font-medium"
+                      title={params.value}
+                    >
+                      {params.value}
+                    </span>
+                    <span className="shrink-0 text-xs text-muted-foreground">
+                      ({fileCount} file{fileCount !== 1 ? "s" : ""})
+                    </span>
+                  </div>
                 </div>
                 <ShadTooltip content="Add files to this knowledge base" side="left">
                   <button
-                    className="ml-2 flex items-center rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+                    className="ml-2 flex shrink-0 items-center rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
                     onClick={(e) => {
                       e.stopPropagation();
                       const kb = knowledgeBases?.find(
@@ -778,13 +780,19 @@ const KnowledgeBasesTab = ({
               cellClass: baseCellClass,
               cellRenderer: (params: any) => {
                 if (params.data?.rowType !== "kb") return "";
-                const value = params.data?.created_by_email || "-";
+                const emailValue = params.data?.created_by_email || "";
+                const rawCreatedBy = params.data?.created_by || "";
+                const looksLikeUuid =
+                  typeof rawCreatedBy === "string" &&
+                  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(rawCreatedBy);
                 const displayValue =
-                  typeof value === "string" && value.includes("@")
-                    ? value.split("@")[0]
-                    : value;
+                  (!looksLikeUuid && rawCreatedBy) ||
+                  (typeof emailValue === "string" && emailValue.includes("@")
+                    ? emailValue.split("@")[0]
+                    : emailValue) ||
+                  "-";
                 return (
-                  <div className="max-w-[170px] truncate" title={value}>
+                  <div className="max-w-[170px] truncate" title={emailValue || displayValue}>
                     {displayValue}
                   </div>
                 );

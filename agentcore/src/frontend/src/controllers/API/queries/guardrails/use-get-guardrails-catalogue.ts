@@ -34,6 +34,7 @@ export interface GuardrailInfo {
   public_scope?: "organization" | "department" | null;
   public_dept_ids?: string[];
   created_by?: string | null;
+  created_by_email?: string | null;
   created_by_id?: string | null;
   // Environment separation fields
   environment?: GuardrailEnvironment;

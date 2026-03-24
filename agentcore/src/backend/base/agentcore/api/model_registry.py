@@ -50,6 +50,26 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/models/registry", tags=["Model Registry"])
 
 
+def _creator_display_name(display_name: str | None, email: str | None) -> str | None:
+    name = str(display_name or "").strip()
+    if name:
+        return name
+    normalized_email = str(email or "").strip()
+    if not normalized_email:
+        return None
+    return normalized_email.split("@", 1)[0] if "@" in normalized_email else normalized_email
+
+
+def _creator_email(email: str | None, username: str | None) -> str | None:
+    normalized_email = str(email or "").strip()
+    if normalized_email:
+        return normalized_email
+    normalized_username = str(username or "").strip()
+    if normalized_username and "@" in normalized_username:
+        return normalized_username
+    return None
+
+
 def _normalize_environment(value: str | None) -> str:
     normalized = (value or ModelEnvironment.UAT.value).strip().lower()
     if normalized in {"dev", "test"}:
@@ -647,6 +667,43 @@ async def list_registry_models(
         return []
     db_rows = (await session.exec(select(ModelRegistry).where(ModelRegistry.id.in_(model_ids)))).all()
     db_by_id = {row.id: row for row in db_rows}
+    creator_ids = [row.created_by_id for row in db_rows if row.created_by_id]
+    creator_identities = {
+        str(row.created_by).strip().lower()
+        for row in db_rows
+        if row.created_by and str(row.created_by).strip()
+    }
+    creator_lookup: dict[str, dict[str, str | None]] = {}
+    if creator_ids:
+        creator_rows = (
+            await session.exec(
+                select(User.id, User.display_name, User.email, User.username).where(User.id.in_(creator_ids))
+            )
+        ).all()
+        creator_lookup = {
+            str(row[0]): {
+                "display": _creator_display_name(row[1], row[2]),
+                "email": _creator_email(row[2], row[3]),
+            }
+            for row in creator_rows
+        }
+    creator_identity_lookup: dict[str, dict[str, str | None]] = {}
+    if creator_identities:
+        creator_identity_rows = (
+            await session.exec(
+                select(User.display_name, User.email, User.username).where(
+                    func.lower(func.coalesce(User.email, User.username)).in_(list(creator_identities))
+                )
+            )
+        ).all()
+        creator_identity_lookup = {
+            str(row[1] or row[2]).strip().lower(): {
+                "display": _creator_display_name(row[0], row[1]),
+                "email": _creator_email(row[1], row[2]),
+            }
+            for row in creator_identity_rows
+            if str(row[1] or row[2]).strip()
+        }
     pending_reqs = (
         await session.exec(
             select(ModelApprovalRequest)
@@ -686,10 +743,17 @@ async def list_registry_models(
             if normalized_env not in envs:
                 continue
         obj = ModelRegistryRead.from_orm_model(row)
+        creator_meta = creator_lookup.get(str(row.created_by_id)) if row.created_by_id else None
+        if not creator_meta and row.created_by:
+            creator_meta = creator_identity_lookup.get(str(row.created_by).strip().lower())
+        if creator_meta:
+            obj.created_by = creator_meta.get("display") or row.created_by
+            obj.created_by_email = creator_meta.get("email")
         if envs:
             obj.environments = envs
             obj.environment = envs[0]
         visible.append(obj)
+    visible.sort(key=lambda item: (str(item.display_name or item.model_name or "")).strip().lower())
     return visible
 
 
