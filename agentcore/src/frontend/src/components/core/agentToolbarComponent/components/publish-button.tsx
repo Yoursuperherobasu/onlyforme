@@ -38,8 +38,8 @@ import { cn } from "@/utils/utils";
 interface PublishButtonProps {}
 
 interface PublishContextResponse {
-  department_id: string | null;
-  department_admin_id: string | null;
+  department_id: string;
+  department_admin_id: string;
 }
 
 interface PublishContextResolveResult {
@@ -83,9 +83,6 @@ const DisabledButton = () => (
 
 const PublishButton = ({}: PublishButtonProps) => {
   const { permissions, userData } = useContext(AuthContext);
-  const currentRole = String(userData?.role ?? "").toLowerCase();
-  const canDepartmentlessPrivatePublish =
-    currentRole === "root" || currentRole === "super_admin" || currentRole === "admin";
   const can = (permissionKey: string) => permissions?.includes(permissionKey);
   const canPublish = can("view_project_page");
   const currentAgent = useAgentsManagerStore((state) => state.currentAgent);
@@ -464,7 +461,7 @@ const PublishButton = ({}: PublishButtonProps) => {
       } else {
         const fallbackDepartmentId =
           await resolveDepartmentFromCurrentUserEmail();
-        if (!fallbackDepartmentId && !canDepartmentlessPrivatePublish) {
+        if (!fallbackDepartmentId) {
           setErrorData({
             title: "Unable to resolve publish context.",
             list: [
@@ -478,7 +475,7 @@ const PublishButton = ({}: PublishButtonProps) => {
       }
     }
 
-    if (!resolvedDepartmentId && !canDepartmentlessPrivatePublish) {
+    if (!resolvedDepartmentId) {
       setErrorData({
         title: "Unable to resolve department_id for publish payload.",
       });
@@ -488,7 +485,7 @@ const PublishButton = ({}: PublishButtonProps) => {
     try {
       const response = await publishMutation.mutateAsync({
         agent_id: currentAgent.id,
-        ...(resolvedDepartmentId ? { department_id: resolvedDepartmentId } : {}),
+        department_id: resolvedDepartmentId,
         ...(resolvedDepartmentAdminId
           ? { department_admin_id: resolvedDepartmentAdminId }
           : {}),

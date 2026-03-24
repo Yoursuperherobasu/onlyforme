@@ -34,7 +34,6 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from agentcore.api.utils import CurrentActiveUser, DbSession
 from agentcore.services.database.models.user_department_membership.model import UserDepartmentMembership
-from agentcore.services.database.models.user_organization_membership.model import UserOrganizationMembership
 from agentcore.services.database.models.agent.model import Agent, LifecycleStatusEnum
 from agentcore.services.database.models.department.model import Department
 from agentcore.services.database.models.approval_request.model import (
@@ -203,9 +202,8 @@ class PublishRequest(BaseModel):
     the approval flow based on (environment + user role).
     """
 
-    department_id: UUID | None = Field(
-        default=None,
-        description="Department the agent belongs to. Optional for org-wide admin private UAT publishes.",
+    department_id: UUID = Field(
+        description="Department the agent belongs to",
     )
     department_admin_id: UUID | None = Field(
         default=None,
@@ -408,8 +406,8 @@ class PublishContextResponse(BaseModel):
 
     agent_id: UUID
     org_id: UUID
-    department_id: UUID | None
-    department_admin_id: UUID | None
+    department_id: UUID
+    department_admin_id: UUID
 
 
 class PublishEmailSuggestion(BaseModel):
@@ -472,18 +470,6 @@ async def _current_user_department_ids(session: DbSession, user_id: UUID) -> set
     return set(rows)
 
 
-async def _current_user_org_ids(session: DbSession, user_id: UUID) -> set[UUID]:
-    rows = (
-        await session.exec(
-            select(UserOrganizationMembership.org_id).where(
-                UserOrganizationMembership.user_id == user_id,
-                UserOrganizationMembership.status.in_(["accepted", "active"]),
-            )
-        )
-    ).all()
-    return set(rows)
-
-
 async def _resolve_publish_scope(
     session: DbSession,
     *,
@@ -491,8 +477,7 @@ async def _resolve_publish_scope(
     agent: Agent,
     requested_department_id: UUID | None = None,
     requested_department_admin_id: UUID | None = None,
-    allow_departmentless_private_publish: bool = False,
-) -> tuple[UUID | None, UUID | None]:
+) -> tuple[UUID, UUID]:
     """Resolve and validate publish department/admin in the agent's org tenant."""
     current_role = str(getattr(current_user, "role", "")).lower()
     is_org_wide_admin = current_role in {"root", "super_admin", "admin"}
@@ -501,22 +486,14 @@ async def _resolve_publish_scope(
     # For these roles, resolve scope by requested department (or agent.dept_id),
     # while still enforcing tenant consistency.
     if is_org_wide_admin:
-        resolved_org_id = agent.org_id
-        if not resolved_org_id:
-            current_user_org_ids = await _current_user_org_ids(session, current_user.id)
-            if current_user_org_ids:
-                resolved_org_id = sorted(current_user_org_ids, key=str)[0]
-                agent.org_id = resolved_org_id
-                session.add(agent)
-
         resolved_department_id = requested_department_id or agent.dept_id
-        if not resolved_department_id and resolved_org_id:
+        if not resolved_department_id and agent.org_id:
             # For org-wide admins without department memberships, use a deterministic
             # fallback department from the agent's organization.
             fallback_department = (
                 await session.exec(
                     select(Department)
-                    .where(Department.org_id == resolved_org_id)
+                    .where(Department.org_id == agent.org_id)
                     .order_by(col(Department.id))
                 )
             ).first()
@@ -524,11 +501,6 @@ async def _resolve_publish_scope(
                 resolved_department_id = fallback_department.id
 
         if not resolved_department_id:
-            if allow_departmentless_private_publish and resolved_org_id:
-                if not agent.org_id:
-                    agent.org_id = resolved_org_id
-                    session.add(agent)
-                return None, None
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=(
@@ -2181,7 +2153,6 @@ async def publish_agent(
     """
     try:
         agent = await _get_agent_or_404(session, agent_id, current_user.id)
-        env = body.environment.value  # "uat" or "prod"
 
         if not agent.data:
             raise HTTPException(
@@ -2189,29 +2160,14 @@ async def publish_agent(
                 detail="Cannot deploy agent with no flow data. Build the agent first.",
             )
 
-        allow_departmentless_private_publish = (
-            env == "uat"
-            and str(body.visibility).strip().upper() == "PRIVATE"
-            and str(getattr(current_user, "role", "")).lower() in {"root", "super_admin", "admin"}
-        )
-
         resolved_department_id, resolved_department_admin_id = await _resolve_publish_scope(
             session,
             current_user=current_user,
             agent=agent,
             requested_department_id=body.department_id,
             requested_department_admin_id=body.department_admin_id,
-            allow_departmentless_private_publish=allow_departmentless_private_publish,
         )
         recipient_emails = _normalize_recipient_emails(body.recipient_emails)
-        if resolved_department_id is None and recipient_emails:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=(
-                    "Recipient emails require a department-scoped publish. "
-                    "Publish privately without recipients or publish into a department."
-                ),
-            )
         await _validate_and_store_publish_recipients(
             session=session,
             agent=agent,
@@ -2222,6 +2178,7 @@ async def publish_agent(
 
         # Freeze snapshot — immutable copy of the current agent flow
         snapshot = agent.data.copy()
+        env = body.environment.value  # "uat" or "prod"
         promoted_from_uat_id = body.promoted_from_uat_id
         promoted_uat_version_number: int | None = None
         published_agent_name = await _resolve_published_agent_name(
@@ -2278,11 +2235,6 @@ async def publish_agent(
             next_version = await _get_next_version_number(session, agent_id, AgentDeploymentUAT)
 
             visibility_enum = DeploymentVisibilityEnum(body.visibility.upper())
-            if agent.org_id is None:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Organization is required for publishing.",
-                )
 
             new_record = AgentDeploymentUAT(
                 agent_id=agent_id,
