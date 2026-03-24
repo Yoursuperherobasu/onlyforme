@@ -93,6 +93,82 @@ class LangfuseCallbackWrapper(BaseCallbackHandler):
 
 
 # ==========================================================
+# Write-path Langfuse client cache
+# ==========================================================
+# Reuse Langfuse clients across traces to prevent the OTEL
+# SpanExporter from being replaced on each trace, which causes
+# buffered spans (previous traces) to be lost and timestamps
+# to become inconsistent across exporter instances.
+
+_WRITE_CLIENT_CACHE: dict[str, Any] = {}
+
+_BLOCKED_INSTRUMENTATION_SCOPES = [
+    "fastapi", "starlette", "asgi",
+    "opentelemetry.instrumentation.fastapi",
+    "opentelemetry.instrumentation.starlette",
+    "opentelemetry.instrumentation.asgi",
+    "httpx", "aiohttp", "requests", "urllib3",
+    "opentelemetry.instrumentation.httpx",
+    "opentelemetry.instrumentation.aiohttp",
+    "opentelemetry.instrumentation.requests",
+    "opentelemetry.instrumentation.urllib3",
+]
+
+
+def _get_or_create_write_client(
+    host: str | None,
+    public_key: str | None,
+    secret_key: str | None,
+    environment: str | None,
+) -> Any:
+    """Return a cached Langfuse client for trace writing, creating one if needed."""
+    cache_key = f"{host or ''}:{public_key or ''}:{environment or ''}"
+    cached = _WRITE_CLIENT_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+
+    from langfuse import Langfuse
+
+    kwargs: dict[str, Any] = {}
+    if host:
+        kwargs["host"] = host
+    if public_key:
+        kwargs["public_key"] = public_key
+    if secret_key:
+        kwargs["secret_key"] = secret_key
+    if environment:
+        kwargs["environment"] = environment
+
+    try:
+        client = Langfuse(
+            blocked_instrumentation_scopes=_BLOCKED_INSTRUMENTATION_SCOPES,
+            **kwargs,
+        )
+    except TypeError:
+        try:
+            client = Langfuse(**kwargs)
+        except TypeError:
+            from langfuse import get_client
+            if kwargs:
+                raise
+            client = get_client()
+
+    # Health check on first creation
+    if hasattr(client, "auth_check"):
+        try:
+            if not client.auth_check():
+                logger.warning("Langfuse auth_check failed — check credentials")
+            else:
+                logger.debug("Langfuse write-client auth_check passed")
+        except Exception as e:
+            logger.warning(f"Langfuse auth_check error (continuing): {e}")
+
+    _WRITE_CLIENT_CACHE[cache_key] = client
+    logger.info(f"Created and cached Langfuse write-client for {cache_key}")
+    return client
+
+
+# ==========================================================
 # Langfuse v3 Tracer (OTEL-based with proper nested spans)
 # ==========================================================
 
@@ -168,77 +244,23 @@ class LangFuseTracer(BaseTracer):
     def _setup_langfuse(self) -> None:
         """Initialize Langfuse v3 client using official OTEL-based API."""
         try:
-            from langfuse import Langfuse, propagate_attributes
+            from langfuse import propagate_attributes
 
             host = self.langfuse_host or os.getenv("LANGFUSE_BASE_URL") or os.getenv("LANGFUSE_HOST")
-            langfuse_kwargs: dict[str, Any] = {}
-            if host:
-                langfuse_kwargs["host"] = host
-            if self.langfuse_public_key:
-                langfuse_kwargs["public_key"] = self.langfuse_public_key
-            if self.langfuse_secret_key:
-                langfuse_kwargs["secret_key"] = self.langfuse_secret_key
-            if self.environment:
-                langfuse_kwargs["environment"] = self.environment
 
             # Fallback to env propagation only when explicit runtime host is not provided.
             if not self.langfuse_host and host and not os.getenv("LANGFUSE_BASE_URL"):
                 os.environ["LANGFUSE_BASE_URL"] = str(host)
 
-            # Block POST/HTTP spans from OTEL auto-instrumentation
-            # These come from FastAPI, HTTP clients, etc.
-            blocked_scopes = [
-                # FastAPI/ASGI instrumentation (causes POST /api/build/... spans)
-                "fastapi",
-                "starlette",
-                "asgi",
-                "opentelemetry.instrumentation.fastapi",
-                "opentelemetry.instrumentation.starlette",
-                "opentelemetry.instrumentation.asgi",
-                # HTTP client instrumentation
-                "httpx",
-                "aiohttp",
-                "requests",
-                "urllib3",
-                "opentelemetry.instrumentation.httpx",
-                "opentelemetry.instrumentation.aiohttp",
-                "opentelemetry.instrumentation.requests",
-                "opentelemetry.instrumentation.urllib3",
-            ]
-
-            # Try to create Langfuse client with blocked_instrumentation_scopes
-            # If not supported, fall back to regular client
-            try:
-                self._client = Langfuse(
-                    blocked_instrumentation_scopes=blocked_scopes,
-                    **langfuse_kwargs,
-                )
-            except TypeError:
-                # blocked_instrumentation_scopes not supported in this version
-                try:
-                    self._client = Langfuse(**langfuse_kwargs)
-                except TypeError:
-                    from langfuse import get_client
-
-                    if langfuse_kwargs:
-                        raise
-                    self._client = get_client()
-
-            # Health check - log but continue if it fails
-            # The auth_check can fail for various reasons (network, wrong credentials, etc.)
-            # but we want to attempt tracing anyway since the client might still work
-            if hasattr(self._client, 'auth_check'):
-                try:
-                    if not self._client.auth_check():
-                        logger.warning(
-                            f"Langfuse auth_check failed for agent={self.agent_name}. "
-                            f"Check LANGFUSE_SECRET_KEY, LANGFUSE_PUBLIC_KEY, and LANGFUSE_BASE_URL. "
-                            f"Will attempt to continue anyway."
-                        )
-                    else:
-                        logger.debug(f"Langfuse auth_check passed for agent={self.agent_name}")
-                except Exception as e:
-                    logger.warning(f"Langfuse auth_check error (continuing anyway): {e}")
+            # Reuse a cached client to keep the same OTEL TracerProvider/SpanExporter
+            # across traces.  Creating a new client per trace replaces the exporter,
+            # causing buffered spans from earlier traces to be lost.
+            self._client = _get_or_create_write_client(
+                host=host,
+                public_key=self.langfuse_public_key,
+                secret_key=self.langfuse_secret_key,
+                environment=self.environment,
+            )
 
             # Build trace metadata
             trace_metadata = {
@@ -342,7 +364,7 @@ class LangFuseTracer(BaseTracer):
             span_context = self._client.start_as_current_observation(
                 as_type=observation_type,
                 name=name,
-                input=serialize(inputs),  # Input passed directly!
+                input=serialize(inputs),
                 metadata=span_metadata,
             )
             span = span_context.__enter__()

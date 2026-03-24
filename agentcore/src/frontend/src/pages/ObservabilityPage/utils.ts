@@ -54,7 +54,13 @@ export function formatLatency(ms: number | null): string {
 export function formatDate(dateStr: string | null): string {
   if (!dateStr) return "-";
   try {
-    return new Date(dateStr).toLocaleString();
+    // If the ISO string has no timezone indicator, treat as UTC
+    // (backend always normalizes to UTC but serialization may omit the offset)
+    let normalized = dateStr;
+    if (!dateStr.endsWith("Z") && !dateStr.includes("+") && !/[-]\d{2}:\d{2}$/.test(dateStr)) {
+      normalized = dateStr + "Z";
+    }
+    return new Date(normalized).toLocaleString();
   } catch {
     return dateStr;
   }

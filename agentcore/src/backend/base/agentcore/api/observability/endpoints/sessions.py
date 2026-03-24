@@ -162,7 +162,7 @@ async def get_session_detail(
             )
             for t in session_traces
         ]
-        trace_items.sort(key=lambda t: t.timestamp or datetime.min.replace(tzinfo=timezone.utc))
+        trace_items.sort(key=lambda t: t.timestamp or datetime.min.replace(tzinfo=timezone.utc), reverse=True)
 
         return SessionDetailResponse(
             session_id=session_id,
