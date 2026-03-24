@@ -33,6 +33,10 @@ export type AgentType = {
   locked?: boolean | null;
   public?: boolean;
   access_type?: "PUBLIC" | "PRIVATE" | "PROTECTED";
+  created_by?: string | null;
+  created_by_email?: string | null;
+  created_by_id?: string | null;
+  profile_image?: string | null;
 };
 
 export type PublishedVersionSelection = {

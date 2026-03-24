@@ -52,6 +52,7 @@ from agentcore.services.database.models.agent_edit_lock.model import AgentEditLo
 from agentcore.services.database.models.user_department_membership.model import UserDepartmentMembership
 from agentcore.services.database.models.user_organization_membership.model import UserOrganizationMembership
 from agentcore.services.database.models.folder.model import Folder
+from agentcore.services.database.models.user.model import User
 from agentcore.services.auth.permissions import normalize_role
 from agentcore.services.database.models.tag.model import AgentTag, Tag
 from agentcore.api.tags import get_tags_for_agent, sync_agent_tags, _get_user_org_id
@@ -448,8 +449,33 @@ async def read_agents(
             if remove_example_agents and starter_project_id:
                 agents = [agent for agent in agents if agent.project_id != starter_project_id]
             if header_agents:
+                creator_ids = list({agent.user_id for agent in agents if agent.user_id})
+                creator_lookup: dict[UUID, tuple[str | None, str | None]] = {}
+                if creator_ids:
+                    creator_rows = (
+                        await session.exec(
+                            select(User.id, User.username, User.profile_image).where(User.id.in_(creator_ids))
+                        )
+                    ).all()
+                    creator_lookup = {
+                        row[0]: (row[1], row[2])
+                        for row in creator_rows
+                    }
+
                 # Convert to AgentHeader objects and compress the response
-                agent_headers = [AgentHeader.model_validate(agent, from_attributes=True) for agent in agents]
+                agent_headers = []
+                for agent in agents:
+                    creator_name, creator_image = creator_lookup.get(agent.user_id, (None, None))
+                    header = AgentHeader.model_validate(agent, from_attributes=True)
+                    agent_headers.append(
+                        header.model_copy(
+                            update={
+                                "created_by": creator_name,
+                                "created_by_id": agent.user_id,
+                                "profile_image": creator_image,
+                            }
+                        )
+                    )
                 return compress_response(agent_headers)
 
             # Compress the full agents response

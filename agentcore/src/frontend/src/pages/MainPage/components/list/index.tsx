@@ -16,6 +16,7 @@ import DeleteConfirmationModal from "@/modals/deleteConfirmationModal";
 import ExportModal from "@/modals/exportModal";
 import AgentSettingsModal from "@/modals/agentSettingsModal";
 import useAlertStore from "@/stores/alertStore";
+import { useFolderStore } from "@/stores/foldersStore";
 import type { AgentType } from "@/types/agent";
 import { downloadAgent } from "@/utils/reactFlowUtils";
 import { swatchColors } from "@/utils/styleUtils";
@@ -55,6 +56,7 @@ const ListComponent = ({
   const [transferMode, setTransferMode] = useState<"move" | "copy" | null>(null);
   const [transferOpen, setTransferOpen] = useState(false);
   const { userData, role } = useContext(AuthContext);
+  const folders = useFolderStore((state) => state.folders);
   const currentUserId = String(userData?.id ?? "");
   const normalizedRole = String(role ?? "")
     .toLowerCase()
@@ -100,6 +102,23 @@ const ListComponent = ({
   const canTransferAgent = Boolean(folderId) && isAgentOwnedByCurrentUser;
   const canMoveAgent = canTransferAgent && !hasDeployment;
   const canCopyAgent = canTransferAgent;
+  const currentFolder = folderId ? folders?.find((folder) => folder.id === folderId) : undefined;
+  const isCreatedByCurrentUser = agentData.created_by_id
+    ? String(agentData.created_by_id) === currentUserId
+    : isAgentOwnedByCurrentUser || Boolean(currentFolder?.is_own_project);
+  const folderCreatorLabel = currentFolder?.is_own_project
+    ? "You"
+    : currentFolder?.created_by_email?.split("@")[0]?.trim() || "";
+  const creatorEmail =
+    agentData.created_by_email?.trim() ||
+    (currentFolder?.is_own_project ? userData?.email?.trim() : currentFolder?.created_by_email?.trim()) ||
+    "";
+  const createdByLabel =
+    isCreatedByCurrentUser
+      ? "You"
+      : agentData.created_by?.trim() ||
+        agentData.created_by_email?.split("@")[0]?.trim() ||
+        folderCreatorLabel;
 
   const getDeploymentEnvLabel = () => {
     if (publishStatus?.prod?.is_enabled) return "PROD";
@@ -277,7 +296,7 @@ const ListComponent = ({
                 >
                   <span
                     className={cn(
-                      "rounded-full px-2 py-0.5 text-xxs font-semibold",
+                      "rounded-full px-2 py-0.5 text-[11px] font-medium leading-4",
                       workflowLocked && "bg-yellow-100 text-yellow-800",
                       !workflowLocked &&
                         latestProdStatus === "PUBLISHED" &&
@@ -295,7 +314,20 @@ const ListComponent = ({
           </div>
         </div>
 
-        <div className="ml-5 flex items-center gap-2">
+        <div className="ml-5 flex items-center gap-3">
+          {createdByLabel && (
+            <div className="hidden min-w-0 items-center gap-2 text-xs text-muted-foreground sm:flex">
+              <span className="whitespace-nowrap">Created by</span>
+              <div className="flex min-w-0 items-center gap-2">
+                <span
+                  className="max-w-[96px] truncate font-medium text-foreground"
+                  title={creatorEmail || undefined}
+                >
+                  {createdByLabel}
+                </span>
+              </div>
+            </div>
+          )}
           <DropdownMenu>
             <DropdownMenuTrigger asChild disabled={effectiveDisabled}>
               <Button
@@ -371,5 +403,3 @@ const ListComponent = ({
 };
 
 export default ListComponent;
-
-
