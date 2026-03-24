@@ -200,7 +200,7 @@ export default function WorkflowsView({
         id: item.deploy_id,
         agentId: item.agent_id,
         name: item.agent_name,
-        description: item.agent_description ?? "",
+        description: item.publish_description ?? item.agent_description ?? "",
         version: item.version_label ?? item.version_number ?? "-",
         visibility: item.visibility ?? "-",
         user: item.creator_name ?? "-",
@@ -1320,57 +1320,71 @@ export default function WorkflowsView({
       )}
 
       <div className="flex-1 overflow-auto p-4 sm:p-6">
-        <div className="overflow-x-auto rounded-lg border bg-card">
-          <table className="w-full">
-            <thead className="border-b bg-muted/50">
+        <div className="max-h-full overflow-auto rounded-lg border bg-card">
+          <table className="w-full min-w-[1200px] table-fixed text-sm">
+            <colgroup>
+              <col className="w-[20rem]" />
+              <col className="w-[6.5rem]" />
+              <col className="w-[8.5rem]" />
+              <col className="w-[9rem]" />
+              <col className="w-[8.5rem]" />
+              {activeTab === "PROD" && <col className="w-[7rem]" />}
+              <col className="w-[11rem]" />
+              {can("view_project_page") && <col className="w-[8rem]" />}
+              {can("view_project_page") && activeTab === "UAT" && <col className="w-[8rem]" />}
+              {canViewScheduler && <col className="w-[7rem]" />}
+              {can("start_stop_agent") && <col className="w-[6rem]" />}
+              {can("enable_disable_agent") && <col className="w-[7rem]" />}
+            </colgroup>
+            <thead className="sticky top-0 z-10 border-b bg-card">
               <tr>
-                <th className="px-6 py-4 text-left text-xs font-semibold uppercase">
+                <th className="bg-muted/30 px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                   {t("Agent Name")}
                 </th>
-                <th className="px-6 py-4 text-left text-xs font-semibold uppercase">
+                <th className="bg-muted/30 px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                   {t("Version")}
                 </th>
-                <th className="px-6 py-4 text-left text-xs font-semibold uppercase">
+                <th className="bg-muted/30 px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                   {t("Creator")}
                 </th>
-                <th className="px-6 py-4 text-left text-xs font-semibold uppercase">
+                <th className="bg-muted/30 px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                   <ShadTooltip content={t("Business Owner")}>
-                    <span className="cursor-help">{t("Bus. Owner")}</span>
+                    <span className="cursor-help">{t("Business Owner")}</span>
                   </ShadTooltip>
                 </th>
-                <th className="px-6 py-4 text-left text-xs font-semibold uppercase">
+                <th className="bg-muted/30 px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                   {t("Department")}
                 </th>
                 {activeTab === "PROD" && (
-                  <th className="px-6 py-4 text-left text-xs font-semibold uppercase">
+                  <th className="bg-muted/30 px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                     {t("Visibility")}
                   </th>
                 )}
-                <th className="px-6 py-4 text-left text-xs font-semibold uppercase">
-                  {t("Created At")}
-                </th>
+                  <th className="bg-muted/30 px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                    {t("Created At")}
+                  </th>
                 {can("view_project_page") && (
-                  <th className="px-6 py-4 text-left text-xs font-semibold uppercase">
+                  <th className="bg-muted/30 px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                     {t("Sharing Options")}
                   </th>
                 )}
                 {can("view_project_page") && activeTab === "UAT" && (
-                  <th className="px-6 py-4 text-left text-xs font-semibold uppercase">
+                  <th className="bg-muted/30 px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                     {t("Move UAT to PROD")}
                   </th>
                 )}
                 {canViewScheduler && (
-                  <th className="px-6 py-4 text-left text-xs font-semibold uppercase">
+                  <th className="bg-muted/30 px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                     {t("Agent Scheduler")}
                   </th>
                 )}
                 {can("start_stop_agent") && (
-                  <th className="px-6 py-4 text-left text-xs font-semibold uppercase">
+                  <th className="bg-muted/30 px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                     {t("Start/Stop")}
                   </th>
                 )}
                 {can("enable_disable_agent") && (
-                  <th className="px-6 py-4 text-left text-xs font-semibold uppercase">
+                  <th className="bg-muted/30 px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                     {t("Enable/Disable")}
                   </th>
                 )}
@@ -1399,44 +1413,53 @@ export default function WorkflowsView({
                 filteredworkflows.map((workflow) => (
                   <tr
                     key={workflow.id}
-                    className="cursor-pointer transition-colors hover:bg-muted/50"
+                    className="cursor-pointer align-top transition-colors hover:bg-muted/30"
                     onClick={() => onWorkagentClick?.(workflow)}
                     onDoubleClick={() => handleRowDoubleClick(workflow)}
                   >
-                    <td className="px-6 py-4">
-                      <div className="font-semibold">{workflow.name}</div>
-                      <div className="mt-1 text-xs text-muted-foreground">
-                        {workflow.description}
+                  <td className="px-4 py-3">
+                      <div className="truncate font-semibold" title={workflow.name}>
+                        {workflow.name}
+                      </div>
+                      <div
+                        className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground"
+                        title={workflow.description || ""}
+                      >
+                        {workflow.description?.trim() || ""}
                       </div>
                     </td>
-                    <td className="px-6 py-4 text-sm font-medium">
+                    <td className="px-4 py-3 text-sm font-medium whitespace-nowrap">
                       {workflow.version ?? "-"}
                     </td>
 
-                    <td className="px-6 py-4 text-sm">
+                    <td className="px-4 py-3 text-sm">
                       {workflow.userEmail ? (
                         <ShadTooltip content={workflow.userEmail}>
-                          <span className="cursor-help">{workflow.user}</span>
+                          <span className="block truncate cursor-help" title={workflow.user}>
+                            {workflow.user}
+                          </span>
                         </ShadTooltip>
                       ) : (
-                        workflow.user
+                        <span className="block truncate" title={workflow.user}>
+                          {workflow.user}
+                        </span>
                       )}
                     </td>
 
-                    <td className="px-6 py-4 text-sm">
+                    <td className="px-4 py-3 text-sm">
                       <div className="flex items-center gap-1.5">
                         {(workflow.ownerEmails?.length ?? 0) > 0 ? (
                           <ShadTooltip
                             content={(workflow.ownerEmails ?? []).join(", ")}
                           >
-                            <span className="cursor-help">
+                            <span className="block truncate cursor-help" title={workflow.owner ?? "-"}>
                               {(workflow.ownerCount ?? 0) > 1
                                 ? `${workflow.owner ?? "-"} +${(workflow.ownerCount ?? 0) - 1}`
                                 : (workflow.owner ?? "-")}
                             </span>
                           </ShadTooltip>
                         ) : (
-                          <span>
+                          <span className="block truncate" title={workflow.owner ?? "-"}>
                             {(workflow.ownerCount ?? 0) > 1
                               ? `${workflow.owner ?? "-"} +${(workflow.ownerCount ?? 0) - 1}`
                               : (workflow.owner ?? "-")}
@@ -1454,10 +1477,14 @@ export default function WorkflowsView({
                       </div>
                     </td>
 
-                    <td className="px-6 py-4 text-sm">{workflow.department}</td>
+                    <td className="px-4 py-3 text-sm">
+                      <span className="block truncate" title={workflow.department}>
+                        {workflow.department}
+                      </span>
+                    </td>
 
                     {activeTab === "PROD" && (
-                      <td className="px-6 py-4 text-sm">
+                      <td className="px-4 py-3 text-sm">
                         <span
                           className={`inline-flex rounded-full border px-2 py-1 text-xs font-medium ${
                             workflow.visibility === "PUBLIC"
@@ -1470,16 +1497,16 @@ export default function WorkflowsView({
                       </td>
                     )}
 
-                    <td className="px-6 py-4 text-sm text-muted-foreground">
+                    <td className="px-4 py-3 text-sm whitespace-nowrap text-muted-foreground">
                       {workflow.created}
                     </td>
                     {can("view_project_page") && (
-                      <td className="px-6 py-4">
+                      <td className="px-4 py-3 whitespace-nowrap">
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
                             <button
                               type="button"
-                              className="inline-flex items-center gap-1 rounded-lg border px-3 py-1.5 text-xs hover:bg-muted"
+                              className="inline-flex items-center gap-1 rounded-md border px-2.5 py-1 text-xs hover:bg-muted"
                               onClick={(e) => e.stopPropagation()}
                             >
                               <Share2 className="h-3.5 w-3.5" />
@@ -1533,10 +1560,10 @@ export default function WorkflowsView({
                       </td>
                     )}
                     {can("view_project_page") && activeTab === "UAT" && (
-                      <td className="px-6 py-4">
+                      <td className="px-4 py-3 whitespace-nowrap">
                         <button
                           type="button"
-                          className="inline-flex items-center gap-1 rounded-lg border px-3 py-1.5 text-xs hover:bg-muted disabled:cursor-not-allowed disabled:opacity-60"
+                          className="inline-flex items-center gap-1 rounded-md border px-2.5 py-1 text-xs hover:bg-muted disabled:cursor-not-allowed disabled:opacity-60"
                           disabled={
                             promotingById[workflow.id] ||
                             workflow.pendingProdApproval
@@ -1557,7 +1584,7 @@ export default function WorkflowsView({
                       </td>
                     )}
                     {canViewScheduler && (
-                      <td className="px-6 py-4">
+                      <td className="px-4 py-3 whitespace-nowrap">
                         {(() => {
                           const isChat = workflow.inputType === "chat";
                           const disabledReason = isChat
@@ -1566,7 +1593,7 @@ export default function WorkflowsView({
                           const button = (
                             <button
                               type="button"
-                              className={`inline-flex items-center gap-1 rounded-lg border px-3 py-1.5 text-xs transition-colors ${
+                              className={`inline-flex items-center gap-1 rounded-md border px-2.5 py-1 text-xs transition-colors ${
                                 isChat
                                   ? "cursor-not-allowed border-muted-foreground/30 text-muted-foreground"
                                   : "hover:bg-muted"
@@ -1595,7 +1622,7 @@ export default function WorkflowsView({
                       </td>
                     )}
                     {can("start_stop_agent") && (
-                      <td className="px-6 py-4">
+                      <td className="px-4 py-3 whitespace-nowrap">
                         {(() => {
                           const isEnabled =
                             workflowStates[workflow.id]?.enabled ?? workflow.enabled;
@@ -1633,7 +1660,7 @@ export default function WorkflowsView({
                       </td>
                     )}
                     {can("enable_disable_agent") && (
-                      <td className="px-6 py-4">
+                      <td className="px-4 py-3 whitespace-nowrap">
                         <button
                           type="button"
                           disabled={pendingToggles[workflow.id]?.enabled}

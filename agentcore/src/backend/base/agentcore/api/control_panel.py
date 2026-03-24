@@ -121,6 +121,7 @@ class ControlPanelAgentItem(BaseModel):
     agent_id: UUID
     agent_name: str
     agent_description: str | None = None
+    publish_description: str | None = None
     version_number: str
     version_label: str
     promoted_from_uat_id: UUID | None = None
@@ -498,24 +499,6 @@ async def list_control_panel_agents(
             )
             .exists()
         )
-        dept_member_exists = (
-            select(UserDepartmentMembership.id)
-            .where(
-                UserDepartmentMembership.user_id == current_user.id,
-                UserDepartmentMembership.department_id == Model.dept_id,  # type: ignore[arg-type]
-                UserDepartmentMembership.status == "active",
-            )
-            .exists()
-        )
-        org_member_exists = (
-            select(UserOrganizationMembership.id)
-            .where(
-                UserOrganizationMembership.user_id == current_user.id,
-                UserOrganizationMembership.org_id == Model.org_id,  # type: ignore[arg-type]
-                UserOrganizationMembership.status == "active",
-            )
-            .exists()
-        )
 
         # ── Base query ──────────────────────────────────────────────
         base_stmt = (
@@ -524,9 +507,11 @@ async def list_control_panel_agents(
                 User.username.label("creator_username"),  # type: ignore[attr-defined]
                 User.display_name.label("creator_display_name"),  # type: ignore[attr-defined]
                 User.email.label("creator_email"),  # type: ignore[attr-defined]
-                User.department_name.label("creator_department"),  # type: ignore[attr-defined]
+                Department.name.label("creator_department"),  # type: ignore[attr-defined]
             )
-            .outerjoin(User, Model.deployed_by == User.id)  # type: ignore[arg-type]
+            .join(Agent, Agent.id == Model.agent_id)  # type: ignore[arg-type]
+            .outerjoin(User, Agent.user_id == User.id)  # type: ignore[arg-type]
+            .outerjoin(Department, Department.id == Agent.dept_id)  # type: ignore[arg-type]
             .where(Model.status == published_status)  # type: ignore[arg-type]
         )
         current_role = str(getattr(current_user, "role", "")).lower()
@@ -536,16 +521,16 @@ async def list_control_panel_agents(
         elif current_role == "super_admin":
             org_ids = await _designated_super_admin_org_ids(session, current_user)
             base_stmt = base_stmt.where(Model.org_id.in_(list(org_ids)) if org_ids else False)
-        private_access_expr = (
-            (Model.deployed_by == current_user.id)  # type: ignore[arg-type]
-            | private_share_exists
-        )
+        private_access_expr = ((Agent.user_id == current_user.id) | private_share_exists)  # type: ignore[arg-type]
+        public_access_expr = Agent.user_id == current_user.id  # type: ignore[assignment]
         if env == ControlPanelEnv.PROD:
-            prod_admin_public_roles = {"super_admin", "department_admin", "root"}
-            if current_role in prod_admin_public_roles:
+            prod_admin_private_roles = {"super_admin", "department_admin", "root"}
+            prod_admin_public_roles = {"super_admin", "department_admin"}
+            if current_role in prod_admin_private_roles:
                 # Admins should be able to see private PROD deployments in control panel.
                 private_access_expr = private_access_expr | true()
-            public_access_expr = private_access_expr | dept_member_exists | org_member_exists
+            if current_role in prod_admin_public_roles:
+                public_access_expr = public_access_expr | true()
             stmt = base_stmt.where(
                 (
                     (Model.visibility == public_visibility)  # type: ignore[arg-type]
@@ -557,12 +542,18 @@ async def list_control_panel_agents(
                 )
             )
         else:
-            uat_admin_public_roles = {"super_admin", "department_admin", "root"}
-            if current_role in uat_admin_public_roles:
+            uat_admin_private_roles = {"super_admin", "department_admin", "root"}
+            uat_admin_public_roles = {"super_admin", "department_admin"}
+            if current_role in uat_admin_private_roles:
                 # Admins should be able to see private UAT deployments in control panel.
                 private_access_expr = private_access_expr | true()
+            if current_role in uat_admin_public_roles:
+                public_access_expr = public_access_expr | true()
             stmt = base_stmt.where(
-                (Model.visibility == public_visibility)  # type: ignore[arg-type]
+                (
+                    (Model.visibility == public_visibility)  # type: ignore[arg-type]
+                    & public_access_expr
+                )
                 | (
                     (Model.visibility == private_visibility)  # type: ignore[arg-type]
                     & private_access_expr
@@ -739,6 +730,7 @@ async def list_control_panel_agents(
                     agent_id=dep.agent_id,
                     agent_name=dep.agent_name,
                     agent_description=dep.agent_description,
+                    publish_description=dep.publish_description,
                     version_number=version_number,
                     version_label=version_label,
                     promoted_from_uat_id=promoted_from_uat_id,

@@ -27,7 +27,8 @@ from sqlmodel import col, func, or_, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from agentcore.api.utils import CurrentActiveUser, DbSession
-from agentcore.services.database.models.agent.model import Agent
+from agentcore.api.agent import _new_agent
+from agentcore.services.database.models.agent.model import Agent, AgentCreate
 from agentcore.services.database.models.agent_deployment_prod.model import (
     AgentDeploymentProd,
 )
@@ -762,17 +763,19 @@ async def clone_from_registry(
             else:
                 base_name = f"{base_name} (1)"
 
-        # 5. Create the new agent from the snapshot
-        new_agent = Agent(
+        # 5. Create the new agent from the snapshot using the normal agent
+        # creation path so org/dept scope is resolved consistently.
+        new_agent = await _new_agent(
+            session=session,
+            agent=AgentCreate(
             name=base_name,
             description=agent_description,
             data=snapshot,
-            user_id=current_user.id,
             project_id=body.project_id,
             cloned_from_deployment_id=entry.agent_deployment_id,
-            updated_at=datetime.now(timezone.utc),
+            ),
+            user_id=current_user.id,
         )
-        session.add(new_agent)
         await session.commit()
         await session.refresh(new_agent)
 
