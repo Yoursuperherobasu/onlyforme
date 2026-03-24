@@ -51,6 +51,26 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/mcp/registry", tags=["MCP Registry"])
 
 
+def _creator_display_name(display_name: str | None, email: str | None) -> str | None:
+    name = str(display_name or "").strip()
+    if name:
+        return name
+    normalized_email = str(email or "").strip()
+    if not normalized_email:
+        return None
+    return normalized_email.split("@", 1)[0] if "@" in normalized_email else normalized_email
+
+
+def _creator_email(email: str | None, username: str | None) -> str | None:
+    normalized_email = str(email or "").strip()
+    if normalized_email:
+        return normalized_email
+    normalized_username = str(username or "").strip()
+    if normalized_username and "@" in normalized_username:
+        return normalized_username
+    return None
+
+
 class McpRequestPayload(McpRegistryCreate):
     """Payload used by developer/business users to request MCP access."""
 
@@ -611,6 +631,58 @@ async def list_mcp_servers(
         tools_map = {
             str(r[0]): {"tools_count": r[1], "tools_checked_at": r[2], "tools_snapshot": r[3]} for r in rows
         }
+        creator_rows = (
+            await session.exec(
+                select(McpRegistry.id, McpRegistry.created_by_id, McpRegistry.created_by).where(McpRegistry.id.in_(ids))
+            )
+        ).all()
+        creator_ids = [row[1] for row in creator_rows if row[1]]
+        creator_identities = {
+            str(row[2]).strip().lower()
+            for row in creator_rows
+            if row[2] and str(row[2]).strip()
+        }
+        creator_lookup: dict[str, dict[str, str | None]] = {}
+        if creator_ids:
+            user_rows = (
+                await session.exec(
+                    select(User.id, User.display_name, User.email, User.username).where(User.id.in_(creator_ids))
+                )
+            ).all()
+            creator_lookup = {
+                str(row[0]): {
+                    "display": _creator_display_name(row[1], row[2]),
+                    "email": _creator_email(row[2], row[3]),
+                }
+                for row in user_rows
+            }
+        creator_identity_lookup: dict[str, dict[str, str | None]] = {}
+        if creator_identities:
+            identity_rows = (
+                await session.exec(
+                    select(User.display_name, User.email, User.username).where(
+                        func.lower(func.coalesce(User.email, User.username)).in_(list(creator_identities))
+                    )
+                )
+            ).all()
+            creator_identity_lookup = {
+                str(row[1] or row[2]).strip().lower(): {
+                    "display": _creator_display_name(row[0], row[1]),
+                    "email": _creator_email(row[1], row[2]),
+                }
+                for row in identity_rows
+                if str(row[1] or row[2]).strip()
+            }
+        mcp_creator_by_id = {
+            str(row[0]): (
+                creator_lookup.get(str(row[1]))
+                if row[1]
+                else creator_identity_lookup.get(str(row[2]).strip().lower()) if row[2] else None
+            )
+            for row in creator_rows
+        }
+    else:
+        mcp_creator_by_id = {}
     org_ids, dept_pairs = await _get_scope_memberships(session, current_user.id)
     visible = []
     for r in raw_rows:
@@ -623,9 +695,22 @@ async def list_mcp_servers(
                         r["tools_count"] = extras.get("tools_count")
                         r["tools_checked_at"] = extras.get("tools_checked_at")
                         r["tools_snapshot"] = extras.get("tools_snapshot")
+                    creator_meta = mcp_creator_by_id.get(str(r.get("id")))
+                    if creator_meta:
+                        r["created_by"] = creator_meta.get("display") or r.get("created_by")
+                        r["created_by_email"] = creator_meta.get("email")
                 visible.append(r)
         except Exception:
             continue
+    visible.sort(
+        key=lambda item: (
+            str(
+                item.get("server_name")
+                if isinstance(item, dict)
+                else getattr(item, "server_name", "")
+            ).strip().lower()
+        )
+    )
     return visible
 
 

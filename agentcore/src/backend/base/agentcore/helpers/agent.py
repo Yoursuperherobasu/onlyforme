@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING, Any, cast
 from uuid import UUID
 
@@ -300,26 +301,35 @@ async def get_agent_by_id_or_endpoint_name(agent_id_or_name: str, user_id: str |
         return AgentRead.model_validate(agent, from_attributes=True)
 
 
-async def generate_unique_agent_name(agent_name, user_id, session):
-    original_name = agent_name
-    n = 1
+def _strip_duplicate_suffixes(agent_name: str) -> str:
+    base_name = agent_name.strip()
     while True:
-        # Check if a agent with the given name exists
-        existing_agent = (
+        next_name = re.sub(r" \((\d+)\)$", "", base_name)
+        if next_name == base_name:
+            return base_name
+        base_name = next_name
+
+
+async def generate_unique_agent_name(agent_name, user_id, session):
+    base_name = _strip_duplicate_suffixes(agent_name)
+    existing_names = set(
+        (
             await session.exec(
-                select(Agent).where(
-                    Agent.name == agent_name,
+                select(Agent.name).where(
                     Agent.user_id == user_id,
                 )
             )
-        ).first()
+        ).all()
+    )
 
-        # If no agent with the given name exists, return the name
-        if not existing_agent:
-            return agent_name
+    if base_name not in existing_names:
+        return base_name
 
-        # If a agent with the name already exists, append (n) to the name and increment n
-        agent_name = f"{original_name} ({n})"
+    n = 1
+    while True:
+        candidate_name = f"{base_name} ({n})"
+        if candidate_name not in existing_names:
+            return candidate_name
         n += 1
 
 

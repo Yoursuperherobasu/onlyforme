@@ -668,7 +668,7 @@ const PublishButton = ({}: PublishButtonProps) => {
                 />
               </div>
               {emailDraft.trim().length > 0 && (
-                <div className="mt-2 rounded-md border bg-white shadow-sm">
+                <div className="mt-2 rounded-md border bg-background shadow-sm">
                   {isFetchingEmailSuggestions ? (
                     <div className="px-3 py-2 text-xs text-muted-foreground">
                       Searching directory...
@@ -679,16 +679,18 @@ const PublishButton = ({}: PublishButtonProps) => {
                         <button
                           key={item.email}
                           type="button"
-                          className="flex w-full items-center justify-between px-3 py-2 text-left text-sm hover:bg-slate-100"
+                          className="flex w-full flex-col items-start gap-0.5 px-3 py-2 text-left hover:bg-muted"
                           onMouseDown={(event) => {
                             event.preventDefault();
                             addEmails(item.email);
                             setEmailDraft("");
                           }}
                         >
-                          <span className="truncate">{item.email}</span>
+                          <span className="w-full truncate text-sm text-foreground">
+                            {item.email}
+                          </span>
                           {item.display_name && (
-                            <span className="ml-2 truncate text-xs text-muted-foreground">
+                            <span className="w-full truncate text-xs text-muted-foreground">
                               {item.display_name}
                             </span>
                           )}

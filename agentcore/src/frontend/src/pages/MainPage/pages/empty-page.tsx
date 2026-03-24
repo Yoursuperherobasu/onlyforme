@@ -37,7 +37,6 @@ export const EmptyPageCommunity = ({
   const folders = useFolderStore((state) => state.folders);
   const userData = useAuthStore(useShallow((state) => state.userData));
   const stars: number | undefined = useDarkStore((state) => state.stars);
-  const discordCount: number = useDarkStore((state) => state.discordCount);
   const { mutate: updateUser } = useUpdateUser();
   const { mutate: mutateLoggedUser } = useGetUserData();
 
@@ -124,4 +123,3 @@ export const EmptyPageCommunity = ({
 };
 
 export default EmptyPageCommunity;
-

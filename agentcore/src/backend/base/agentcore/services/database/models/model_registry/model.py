@@ -196,6 +196,7 @@ class ModelRegistryRead(BaseModel):
     default_params: dict | None = None
     is_active: bool
     created_by: str | None = None
+    created_by_email: str | None = None
     created_at: datetime
     updated_at: datetime
 

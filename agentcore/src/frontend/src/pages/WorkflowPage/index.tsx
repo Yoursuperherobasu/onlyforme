@@ -26,6 +26,7 @@ import {
   useGetControlPanelAgentSharing,
   useGetControlPanelAgents,
   usePostControlPanelPromote,
+  usePutControlPanelAgentSharing,
   useToggleControlPanelAgent,
 } from "@/controllers/API/queries/control-panel";
 import CustomLoader from "@/customization/components/custom-loader";
@@ -107,6 +108,18 @@ export default function WorkflowsView({
     useState<string>("");
   const [selectedSharingAgentName, setSelectedSharingAgentName] =
     useState<string>("");
+  const [selectedSharingDeployId, setSelectedSharingDeployId] =
+    useState<string>("");
+  const [sharingDialogOpen, setSharingDialogOpen] = useState(false);
+  const [sharingSelectedEmails, setSharingSelectedEmails] = useState<string[]>(
+    [],
+  );
+  const [sharingEmailDraft, setSharingEmailDraft] = useState("");
+  const [debouncedSharingEmailQuery, setDebouncedSharingEmailQuery] =
+    useState("");
+  const [sharingRecipientsInitialized, setSharingRecipientsInitialized] =
+    useState(false);
+  const [savingSharing, setSavingSharing] = useState(false);
   const [promotingById, setPromotingById] = useState<Record<string, boolean>>(
     {},
   );
@@ -148,6 +161,7 @@ export default function WorkflowsView({
   const setSuccessData = useAlertStore((state) => state.setSuccessData);
   const toggleControlPanelAgent = useToggleControlPanelAgent();
   const promoteMutation = usePostControlPanelPromote();
+  const updateSharingMutation = usePutControlPanelAgentSharing();
   const validatePublishEmail = useValidatePublishEmail();
   const can = (permissionKey: string) => permissions?.includes(permissionKey);
   const canViewScheduler = can("view_control_panel");
@@ -370,6 +384,14 @@ export default function WorkflowsView({
       },
     );
 
+  const { data: sharingData, isLoading: isSharingLoading } =
+    useGetControlPanelAgentSharing(
+      { deploy_id: selectedSharingDeployId },
+      {
+        enabled: sharingDialogOpen && Boolean(selectedSharingDeployId),
+      },
+    );
+
   const {
     data: rawPromoteEmailSuggestions = [],
     isFetching: isFetchingPromoteEmailSuggestions,
@@ -388,6 +410,23 @@ export default function WorkflowsView({
     },
   );
 
+  const {
+    data: rawSharingEmailSuggestions = [],
+    isFetching: isFetchingSharingEmailSuggestions,
+  } = useGetPublishEmailSuggestions(
+    {
+      agent_id: selectedSharingAgentId,
+      q: debouncedSharingEmailQuery,
+      limit: 8,
+    },
+    {
+      enabled:
+        sharingDialogOpen &&
+        !!selectedSharingAgentId &&
+        debouncedSharingEmailQuery.trim().length > 0,
+    },
+  );
+
   const promoteEmailSuggestions = useMemo(
     () =>
       rawPromoteEmailSuggestions.filter(
@@ -395,6 +434,32 @@ export default function WorkflowsView({
           !normalizedPromoteEmails.includes(item.email.trim().toLowerCase()),
       ),
     [rawPromoteEmailSuggestions, normalizedPromoteEmails],
+  );
+
+  const normalizedSharingEmails = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          sharingSelectedEmails
+            .map((email) => email.trim().toLowerCase())
+            .filter(Boolean),
+        ),
+      ),
+    [sharingSelectedEmails],
+  );
+
+  const invalidSharingEmails = useMemo(() => {
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    return normalizedSharingEmails.filter((email) => !emailRegex.test(email));
+  }, [normalizedSharingEmails]);
+
+  const sharingEmailSuggestions = useMemo(
+    () =>
+      rawSharingEmailSuggestions.filter(
+        (item) =>
+          !normalizedSharingEmails.includes(item.email.trim().toLowerCase()),
+      ),
+    [rawSharingEmailSuggestions, normalizedSharingEmails],
   );
 
   useEffect(() => {
@@ -422,6 +487,17 @@ export default function WorkflowsView({
   }, [promoteEmailDraft, promoteDialogOpen]);
 
   useEffect(() => {
+    if (!sharingDialogOpen) {
+      setDebouncedSharingEmailQuery("");
+      return;
+    }
+    const timer = setTimeout(() => {
+      setDebouncedSharingEmailQuery(sharingEmailDraft.trim().toLowerCase());
+    }, 220);
+    return () => clearTimeout(timer);
+  }, [sharingEmailDraft, sharingDialogOpen]);
+
+  useEffect(() => {
     if (
       !promoteDialogOpen ||
       selectedPromoteVisibility !== "PRIVATE" ||
@@ -440,6 +516,22 @@ export default function WorkflowsView({
     promoteRecipientsInitialized,
     isPromoteSharingLoading,
     promoteSharingData?.recipient_emails,
+  ]);
+
+  useEffect(() => {
+    if (!sharingDialogOpen || sharingRecipientsInitialized) {
+      return;
+    }
+    if (isSharingLoading) {
+      return;
+    }
+    setSharingSelectedEmails(sharingData?.recipient_emails ?? []);
+    setSharingRecipientsInitialized(true);
+  }, [
+    sharingDialogOpen,
+    sharingRecipientsInitialized,
+    isSharingLoading,
+    sharingData?.recipient_emails,
   ]);
 
   const handleStatusToggle = async (workflowId: string) => {
@@ -554,6 +646,16 @@ export default function WorkflowsView({
   const handleOpenWidgetExport = (workflow: WorkagentType) => {
     setSharingContext(workflow);
     setOpenEmbedModal(true);
+  };
+
+  const handleOpenSharingDialog = (workflow: WorkagentType) => {
+    setSelectedSharingDeployId(workflow.id);
+    setSelectedSharingAgentId(workflow.agentId ?? "");
+    setSelectedSharingAgentName(workflow.name ?? "");
+    setSharingSelectedEmails([]);
+    setSharingEmailDraft("");
+    setSharingRecipientsInitialized(false);
+    setSharingDialogOpen(true);
   };
 
   const handleOpenExportJson = async (workflow: WorkagentType) => {
@@ -700,6 +802,93 @@ export default function WorkflowsView({
     setPromoteEmailDraft("");
     setPromoteRecipientsInitialized(false);
     setPromoteDialogOpen(true);
+  };
+
+  const addSharingEmails = (rawValue: string) => {
+    const parsed = rawValue
+      .split(/[\n,;\s]+/)
+      .map((email) => email.trim().toLowerCase())
+      .filter(Boolean);
+    if (parsed.length === 0) return;
+
+    setSharingSelectedEmails((prev) => {
+      const merged = new Set(prev.map((email) => email.trim().toLowerCase()));
+      parsed.forEach((email) => merged.add(email));
+      return Array.from(merged);
+    });
+  };
+
+  const removeSharingEmail = (email: string) => {
+    const normalized = email.trim().toLowerCase();
+    setSharingSelectedEmails((prev) =>
+      prev.filter((item) => item.trim().toLowerCase() !== normalized),
+    );
+  };
+
+  const handleSaveSharing = async () => {
+    if (!selectedSharingDeployId) return;
+
+    if (invalidSharingEmails.length > 0) {
+      setErrorData({
+        title: t("Invalid email format"),
+        list: invalidSharingEmails,
+      });
+      return;
+    }
+
+    if (selectedSharingAgentId && normalizedSharingEmails.length > 0) {
+      try {
+        const validationResults = await Promise.all(
+          normalizedSharingEmails.map((email) =>
+            validatePublishEmail.mutateAsync({
+              agent_id: selectedSharingAgentId,
+              email,
+            }),
+          ),
+        );
+        const invalidUsers = validationResults
+          .filter((result) => !result.exists_in_department)
+          .map((result) => result.email);
+        if (invalidUsers.length > 0) {
+          setErrorData({
+            title: t("Some users are not available in this department."),
+            list: invalidUsers,
+          });
+          return;
+        }
+      } catch (error: any) {
+        setErrorData({
+          title: t("Email validation failed"),
+          list: [
+            error?.response?.data?.detail ||
+              error?.message ||
+              t("Unknown error"),
+          ],
+        });
+        return;
+      }
+    }
+
+    try {
+      setSavingSharing(true);
+      await updateSharingMutation.mutateAsync({
+        deploy_id: selectedSharingDeployId,
+        recipient_emails: normalizedSharingEmails,
+      });
+      setSuccessData({
+        title: t("Sharing options updated successfully."),
+      });
+      setSharingDialogOpen(false);
+    } catch (error: any) {
+      setErrorData({
+        title: t("Failed to update sharing options"),
+        list: [
+          error?.response?.data?.detail || error?.message || t("Unknown error"),
+        ],
+      });
+    } finally {
+      setSavingSharing(false);
+    }
   };
 
   const addPromoteEmails = (rawValue: string) => {
@@ -1304,6 +1493,14 @@ export default function WorkflowsView({
                             <DropdownMenuItem
                               onClick={(e) => {
                                 e.stopPropagation();
+                                handleOpenSharingDialog(workflow);
+                              }}
+                            >
+                              {t("Edit shared users")}
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              onClick={(e) => {
+                                e.stopPropagation();
                                 void handleOpenExportJson(workflow);
                               }}
                             >
@@ -1703,6 +1900,149 @@ export default function WorkflowsView({
                 {promotingById[selectedPromoteDeployId]
                   ? t("Moving...")
                   : t("Move")}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={sharingDialogOpen} onOpenChange={setSharingDialogOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>
+              {t("Sharing Options")}
+              {selectedSharingAgentName ? ` - ${selectedSharingAgentName}` : ""}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="rounded-md border bg-muted/20 p-3 text-sm text-muted-foreground">
+              {t(
+                "Update shared users for this deployed agent only. Other Control Panel settings remain unchanged.",
+              )}
+            </div>
+            <div className="space-y-2 rounded-md border p-3">
+              <Label htmlFor="sharing-emails" className="text-sm font-medium">
+                {t("Business/User Email IDs (optional)")}
+              </Label>
+              <div className="rounded-md border bg-background px-3 py-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  {normalizedSharingEmails.map((email) => (
+                    <span
+                      key={email}
+                      className="inline-flex items-center gap-1 rounded-full border bg-slate-100 px-2 py-1 text-xs text-slate-700"
+                    >
+                      <span className="max-w-[220px] truncate">{email}</span>
+                      <button
+                        type="button"
+                        onClick={() => removeSharingEmail(email)}
+                        className="rounded p-0.5 text-slate-500 hover:bg-slate-200 hover:text-slate-700"
+                        aria-label={`Remove ${email}`}
+                      >
+                        <span className="text-xxs leading-none">x</span>
+                      </button>
+                    </span>
+                  ))}
+                  <input
+                    id="sharing-emails"
+                    value={sharingEmailDraft}
+                    onChange={(event) => setSharingEmailDraft(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (["Enter", "Tab", ",", ";", " "].includes(event.key)) {
+                        if (!sharingEmailDraft.trim()) return;
+                        event.preventDefault();
+                        addSharingEmails(sharingEmailDraft);
+                        setSharingEmailDraft("");
+                        return;
+                      }
+                      if (
+                        event.key === "Backspace" &&
+                        !sharingEmailDraft.trim() &&
+                        normalizedSharingEmails.length > 0
+                      ) {
+                        const lastEmail =
+                          normalizedSharingEmails[normalizedSharingEmails.length - 1];
+                        if (lastEmail) removeSharingEmail(lastEmail);
+                      }
+                    }}
+                    onBlur={() => {
+                      if (sharingEmailDraft.trim()) {
+                        addSharingEmails(sharingEmailDraft);
+                        setSharingEmailDraft("");
+                      }
+                    }}
+                    onPaste={(event) => {
+                      const pasted = event.clipboardData.getData("text");
+                      if (!pasted) return;
+                      if (/[,;\n\s]/.test(pasted)) {
+                        event.preventDefault();
+                        addSharingEmails(pasted);
+                      }
+                    }}
+                    placeholder={
+                      normalizedSharingEmails.length === 0
+                        ? "Type email to search and press Enter to add"
+                        : "Add another email"
+                    }
+                    className="min-w-[180px] flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
+                  />
+                </div>
+                {sharingEmailDraft.trim().length > 0 && (
+                  <div className="mt-2 rounded-md border bg-background shadow-sm">
+                    {isFetchingSharingEmailSuggestions ? (
+                      <div className="px-3 py-2 text-xs text-muted-foreground">
+                        Searching users...
+                      </div>
+                    ) : sharingEmailSuggestions.length > 0 ? (
+                      <div className="max-h-44 overflow-auto py-1">
+                        {sharingEmailSuggestions.map((item) => (
+                          <button
+                            key={item.email}
+                            type="button"
+                            className="flex w-full flex-col items-start gap-0.5 px-3 py-2 text-left hover:bg-muted"
+                            onMouseDown={(event) => {
+                              event.preventDefault();
+                              addSharingEmails(item.email);
+                              setSharingEmailDraft("");
+                            }}
+                          >
+                            <span className="w-full truncate text-sm text-foreground">
+                              {item.email}
+                            </span>
+                            {item.display_name && (
+                              <span className="w-full truncate text-xs text-muted-foreground">
+                                {item.display_name}
+                              </span>
+                            )}
+                          </button>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="px-3 py-2 text-xs text-muted-foreground">
+                        No department suggestions found.
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                {t(
+                  "Outlook-style recipients. Suggestions come from saved department emails for this agent.",
+                )}
+              </p>
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button
+                variant="outline"
+                onClick={() => setSharingDialogOpen(false)}
+              >
+                {t("Cancel")}
+              </Button>
+              <Button
+                onClick={() => void handleSaveSharing()}
+                disabled={savingSharing || updateSharingMutation.isPending}
+              >
+                {savingSharing || updateSharingMutation.isPending
+                  ? t("Saving...")
+                  : t("Save sharing")}
               </Button>
             </div>
           </div>

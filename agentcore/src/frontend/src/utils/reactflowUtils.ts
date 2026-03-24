@@ -788,13 +788,19 @@ export function updateEdges(edges: EdgeType[]) {
 export function addVersionToDuplicates(agent: AgentType, agents: AgentType[]) {
   const agentsWithoutUpdatedAgent = agents.filter((f) => f.id !== agent.id);
 
-  const existingNames = agentsWithoutUpdatedAgent.map((item) => item.name);
-  let newName = agent.name;
-  let count = 1;
+  const baseName = agent.name.replace(/(?: \(\d+\))+$/, "");
+  const existingNames = new Set(agentsWithoutUpdatedAgent.map((item) => item.name));
 
-  while (existingNames.includes(newName)) {
-    newName = `${agent.name} (${count})`;
+  if (!existingNames.has(baseName)) {
+    return baseName;
+  }
+
+  let count = 1;
+  let newName = `${baseName} (${count})`;
+
+  while (existingNames.has(newName)) {
     count++;
+    newName = `${baseName} (${count})`;
   }
 
   return newName;

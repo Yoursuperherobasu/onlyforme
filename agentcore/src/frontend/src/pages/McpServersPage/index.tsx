@@ -504,7 +504,7 @@ export default function MCPServersPage() {
                           <td className="px-6 py-4 text-sm text-muted-foreground">
                             <div
                               className="max-w-[170px] truncate"
-                              title={server.created_by || "-"}
+                              title={server.created_by_email || server.created_by || "-"}
                             >
                               {server.created_by || "-"}
                             </div>

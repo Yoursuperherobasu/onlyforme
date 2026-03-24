@@ -47,7 +47,18 @@ export default function ExportApiModal({
   const [loading, setLoading] = useState(false);
   const [copiedField, setCopiedField] = useState<string | null>(null);
 
-  const baseUrl = import.meta.env.VITE_API_URL || PROXY_TARGET;
+  const hostIp =
+    process.env.HOST_IP ||
+    import.meta.env.VITE_HOST_IP ||
+    "127.0.0.1";
+  const backendPort =
+    process.env.BACKEND_PORT ||
+    import.meta.env.VITE_BACKEND_PORT ||
+    "7860";
+  const rawBaseUrl = import.meta.env.VITE_API_URL || PROXY_TARGET;
+  const baseUrl = rawBaseUrl
+    .replace(/\$\{HOST_IP\}/g, hostIp)
+    .replace(/\$\{BACKEND_PORT\}/g, backendPort);
   const envCode = environment === "uat" ? 1 : 2;
   const runUrl = `${baseUrl}/api/run/${agentId}?env=${envCode}&version=${version}`;
 

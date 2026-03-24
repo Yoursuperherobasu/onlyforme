@@ -557,7 +557,7 @@ export default function ModelCatalogue(): JSX.Element {
                           <td className="px-4 py-4 text-sm text-muted-foreground">
                             <div
                               className="max-w-[150px] truncate"
-                              title={model.created_by || "-"}
+                              title={model.created_by_email || model.created_by || "-"}
                             >
                               {model.created_by || "-"}
                             </div>
