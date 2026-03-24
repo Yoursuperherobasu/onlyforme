@@ -2035,7 +2035,7 @@ export const createNewAgent = (
   agent?: AgentType,
 ) => {
   return {
-    description: agent?.description ?? "",
+    description: "",
     name: agent?.name ? agent.name : "New Agent",
     data: agentData,
     id: "",

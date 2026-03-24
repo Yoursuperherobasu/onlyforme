@@ -882,8 +882,8 @@ async def toggle_agent_field(
             f"user={current_user.username})"
         )
 
-        # ── Sync manifest.yaml on start / stop ─────────────────
-        if body.field == ToggleField.IS_ACTIVE:
+        # ── Sync agents.yaml on start/stop or enable/disable ──
+        if body.field in (ToggleField.IS_ACTIVE, ToggleField.IS_ENABLED):
             from agentcore.services.manifest import add_manifest_entry, remove_manifest_entry
 
             if body.value:
