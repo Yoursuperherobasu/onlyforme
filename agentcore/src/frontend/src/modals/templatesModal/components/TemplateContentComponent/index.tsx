@@ -10,7 +10,7 @@ import { ForwardedIconComponent } from "../../../../components/common/genericIco
 import { Input } from "../../../../components/ui/input";
 import { useFolderStore } from "../../../../stores/foldersStore";
 import type { TemplateContentProps } from "../../../../types/templates/types";
-
+import { updateIds } from "../../../../utils/reactFlowUtils";
 import { TemplateCategoryComponent } from "../TemplateCategoryComponent";
 
 export default function TemplateContentComponent({
@@ -71,6 +71,9 @@ export default function TemplateContentComponent({
   }, [searchQuery, currentTab]);
 
   const handleCardClick = (example) => {
+    if (example.data) {
+      updateIds(example.data);
+    }
     addAgent({ agent: example })
       .then((id) => {
         if (!id) return;
