@@ -11,7 +11,7 @@ const BUTTON_STATES = {
   SHOW_STOP:
     "bg-muted hover:bg-secondary-hover dark:hover:bg-input text-foreground cursor-pointer",
   DEFAULT:
-    "bg-primary text-primary-foreground hover:bg-primary-hover hover:text-secondary",
+    "bg-[var(--button-primary)] text-[var(--button-primary-foreground)] hover:bg-[var(--button-primary-hover)]",
 };
 
 type ButtonSendWrapperProps = {

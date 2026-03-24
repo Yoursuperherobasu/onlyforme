@@ -507,6 +507,15 @@ async def list_control_panel_agents(
             )
             .exists()
         )
+        org_member_exists = (
+            select(UserOrganizationMembership.id)
+            .where(
+                UserOrganizationMembership.user_id == current_user.id,
+                UserOrganizationMembership.org_id == Model.org_id,  # type: ignore[arg-type]
+                UserOrganizationMembership.status == "active",
+            )
+            .exists()
+        )
 
         # ── Base query ──────────────────────────────────────────────
         base_stmt = (
@@ -536,7 +545,7 @@ async def list_control_panel_agents(
             if current_role in prod_admin_public_roles:
                 # Admins should be able to see private PROD deployments in control panel.
                 private_access_expr = private_access_expr | true()
-            public_access_expr = private_access_expr | dept_member_exists
+            public_access_expr = private_access_expr | dept_member_exists | org_member_exists
             stmt = base_stmt.where(
                 (
                     (Model.visibility == public_visibility)  # type: ignore[arg-type]
@@ -1100,12 +1109,8 @@ async def promote_uat_to_prod(
         agent = await session.get(Agent, uat_dep.agent_id)
         if not agent:
             raise HTTPException(status_code=404, detail="Agent not found.")
-        department_id = uat_dep.dept_id or agent.dept_id
-        if not department_id:
-            raise HTTPException(status_code=400, detail="Department is required for PROD promotion.")
-        department = (await session.exec(select(Department).where(Department.id == department_id))).first()
-        if not department:
-            raise HTTPException(status_code=400, detail="Department not found for this deployment.")
+        if uat_dep.org_id is None:
+            raise HTTPException(status_code=400, detail="Organization is required for PROD promotion.")
 
         requested_visibility = str(body.visibility).strip().upper() or "PRIVATE"
         try:
@@ -1117,6 +1122,20 @@ async def promote_uat_to_prod(
         next_version = int(uat_dep.version_number)
         role = str(getattr(current_user, "role", "")).lower()
         is_admin = role in ADMIN_ROLES
+        allow_departmentless_admin_promotion = (
+            is_admin
+            and visibility_enum in {ProdDeploymentVisibilityEnum.PRIVATE, ProdDeploymentVisibilityEnum.PUBLIC}
+            and len(normalized_recipient_emails) == 0
+        )
+
+        department_id = uat_dep.dept_id or agent.dept_id
+        department = None
+        if department_id:
+            department = (await session.exec(select(Department).where(Department.id == department_id))).first()
+            if not department:
+                raise HTTPException(status_code=400, detail="Department not found for this deployment.")
+        elif not allow_departmentless_admin_promotion:
+            raise HTTPException(status_code=400, detail="Department is required for PROD promotion.")
 
         existing_prod_version = (
             await session.exec(
@@ -1175,6 +1194,8 @@ async def promote_uat_to_prod(
         if is_admin:
             agent.lifecycle_status = LifecycleStatusEnum.PUBLISHED
         else:
+            if department is None:
+                raise HTTPException(status_code=400, detail="Department is required for approval-based PROD promotion.")
             agent.lifecycle_status = LifecycleStatusEnum.PENDING_APPROVAL
             approval = ApprovalRequest(
                 agent_id=uat_dep.agent_id,
@@ -1205,6 +1226,14 @@ async def promote_uat_to_prod(
         session.add(agent)
 
         if visibility_enum == ProdDeploymentVisibilityEnum.PRIVATE:
+            if department_id is None and normalized_recipient_emails:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "Recipient emails require a department-scoped PROD deployment. "
+                        "Promote privately without recipients or use a department-scoped deployment."
+                    ),
+                )
             invalid_emails = [email for email in normalized_recipient_emails if not EMAIL_REGEX.match(email)]
             if invalid_emails:
                 raise HTTPException(status_code=400, detail=f"Invalid email format: {', '.join(invalid_emails)}")
@@ -1217,7 +1246,7 @@ async def promote_uat_to_prod(
                         AgentPublishRecipient.dept_id == department_id,
                     )
                 )
-            ).all()
+            ).all() if department_id else []
             existing_by_email = {row.recipient_email: row for row in existing_rows}
             next_emails = set(normalized_recipient_emails)
 

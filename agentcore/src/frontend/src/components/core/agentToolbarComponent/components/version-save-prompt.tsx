@@ -10,12 +10,14 @@ import { useGetPublishVersions } from "@/controllers/API/queries/agents/use-get-
 import { usePostUnifiedPublishAgent } from "@/controllers/API/queries/agents/use-post-unified-publish-agent";
 import { api } from "@/controllers/API/api";
 import { getURL } from "@/controllers/API/helpers/constants";
+import { AuthContext } from "@/contexts/authContext";
+import { useContext } from "react";
 
 type PublishContextResponse = {
   agent_id: string;
   org_id: string;
-  department_id: string;
-  department_admin_id: string;
+  department_id: string | null;
+  department_admin_id: string | null;
 };
 
 const parseVersionNumber = (raw: string | null | undefined): number => {
@@ -26,6 +28,7 @@ const parseVersionNumber = (raw: string | null | undefined): number => {
 };
 
 const VersionSavePrompt = (): JSX.Element | null => {
+  const { userData } = useContext(AuthContext);
   const setErrorData = useAlertStore((state) => state.setErrorData);
   const setSuccessData = useAlertStore((state) => state.setSuccessData);
   const versionSavePrompt = useAgentsManagerStore((state) => state.versionSavePrompt);
@@ -56,6 +59,11 @@ const VersionSavePrompt = (): JSX.Element | null => {
     );
     return `v${max + 1}`;
   }, [versions]);
+  const currentRole = String(userData?.role ?? "").toLowerCase();
+  const canDepartmentlessPrivatePublish =
+    env === "uat" &&
+    (versionSavePrompt?.version.visibility ?? "PRIVATE") === "PRIVATE" &&
+    (currentRole === "root" || currentRole === "super_admin" || currentRole === "admin");
 
   if (!versionSavePrompt) {
     return null;
@@ -75,15 +83,24 @@ const VersionSavePrompt = (): JSX.Element | null => {
     try {
       await saveAgent(undefined, { skipVersionGuard: true });
 
-      const contextRes = await api.get<PublishContextResponse>(
-        `${getURL("PUBLISH")}/${agentId}/context`,
-      );
-      const context = contextRes.data;
+      let context: PublishContextResponse | null = null;
+      try {
+        const contextRes = await api.get<PublishContextResponse>(
+          `${getURL("PUBLISH")}/${agentId}/context`,
+        );
+        context = contextRes.data;
+      } catch (error) {
+        if (!canDepartmentlessPrivatePublish) {
+          throw error;
+        }
+      }
 
       const response = await publishMutation.mutateAsync({
         agent_id: agentId,
-        department_id: context.department_id,
-        department_admin_id: context.department_admin_id,
+        ...(context?.department_id ? { department_id: context.department_id } : {}),
+        ...(context?.department_admin_id
+          ? { department_admin_id: context.department_admin_id }
+          : {}),
         visibility: versionSavePrompt.version.visibility ?? "PRIVATE",
         environment: env,
       });
