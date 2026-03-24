@@ -2,6 +2,7 @@ import * as Form from "@radix-ui/react-form";
 import { cloneDeep } from "lodash";
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { useGetPublishStatus } from "@/controllers/API/queries/agents/use-get-publish-status";
 import useSaveAgent from "@/hooks/agents/use-save-agent";
 import useAlertStore from "@/stores/alertStore";
 import useAgentStore from "@/stores/agentStore";
@@ -69,12 +70,17 @@ const AgentSettingsComponent = ({
   const setSuccessData = useAlertStore((state) => state.setSuccessData);
   const agents = useAgentsManagerStore((state) => state.agents);
   const agent = agentData ?? currentAgent;
+  const { data: publishStatus } = useGetPublishStatus(
+    { agent_id: agent?.id ?? "" },
+    { enabled: open && !!agent?.id },
+  );
   const [name, setName] = useState(agent?.name ?? "");
   const [description, setDescription] = useState(agent?.description ?? "");
   const [locked, setLocked] = useState<boolean>(agent?.locked ?? false);
   const [tags, setTags] = useState<string[]>(agent?.tags ?? []);
   const [isSaving, setIsSaving] = useState(false);
   const [disableSave, setDisableSave] = useState(true);
+  const nameLockedAfterFirstPublish = Boolean(publishStatus?.uat?.agent_name || publishStatus?.prod?.agent_name);
   const autoSaving = useAgentsManagerStore((state) => state.autoSaving);
   const formRef = useRef<HTMLFormElement>(null);
 
@@ -134,6 +140,7 @@ const AgentSettingsComponent = ({
             submitForm={submitForm}
             locked={locked}
             setLocked={setLocked}
+            nameDisabled={nameLockedAfterFirstPublish}
             tags={tags}
             setTags={setTags}
           />

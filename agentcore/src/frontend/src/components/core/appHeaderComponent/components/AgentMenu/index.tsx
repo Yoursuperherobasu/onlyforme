@@ -1,5 +1,6 @@
 import { memo, useMemo, useRef, useState } from "react";
 import { useHotkeys } from "react-hotkeys-hook";
+import { useSearchParams } from "react-router-dom";
 import { useShallow } from "zustand/react/shallow";
 import IconComponent from "@/components/common/genericIconComponent";
 import ShadTooltip from "@/components/common/shadTooltipComponent";
@@ -57,6 +58,8 @@ export const MenuBar = memo((): JSX.Element => {
   const onAgentBuilderPage = useAgentStore((state) => state.onAgentBuilderPage);
   const measureRef = useRef<HTMLSpanElement>(null);
   const changesNotSaved = useUnsavedChanges();
+  const [searchParams] = useSearchParams();
+  const isReadOnlyMode = searchParams.get("readonly") === "1";
 
   const { data: folders, isFetched: isFoldersFetched } = useGetFoldersQuery();
 
@@ -74,6 +77,7 @@ export const MenuBar = memo((): JSX.Element => {
   );
 
   const handleSave = () => {
+    if (isReadOnlyMode) return;
     saveAgent().then(() => {
       setSuccessData({ title: "Saved successfully" });
     });
@@ -89,7 +93,10 @@ export const MenuBar = memo((): JSX.Element => {
     swatchColors.length;
 
   return onAgentBuilderPage ? (
-    <Popover open={openSettings} onOpenChange={setOpenSettings}>
+    <Popover
+      open={isReadOnlyMode ? false : openSettings}
+      onOpenChange={isReadOnlyMode ? undefined : setOpenSettings}
+    >
       <PopoverAnchor>
         <div
           className="relative flex w-full items-center justify-center gap-2"
@@ -129,9 +136,9 @@ export const MenuBar = memo((): JSX.Element => {
     className="h-3.5 w-3.5"
   />
 </div>
-          <PopoverTrigger asChild>
+          {isReadOnlyMode ? (
             <div
-              className="group relative -mr-5 flex shrink-0 cursor-pointer items-center gap-2 text-sm sm:whitespace-normal"
+              className="relative -mr-5 flex shrink-0 items-center gap-2 text-sm sm:whitespace-normal"
               data-testid="menu_bar_display"
             >
               <span
@@ -142,18 +149,34 @@ export const MenuBar = memo((): JSX.Element => {
               >
                 {currentAgentName || "Untitled agent"}
               </span>
-              <IconComponent
-                name="pencil"
-                className={cn(
-                  "h-5 w-3.5 -translate-x-2 opacity-0 transition-all",
-                  !openSettings &&
-                    "sm:group-hover:translate-x-0 sm:group-hover:opacity-100",
-                )}
-              />
             </div>
-          </PopoverTrigger>
+          ) : (
+            <PopoverTrigger asChild>
+              <div
+                className="group relative -mr-5 flex shrink-0 cursor-pointer items-center gap-2 text-sm sm:whitespace-normal"
+                data-testid="menu_bar_display"
+              >
+                <span
+                  ref={measureRef}
+                  className="w-fit max-w-[35vw] truncate whitespace-pre text-mmd font-semibold sm:max-w-full sm:text-sm"
+                  aria-hidden="true"
+                  data-testid="agent_name"
+                >
+                  {currentAgentName || "Untitled agent"}
+                </span>
+                <IconComponent
+                  name="pencil"
+                  className={cn(
+                    "h-5 w-3.5 -translate-x-2 opacity-0 transition-all",
+                    !openSettings &&
+                      "sm:group-hover:translate-x-0 sm:group-hover:opacity-100",
+                  )}
+                />
+              </div>
+            </PopoverTrigger>
+          )}
           <div className={"ml-5 hidden shrink-0 items-center sm:flex"}>
-            {!autoSaving && (
+            {!autoSaving && !isReadOnlyMode && (
               <ShadTooltip
                 content={
                   changesNotSaved
@@ -196,10 +219,12 @@ export const MenuBar = memo((): JSX.Element => {
         align="center"
         sideOffset={15}
       >
-        <AgentSettingsComponent
-          close={() => setOpenSettings(false)}
-          open={openSettings}
-        />
+        {!isReadOnlyMode && (
+          <AgentSettingsComponent
+            close={() => setOpenSettings(false)}
+            open={openSettings}
+          />
+        )}
       </PopoverContent>
     </Popover>
   ) : (
