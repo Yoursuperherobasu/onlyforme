@@ -2,6 +2,7 @@ export { useGetControlPanelAgents } from "./use-get-control-panel-agents";
 export { useToggleControlPanelAgent } from "./use-toggle-control-panel-agent";
 export { useGetControlPanelAgentSharing } from "./use-get-control-panel-agent-sharing";
 export { usePostControlPanelPromote } from "./use-post-control-panel-promote";
+export { usePutControlPanelAgentSharing } from "./use-put-control-panel-agent-sharing";
 export type {
   ControlPanelAgentItem,
   ControlPanelAgentsResponse,
@@ -9,6 +10,9 @@ export type {
 export type {
   ControlPanelSharingResponse,
 } from "./use-get-control-panel-agent-sharing";
+export type {
+  UpdateControlPanelAgentSharingPayload,
+} from "./use-put-control-panel-agent-sharing";
 export type {
   ToggleControlPanelAgentPayload,
   ToggleControlPanelAgentResponse,

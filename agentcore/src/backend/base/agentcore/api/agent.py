@@ -138,9 +138,10 @@ async def _get_scope_memberships(session: AsyncSession, user_id: UUID) -> tuple[
 async def _build_agent_visibility_statement(session: AsyncSession, current_user: CurrentActiveUser):
     own_condition = Agent.user_id == current_user.id
     role = normalize_role(getattr(current_user, "role", None))
+    active_condition = Agent.deleted_at.is_(None)
 
     if role == "root":
-        return select(Agent)
+        return select(Agent).where(active_condition)
 
     if role == "super_admin":
         org_ids, _ = await _get_scope_memberships(session, current_user.id)
@@ -152,13 +153,14 @@ async def _build_agent_visibility_statement(session: AsyncSession, current_user:
                 )
             )
             return select(Agent).where(
+                active_condition,
                 or_(
                     own_condition,
                     Agent.org_id.in_(list(org_ids)),
                     Agent.user_id.in_(org_user_subquery),
                 )
             )
-        return select(Agent).where(own_condition)
+        return select(Agent).where(active_condition, own_condition)
 
     if role == "department_admin":
         _, dept_ids = await _get_scope_memberships(session, current_user.id)
@@ -170,15 +172,16 @@ async def _build_agent_visibility_statement(session: AsyncSession, current_user:
                 )
             )
             return select(Agent).where(
+                active_condition,
                 or_(
                     own_condition,
                     Agent.dept_id.in_(list(dept_ids)),
                     Agent.user_id.in_(dept_user_subquery),
                 )
             )
-        return select(Agent).where(own_condition)
+        return select(Agent).where(active_condition, own_condition)
 
-    return select(Agent).where(own_condition)
+    return select(Agent).where(active_condition, own_condition)
 
 
 async def _agent_has_deployed_versions(session: AsyncSession, agent_id: UUID) -> tuple[bool, list[str]]:
