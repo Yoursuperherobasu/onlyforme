@@ -7,7 +7,7 @@ import { emitDashboardRefresh } from "@/utils/dashboardRefresh";
 
 export interface IUnifiedPublishAgentRequest {
   agent_id: string;
-  department_id: string;
+  department_id?: string;
   department_admin_id?: string;
   visibility: "PUBLIC" | "PRIVATE";
   environment: "uat" | "prod";
@@ -39,7 +39,7 @@ export const usePostUnifiedPublishAgent: useMutationFunctionType<
     const response = await api.post<IUnifiedPublishAgentResponse>(
       `${getURL("PUBLISH")}/${payload.agent_id}`,
       {
-        department_id: payload.department_id,
+        ...(payload.department_id ? { department_id: payload.department_id } : {}),
         ...(payload.department_admin_id
           ? { department_admin_id: payload.department_admin_id }
           : {}),
