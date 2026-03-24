@@ -9,6 +9,7 @@ To remove this feature:
   2. Remove 2 lines from router.py (import + include_router)
 """
 
+import asyncio
 import os
 import time
 import logging
@@ -49,6 +50,7 @@ AZURE_PROMETHEUS_CLIENT_SECRET = os.getenv("AZURE_PROMETHEUS_CLIENT_SECRET", "")
 
 # Token cache for Azure AD
 _azure_token_cache: dict = {"token": "", "expires_at": 0.0}
+_azure_token_lock = asyncio.Lock()
 
 router = APIRouter(
     prefix="/metrics-dashboard",
@@ -318,30 +320,31 @@ def _is_azure_prometheus() -> bool:
 
 async def _get_azure_token() -> str:
     """Fetch or return a cached Azure AD Bearer token for Prometheus."""
-    now = time.time()
-    if _azure_token_cache["token"] and _azure_token_cache["expires_at"] > now + 60:
-        return _azure_token_cache["token"]
+    async with _azure_token_lock:
+        now = time.time()
+        if _azure_token_cache["token"] and _azure_token_cache["expires_at"] > now + 60:
+            return _azure_token_cache["token"]
 
-    token_url = (
-        f"https://login.microsoftonline.com/{AZURE_PROMETHEUS_TENANT_ID}/oauth2/v2.0/token"
-    )
-    async with httpx.AsyncClient(timeout=10.0) as client:
-        resp = await client.post(
-            token_url,
-            data={
-                "grant_type": "client_credentials",
-                "client_id": AZURE_PROMETHEUS_CLIENT_ID,
-                "client_secret": AZURE_PROMETHEUS_CLIENT_SECRET,
-                "scope": "https://prometheus.monitor.azure.com/.default",
-            },
+        token_url = (
+            f"https://login.microsoftonline.com/{AZURE_PROMETHEUS_TENANT_ID}/oauth2/v2.0/token"
         )
-        resp.raise_for_status()
-        data = resp.json()
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(
+                token_url,
+                data={
+                    "grant_type": "client_credentials",
+                    "client_id": AZURE_PROMETHEUS_CLIENT_ID,
+                    "client_secret": AZURE_PROMETHEUS_CLIENT_SECRET,
+                    "scope": "https://prometheus.monitor.azure.com/.default",
+                },
+            )
+            resp.raise_for_status()
+            data = resp.json()
 
-    _azure_token_cache["token"] = data["access_token"]
-    _azure_token_cache["expires_at"] = now + data.get("expires_in", 3600)
-    logger.debug("Azure Prometheus token refreshed, expires in %ss", data.get("expires_in"))
-    return _azure_token_cache["token"]
+        _azure_token_cache["token"] = data["access_token"]
+        _azure_token_cache["expires_at"] = now + data.get("expires_in", 3600)
+        logger.debug("Azure Prometheus token refreshed, expires in %ss", data.get("expires_in"))
+        return _azure_token_cache["token"]
 
 
 async def _prometheus_headers() -> dict:
