@@ -15,7 +15,6 @@ const useFileDrop = (folderId: string) => {
     (state) => state.setFolderIdDragging,
   );
 
-  const myCollectionId = useFolderStore((state) => state.myCollectionId);
   const setErrorData = useAlertStore((state) => state.setErrorData);
   const saveAgent = useSaveAgent();
   const agents = useAgentsManagerStore((state) => state.agents);
@@ -107,14 +106,7 @@ const useFileDrop = (folderId: string) => {
     }
     const updatedAgent = { ...selectedAgent, project_id: folderId };
 
-    const agentsToCheckNames = agents?.filter(
-      (f) => f.project_id === myCollectionId,
-    );
-
-    const newName = addVersionToDuplicates(
-      updatedAgent,
-      agentsToCheckNames ?? [],
-    );
+    const newName = addVersionToDuplicates(updatedAgent, agents ?? []);
 
     updatedAgent.name = newName;
 
