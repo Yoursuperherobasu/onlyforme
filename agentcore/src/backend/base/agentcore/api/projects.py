@@ -1,3 +1,4 @@
+import asyncio
 import io
 import json
 import zipfile
@@ -285,9 +286,31 @@ async def create_project(
         raise HTTPException(status_code=500, detail=str(e)) from e
 
     tag_names = await get_tags_for_project(session, new_project.id)
+
+    # Semantic search: upsert embedding (fire-and-forget)
+    asyncio.create_task(_upsert_project_embedding(new_project, tag_names))
+
     result = ProjectRead.model_validate(new_project, from_attributes=True)
     result.tags = tag_names
     return result
+
+
+async def _upsert_project_embedding(project, tags: list[str] | None = None) -> None:
+    try:
+        from agentcore.services.semantic_search import upsert_entity_embedding
+
+        await upsert_entity_embedding(
+            entity_type="projects",
+            entity_id=str(project.id),
+            name=project.name,
+            description=project.description,
+            tags=tags,
+            org_id=str(project.org_id) if project.org_id else None,
+            dept_id=str(project.dept_id) if project.dept_id else None,
+            user_id=str(project.user_id) if project.user_id else None,
+        )
+    except Exception:
+        logger.warning("Failed to upsert project embedding for %s", project.id)
 
 
 @router.get("/", response_model=list[ProjectRead], status_code=200)
@@ -594,6 +617,10 @@ async def update_project(
         raise HTTPException(status_code=500, detail=str(e)) from e
 
     tag_names = await get_tags_for_project(session, existing_project.id)
+
+    # Semantic search: update embedding (fire-and-forget)
+    asyncio.create_task(_upsert_project_embedding(existing_project, tag_names))
+
     result = ProjectRead.model_validate(existing_project, from_attributes=True)
     result.tags = tag_names
     return result
@@ -624,6 +651,11 @@ async def delete_project(
         raise HTTPException(status_code=500, detail=str(e)) from e
 
     try:
+        # Semantic search: delete embedding (fire-and-forget)
+        from agentcore.services.semantic_search import delete_entity_embedding
+
+        asyncio.create_task(delete_entity_embedding("projects", str(project.id)))
+
         await session.delete(project)
         await session.commit()
         return Response(status_code=status.HTTP_204_NO_CONTENT)

@@ -223,6 +223,7 @@ agentcore/src/backend/src/backend/knowledge_base_storage/
 
 # Loguru runtime logs
 loguru/
+**/loguru/
 all.env
 \env
 \myenv

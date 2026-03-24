@@ -108,25 +108,29 @@ def ingest_via_service(
     cloud_region: str = "us-east-1",
     use_hybrid_search: bool = False,
     sparse_model: str = "pinecone-sparse-english-v0",
+    vector_ids: list[str] | None = None,
 ) -> dict:
     url, api_key = _get_pinecone_service_settings()
+    body: dict = {
+        "index_name": index_name,
+        "namespace": namespace,
+        "text_key": text_key,
+        "documents": documents,
+        "embedding_vectors": embedding_vectors,
+        "auto_create_index": auto_create_index,
+        "embedding_dimension": embedding_dimension,
+        "cloud_provider": cloud_provider,
+        "cloud_region": cloud_region,
+        "use_hybrid_search": use_hybrid_search,
+        "sparse_model": sparse_model,
+    }
+    if vector_ids is not None:
+        body["vector_ids"] = vector_ids
     with httpx.Client(timeout=300.0) as client:
         resp = client.post(
             f"{url}/v1/pinecone/ingest",
             headers=_headers(api_key),
-            json={
-                "index_name": index_name,
-                "namespace": namespace,
-                "text_key": text_key,
-                "documents": documents,
-                "embedding_vectors": embedding_vectors,
-                "auto_create_index": auto_create_index,
-                "embedding_dimension": embedding_dimension,
-                "cloud_provider": cloud_provider,
-                "cloud_region": cloud_region,
-                "use_hybrid_search": use_hybrid_search,
-                "sparse_model": sparse_model,
-            },
+            json=body,
         )
         _raise_with_detail(resp)
         return resp.json()
@@ -170,6 +174,76 @@ def search_via_service(
                 "rerank_model": rerank_model,
                 "rerank_top_n": rerank_top_n,
             },
+        )
+        _raise_with_detail(resp)
+        return resp.json()
+
+
+async def async_search_via_service(
+    index_name: str,
+    namespace: str,
+    text_key: str,
+    query: str,
+    query_embedding: list[float],
+    number_of_results: int = 4,
+    use_reranking: bool = False,
+    rerank_model: str = "pinecone-rerank-v0",
+    rerank_top_n: int = 5,
+    metadata_filter: dict | None = None,
+) -> dict:
+    """Async search — does NOT block the event loop."""
+    url, api_key = _get_pinecone_service_settings()
+    body = {
+        "index_name": index_name,
+        "namespace": namespace,
+        "text_key": text_key,
+        "query": query,
+        "query_embedding": query_embedding,
+        "number_of_results": number_of_results,
+        "use_reranking": use_reranking,
+        "rerank_model": rerank_model,
+        "rerank_top_n": rerank_top_n,
+    }
+    if metadata_filter is not None:
+        body["metadata_filter"] = metadata_filter
+    async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
+        resp = await client.post(
+            f"{url}/v1/pinecone/search",
+            headers=_headers(api_key),
+            json=body,
+        )
+        _raise_with_detail(resp)
+        return resp.json()
+
+
+async def async_ingest_via_service(
+    index_name: str,
+    namespace: str,
+    text_key: str,
+    documents: list[dict],
+    embedding_vectors: list[list[float]],
+    vector_ids: list[str] | None = None,
+    auto_create_index: bool = True,
+    embedding_dimension: int = 768,
+) -> dict:
+    """Async ingest — does NOT block the event loop."""
+    url, api_key = _get_pinecone_service_settings()
+    body: dict = {
+        "index_name": index_name,
+        "namespace": namespace,
+        "text_key": text_key,
+        "documents": documents,
+        "embedding_vectors": embedding_vectors,
+        "auto_create_index": auto_create_index,
+        "embedding_dimension": embedding_dimension,
+    }
+    if vector_ids is not None:
+        body["vector_ids"] = vector_ids
+    async with httpx.AsyncClient(timeout=httpx.Timeout(60.0)) as client:
+        resp = await client.post(
+            f"{url}/v1/pinecone/ingest",
+            headers=_headers(api_key),
+            json=body,
         )
         _raise_with_detail(resp)
         return resp.json()
@@ -336,6 +410,37 @@ def delete_namespace_via_service(index_name: str, namespace: str) -> dict:
             f"{url}/v1/pinecone/delete-namespace",
             headers=_headers(api_key),
             json={"index_name": index_name, "namespace": namespace},
+        )
+        _raise_with_detail(resp)
+        return resp.json()
+
+
+# ---------------------------------------------------------------------------
+# Delete specific vectors by ID
+# ---------------------------------------------------------------------------
+
+
+def delete_vectors_via_service(index_name: str, namespace: str, vector_ids: list[str]) -> dict:
+    """Delete specific vectors by ID via pinecone-service."""
+    url, api_key = _get_pinecone_service_settings()
+    with httpx.Client(timeout=60.0) as client:
+        resp = client.post(
+            f"{url}/v1/pinecone/delete-vectors",
+            headers=_headers(api_key),
+            json={"index_name": index_name, "namespace": namespace, "vector_ids": vector_ids},
+        )
+        _raise_with_detail(resp)
+        return resp.json()
+
+
+async def async_delete_vectors_via_service(index_name: str, namespace: str, vector_ids: list[str]) -> dict:
+    """Delete specific vectors by ID via pinecone-service (async)."""
+    url, api_key = _get_pinecone_service_settings()
+    async with httpx.AsyncClient(timeout=httpx.Timeout(60.0)) as client:
+        resp = await client.post(
+            f"{url}/v1/pinecone/delete-vectors",
+            headers=_headers(api_key),
+            json={"index_name": index_name, "namespace": namespace, "vector_ids": vector_ids},
         )
         _raise_with_detail(resp)
         return resp.json()

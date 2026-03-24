@@ -48,6 +48,7 @@ export const URLs = {
   HITL: `v1/hitl`,
   TAGS: `tags`,
   COST_LIMITS: `cost-limits`,
+  SEMANTIC_SEARCH: `semantic-search/search`,
 } as const;
 
 // IMPORTANT: FOLDERS endpoint now points to 'projects' for backward compatibility

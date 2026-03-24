@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime, timezone
 from uuid import UUID
@@ -952,7 +953,30 @@ async def create_registry_model(
 
     await session.commit()
     await session.refresh(created_row)
+
+    # Semantic search: upsert embedding (fire-and-forget)
+    asyncio.create_task(_upsert_model_embedding(created_row))
+
     return ModelRegistryRead.from_orm_model(created_row)
+
+
+async def _upsert_model_embedding(model) -> None:
+    try:
+        from agentcore.services.semantic_search import upsert_entity_embedding
+
+        tags = [model.provider, model.model_name] if model.provider else []
+        await upsert_entity_embedding(
+            entity_type="models",
+            entity_id=str(model.id),
+            name=model.display_name,
+            description=model.description,
+            tags=tags,
+            org_id=str(model.org_id) if getattr(model, "org_id", None) else None,
+            dept_id=str(model.dept_id) if getattr(model, "dept_id", None) else None,
+            user_id=str(model.created_by_id) if getattr(model, "created_by_id", None) else None,
+        )
+    except Exception:
+        logger.warning("[SEMANTIC] Failed to upsert model embedding for %s", model.id)
 
 
 @router.post("/{model_id}/promote", response_model=ModelRegistryRead)
@@ -1338,6 +1362,12 @@ async def update_registry_model(
         message="Model metadata updated",
     )
     await session.commit()
+
+    # Semantic search: update embedding (fire-and-forget)
+    refreshed = await session.get(ModelRegistry, model_id)
+    if refreshed:
+        asyncio.create_task(_upsert_model_embedding(refreshed))
+
     return model_dict
 
 
@@ -1382,6 +1412,11 @@ async def delete_registry_model(
     )
     await session.commit()
     await delete_registry_model_via_service(str(model_id))
+
+    # Semantic search: delete embedding (fire-and-forget)
+    from agentcore.services.semantic_search import delete_entity_embedding
+
+    asyncio.create_task(delete_entity_embedding("models", str(model_id)))
 
 
 @router.get("/{model_id}/audit", response_model=list[dict])

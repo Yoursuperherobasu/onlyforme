@@ -183,6 +183,14 @@ class Settings(BaseSettings):
     ltm_neo4j_graph_kb_id: str = "ltm"
     """Neo4j graph_kb_id for isolating LTM entities."""
 
+    # Semantic Search settings
+    semantic_search_enabled: bool = False
+    """Enable semantic search across Projects, Agents, and Models."""
+    semantic_search_pinecone_index: str = "semantic-search"
+    """Pinecone index name for semantic search vectors."""
+    semantic_search_embedding_dimensions: int = 1536
+    """Embedding dimensions for semantic search (text-embedding-3-small default: 1536)."""
+
     """The cache expire in seconds."""
     # [VARIABLE REMOVED] variable_store setting removed — migrating to Azure Key Vault
 

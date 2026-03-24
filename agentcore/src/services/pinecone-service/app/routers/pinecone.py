@@ -17,6 +17,8 @@ from app.schemas import (
     DeleteIndexResponse,
     DeleteNamespaceRequest,
     DeleteNamespaceResponse,
+    DeleteVectorsRequest,
+    DeleteVectorsResponse,
     EnsureIndexRequest,
     EnsureIndexResponse,
     IngestRequest,
@@ -33,6 +35,7 @@ from app.services.pinecone_service import (
     copy_namespace,
     delete_index,
     delete_namespace,
+    delete_vectors,
     ensure_index,
     get_namespace_stats,
     ingest_documents,
@@ -156,3 +159,16 @@ async def delete_namespace_endpoint(req: DeleteNamespaceRequest):
     except Exception as e:
         logger.error("delete_namespace failed: %s", e, exc_info=True)
         raise HTTPException(status_code=500, detail="Internal error deleting namespace")
+
+
+@router.post("/delete-vectors", response_model=DeleteVectorsResponse)
+async def delete_vectors_endpoint(req: DeleteVectorsRequest):
+    """Delete specific vectors by their IDs."""
+    try:
+        return await _run_sync(delete_vectors, req)
+    except ValueError as e:
+        logger.error("delete_vectors failed: %s", e)
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error("delete_vectors failed: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal error deleting vectors")

@@ -8,6 +8,8 @@ import type { FolderType } from "@/pages/MainPage/entities";
 import type { AgentType } from "@/types/agent";
 import { useContext, useEffect, useMemo, useRef, useState } from "react";
 import { AuthContext } from "@/contexts/authContext";
+import SemanticSearchToggle from "@/components/common/semanticSearchToggle";
+import { useSemanticSearch } from "@/controllers/API/queries/semantic-search/use-semantic-search";
 import TagInput from "@/components/common/tagInputComponent";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -54,6 +56,7 @@ export default function FolderCardsView({
   const searchContainerRef = useRef<HTMLDivElement>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [showSearchDropdown, setShowSearchDropdown] = useState(false);
+  const [semanticEnabled, setSemanticEnabled] = useState(false);
   const [selectedDepartment, setSelectedDepartment] = useState("all");
   const [selectedCreator, setSelectedCreator] = useState("all");
   const [sortByDate, setSortByDate] = useState<"newest" | "oldest">("newest");
@@ -111,7 +114,42 @@ export default function FolderCardsView({
   }, [agents]);
 
   const getAgentCount = (folderId: string) => agentCountByFolder.get(folderId) || 0;
+
+  // Semantic search for projects
+  const { data: semanticProjectData, isLoading: isLoadingSemanticProjects, isError: isErrorSemanticProjects } = useSemanticSearch(
+    semanticEnabled && searchQuery.trim()
+      ? { entity_type: "projects", q: searchQuery.trim(), top_k: 30 }
+      : null,
+    { enabled: semanticEnabled && searchQuery.trim().length > 0 },
+  );
+
+  // Semantic search for agents (to find projects containing matched agents)
+  const { data: semanticAgentData, isLoading: isLoadingSemanticAgents, isError: isErrorSemanticAgents } = useSemanticSearch(
+    semanticEnabled && searchQuery.trim()
+      ? { entity_type: "agents", q: searchQuery.trim(), top_k: 50 }
+      : null,
+    { enabled: semanticEnabled && searchQuery.trim().length > 0 },
+  );
+
+  const semanticProjectScores = useMemo(() => {
+    if (!semanticEnabled || !searchQuery.trim()) return null;
+    const scores = new Map<string, number>();
+    for (const r of semanticProjectData?.results ?? []) scores.set(r.id, r.score);
+    return scores;
+  }, [semanticEnabled, searchQuery, semanticProjectData]);
+
+  const semanticProjectIds = semanticProjectScores;
+
+  const semanticAgentIds = useMemo(() => {
+    if (!semanticEnabled || !searchQuery.trim()) return null;
+    const scores = new Map<string, number>();
+    for (const r of semanticAgentData?.results ?? []) scores.set(r.id, r.score);
+    return scores;
+  }, [semanticEnabled, searchQuery, semanticAgentData]);
+
   const normalizedSearchQuery = searchQuery.trim().toLowerCase();
+  const isSemanticLoading = semanticEnabled && !!normalizedSearchQuery && (isLoadingSemanticProjects || isLoadingSemanticAgents);
+  const isSemanticError = semanticEnabled && !!normalizedSearchQuery && (isErrorSemanticProjects || isErrorSemanticAgents);
 
   const departmentOptions = useMemo(() => {
     const names = new Set<string>();
@@ -156,17 +194,25 @@ export default function FolderCardsView({
               );
             });
 
-      const matchesProjectSearch =
-        normalizedSearchQuery.length === 0 ||
-        folder.name.toLowerCase().includes(normalizedSearchQuery) ||
-        folder.description?.toLowerCase().includes(normalizedSearchQuery) ||
-        folder.tags?.some((tag) =>
-          tag.toLowerCase().includes(normalizedSearchQuery),
-        );
+      // Semantic search: match by Pinecone results instead of keyword
+      // When semantic is enabled: use Pinecone IDs. When disabled: use keyword matching.
+      // When semantic is loading (IDs are null): don't filter yet (show all).
+      const matchesProjectSearch = semanticEnabled && normalizedSearchQuery.length > 0
+        ? (semanticProjectIds ? semanticProjectIds.has(folder.id ?? "") : true)
+        : normalizedSearchQuery.length === 0 ||
+          folder.name.toLowerCase().includes(normalizedSearchQuery) ||
+          folder.description?.toLowerCase().includes(normalizedSearchQuery) ||
+          folder.tags?.some((tag) =>
+            tag.toLowerCase().includes(normalizedSearchQuery),
+          );
+      const semanticAgentMatch = semanticEnabled && normalizedSearchQuery.length > 0 && semanticAgentIds
+        ? folderAgents.some((a) => semanticAgentIds.has(a.id))
+        : false;
       const matchesSearch =
         normalizedSearchQuery.length === 0 ||
         matchesProjectSearch ||
-        matchedAgents.length > 0;
+        matchedAgents.length > 0 ||
+        semanticAgentMatch;
 
       const matchesDepartment =
         selectedDepartment === "all" ||
@@ -212,7 +258,29 @@ export default function FolderCardsView({
       } => item !== null,
     );
 
+  // Compute best semantic score per folder: max(project score, best agent score inside it)
+  const getBestSemanticScore = (folderId: string | null | undefined): number => {
+    if (!folderId) return 0;
+    if (!semanticEnabled || !normalizedSearchQuery) return 0;
+    const projectScore = semanticProjectScores?.get(folderId) ?? 0;
+    let bestAgentScore = 0;
+    if (semanticAgentIds) {
+      const folderAgents = agentsByFolder.get(folderId) ?? [];
+      for (const agent of folderAgents) {
+        const s = semanticAgentIds.get(agent.id) ?? 0;
+        if (s > bestAgentScore) bestAgentScore = s;
+      }
+    }
+    return Math.max(projectScore, bestAgentScore);
+  };
+
   const sortedFolders = [...filteredFolders].sort((a, b) => {
+    // When semantic search is active, sort by best relevance score (project or agent inside)
+    if (semanticEnabled && normalizedSearchQuery && (semanticProjectScores || semanticAgentIds)) {
+      const aScore = getBestSemanticScore(a.folder.id ?? "");
+      const bScore = getBestSemanticScore(b.folder.id ?? "");
+      if (aScore !== bScore) return bScore - aScore;
+    }
     if (sortByAgents !== "none") {
       const aCount = getAgentCount(a.folder.id);
       const bCount = getAgentCount(b.folder.id);
@@ -367,7 +435,7 @@ export default function FolderCardsView({
               <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <input
                 type="text"
-                placeholder="Search projects & agents..."
+                placeholder={semanticEnabled ? "Semantic search projects & agents..." : "Search projects & agents..."}
                 value={searchQuery}
                 onFocus={() =>
                   normalizedSearchQuery && setShowSearchDropdown(true)
@@ -395,13 +463,40 @@ export default function FolderCardsView({
                   {/* Dropdown header */}
                   <div className="border-b px-4 py-2.5">
                     <p className="text-xs font-medium text-muted-foreground">
-                      {searchDropdownResults.length > 0
-                        ? `${searchDropdownResults.length} result${searchDropdownResults.length !== 1 ? "s" : ""} found`
-                        : "No results"}
+                      {isSemanticLoading
+                        ? "Searching..."
+                        : isSemanticError
+                          ? "Search unavailable"
+                          : searchDropdownResults.length > 0
+                            ? `${searchDropdownResults.length} result${searchDropdownResults.length !== 1 ? "s" : ""} found`
+                            : "No results"}
                     </p>
                   </div>
 
-                  {searchDropdownResults.length > 0 ? (
+                  {isSemanticLoading ? (
+                    <div className="flex flex-col items-center gap-2 px-4 py-8 text-center">
+                      <div className="flex items-center gap-1">
+                        <span className="h-2 w-2 animate-pulse rounded-full bg-primary" />
+                        <span className="h-2 w-2 animate-pulse rounded-full bg-primary [animation-delay:150ms]" />
+                        <span className="h-2 w-2 animate-pulse rounded-full bg-primary [animation-delay:300ms]" />
+                      </div>
+                      <p className="text-sm text-muted-foreground">
+                        Searching with AI...
+                      </p>
+                    </div>
+                  ) : isSemanticError ? (
+                    <div className="flex flex-col items-center gap-2 px-4 py-8 text-center">
+                      <Search className="h-8 w-8 text-destructive/40" />
+                      <div>
+                        <p className="text-sm font-medium text-muted-foreground">
+                          Search unavailable
+                        </p>
+                        <p className="text-xs text-muted-foreground/70">
+                          Try again or disable semantic search
+                        </p>
+                      </div>
+                    </div>
+                  ) : searchDropdownResults.length > 0 ? (
                     <div className="max-h-[360px] overflow-y-auto p-1.5">
                       {searchDropdownResults.map(({ folder, matchedAgents }, idx) => (
                         <button
@@ -487,6 +582,12 @@ export default function FolderCardsView({
                 </div>
               )}
             </div>
+
+            <SemanticSearchToggle
+              enabled={semanticEnabled}
+              onToggle={setSemanticEnabled}
+              isSearching={(isLoadingSemanticProjects || isLoadingSemanticAgents) && semanticEnabled && !!searchQuery.trim()}
+            />
 
             <Button
               variant="outline"

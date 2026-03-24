@@ -16,6 +16,8 @@ from app.schemas import (
     DeleteIndexResponse,
     DeleteNamespaceRequest,
     DeleteNamespaceResponse,
+    DeleteVectorsRequest,
+    DeleteVectorsResponse,
     DocumentItem,
     EnsureIndexRequest,
     EnsureIndexResponse,
@@ -167,7 +169,11 @@ def ingest_documents(req: IngestRequest) -> IngestResponse:
     for i, (doc, dense) in enumerate(zip(req.documents, req.embedding_vectors)):
         metadata = dict(doc.metadata) if doc.metadata else {}
         metadata[req.text_key] = doc.page_content[:40000]
-        vec_id = _stable_doc_id(req.namespace, i, doc.page_content)
+        vec_id = (
+            req.vector_ids[i]
+            if req.vector_ids and i < len(req.vector_ids)
+            else _stable_doc_id(req.namespace, i, doc.page_content)
+        )
 
         vec_data: dict = {"id": vec_id, "values": dense, "metadata": metadata}
         if sparse_vectors and i < len(sparse_vectors):
@@ -247,12 +253,15 @@ def search_documents(req: SearchRequest) -> SearchResponse:
 
 
 def _dense_search(index, req: SearchRequest, k: int):
-    results = index.query(
-        namespace=req.namespace or "",
-        top_k=k,
-        vector=req.query_embedding,
-        include_metadata=True,
-    )
+    query_kwargs = {
+        "namespace": req.namespace or "",
+        "top_k": k,
+        "vector": req.query_embedding,
+        "include_metadata": True,
+    }
+    if req.metadata_filter:
+        query_kwargs["filter"] = req.metadata_filter
+    results = index.query(**query_kwargs)
     docs = []
     scores = []
     for match in results.get("matches", []):
@@ -271,13 +280,16 @@ def _hybrid_search(pc, index, req: SearchRequest, k: int):
     alpha = max(0.0, min(req.hybrid_alpha, 1.0))
     hdense, hsparse = _hybrid_score_norm(req.query_embedding, sparse, alpha)
 
-    results = index.query(
-        namespace=req.namespace or "",
-        top_k=k,
-        vector=hdense,
-        sparse_vector=hsparse,
-        include_metadata=True,
-    )
+    query_kwargs = {
+        "namespace": req.namespace or "",
+        "top_k": k,
+        "vector": hdense,
+        "sparse_vector": hsparse,
+        "include_metadata": True,
+    }
+    if req.metadata_filter:
+        query_kwargs["filter"] = req.metadata_filter
+    results = index.query(**query_kwargs)
 
     docs = []
     scores = []
@@ -582,4 +594,29 @@ def delete_namespace(req: DeleteNamespaceRequest) -> DeleteNamespaceResponse:
         index_name=req.index_name,
         namespace=req.namespace,
         message=f"Deleted {vector_count} vectors from namespace '{req.namespace}'",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Delete specific vectors by ID
+# ---------------------------------------------------------------------------
+
+
+@_pinecone_retry
+def delete_vectors(req: DeleteVectorsRequest) -> DeleteVectorsResponse:
+    """Delete specific vectors by their IDs from a namespace."""
+    pc = _get_pinecone_client()
+    index = pc.Index(req.index_name)
+
+    index.delete(ids=req.vector_ids, namespace=req.namespace or "")
+    logger.info(
+        "[DELETE_VECTORS] Deleted %d vector(s) from namespace '%s' in index '%s'",
+        len(req.vector_ids), req.namespace, req.index_name,
+    )
+    return DeleteVectorsResponse(
+        success=True,
+        index_name=req.index_name,
+        namespace=req.namespace,
+        deleted_count=len(req.vector_ids),
+        message=f"Deleted {len(req.vector_ids)} vector(s) from namespace '{req.namespace}'",
     )

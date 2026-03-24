@@ -1,6 +1,7 @@
 import { Copy, Eye, Filter, Search, Star, X } from "lucide-react";
 import { useContext, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
+import SemanticSearchToggle from "@/components/common/semanticSearchToggle";
 import ShadTooltip from "@/components/common/shadTooltipComponent";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -19,6 +20,7 @@ import {
   usePostRegistryRate,
   type RegistryEntry,
 } from "@/controllers/API/queries/registry";
+import { useSemanticSearch } from "@/controllers/API/queries/semantic-search/use-semantic-search";
 import CustomLoader from "@/customization/components/custom-loader";
 import { useCustomNavigate } from "@/customization/hooks/use-custom-navigate";
 import useAlertStore from "@/stores/alertStore";
@@ -41,6 +43,7 @@ export default function AgentCatalogueView({
 }: AgentCatalogueViewProps): JSX.Element {
   const { t } = useTranslation();
   const [searchQuery, setSearchQuery] = useState("");
+  const [semanticEnabled, setSemanticEnabled] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
   const [activeFilterTab, setActiveFilterTab] =
     useState<FilterTab>("creator");
@@ -84,9 +87,9 @@ export default function AgentCatalogueView({
 
   const { data: registryData, isLoading: isLoadingRegistry } = useGetRegistry(
     {
-      search: searchQuery || undefined,
+      search: (!semanticEnabled && searchQuery) ? searchQuery : undefined,
       page: 1,
-      page_size: 60,
+      page_size: semanticEnabled ? 100 : 60,
       deployment_env: "PROD",
     },
     {
@@ -94,14 +97,43 @@ export default function AgentCatalogueView({
       keepPreviousData: true,
     },
   );
+
+  const { data: semanticData, isLoading: isLoadingSemantic, isError: isErrorSemantic } = useSemanticSearch(
+    semanticEnabled && searchQuery
+      ? { entity_type: "agents", q: searchQuery, top_k: 60, registry_only: true }
+      : null,
+    { enabled: semanticEnabled && !!searchQuery },
+  );
   const { data: ratingsData, refetch: refetchRatings } = useGetRegistryRatings(
     { registry_id: selectedEntry?.id || "" },
     { enabled: ratingOpen && !!selectedEntry?.id },
   );
   const rateMutation = usePostRegistryRate();
 
+  // When semantic search is active, get the map of matched agent IDs → scores
+  // to filter and rank real registry entries (match by agent_id field)
+  const semanticAgentScores = useMemo(() => {
+    if (!semanticEnabled || !searchQuery || !semanticData?.results) return null;
+    return new Map(semanticData.results.map((item) => [item.id, item.score]));
+  }, [semanticEnabled, searchQuery, semanticData]);
+
   const filteredAgents = useMemo(() => {
-    return (registryData?.items || []).filter((agent) => {
+    let items = registryData?.items || [];
+
+    // When semantic search is active, filter registry entries to only those
+    // whose underlying agent_id matches a semantic search result
+    if (semanticAgentScores && semanticAgentScores.size > 0) {
+      items = items.filter((agent) => semanticAgentScores.has(agent.agent_id));
+      // Sort by semantic relevance score (highest first)
+      items = [...items].sort((a, b) =>
+        (semanticAgentScores.get(b.agent_id) ?? 0) - (semanticAgentScores.get(a.agent_id) ?? 0)
+      );
+    } else if (semanticEnabled && searchQuery && semanticAgentScores?.size === 0) {
+      // Semantic search returned no results
+      items = [];
+    }
+
+    return items.filter((agent) => {
       const creatorName = (
         agent.listed_by_username?.trim() ||
         agent.listed_by_email?.trim() ||
@@ -142,6 +174,9 @@ export default function AgentCatalogueView({
     });
   }, [
     registryData?.items,
+    semanticAgentScores,
+    semanticEnabled,
+    searchQuery,
     selectedCreator,
     selectedDepartment,
     selectedRating,
@@ -328,12 +363,17 @@ export default function AgentCatalogueView({
           <div className="relative">
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <input
-              placeholder={t("Search agents")}
+              placeholder={semanticEnabled ? t("Semantic search agents...") : t("Search agents")}
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="w-full rounded-lg border bg-card py-2.5 pl-10 pr-4 text-sm sm:w-64"
             />
           </div>
+          <SemanticSearchToggle
+            enabled={semanticEnabled}
+            onToggle={setSemanticEnabled}
+            isSearching={isLoadingSemantic && semanticEnabled && !!searchQuery}
+          />
           <Button
             variant="outline"
             size="sm"

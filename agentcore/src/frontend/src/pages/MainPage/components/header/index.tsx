@@ -1,6 +1,7 @@
 import { debounce } from "lodash";
 import { useCallback, useEffect, useState } from "react";
 import ForwardedIconComponent from "@/components/common/genericIconComponent";
+import SemanticSearchToggle from "@/components/common/semanticSearchToggle";
 import ShadTooltip from "@/components/common/shadTooltipComponent";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -24,6 +25,9 @@ interface HeaderComponentProps {
   isEmptyFolder: boolean;
   selectedAgents: string[];
   allowCreateInProject: boolean;
+  semanticEnabled?: boolean;
+  onSemanticToggle?: (enabled: boolean) => void;
+  isSemanticSearching?: boolean;
 }
 
 const HeaderComponent = ({
@@ -37,6 +41,9 @@ const HeaderComponent = ({
   isEmptyFolder,
   selectedAgents,
   allowCreateInProject,
+  semanticEnabled = false,
+  onSemanticToggle,
+  isSemanticSearching = false,
 }: HeaderComponentProps) => {
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const setSuccessData = useAlertStore((state) => state.setSuccessData);
@@ -123,7 +130,7 @@ const HeaderComponent = ({
                   icon="Search"
                   data-testid="search-store-input"
                   type="text"
-                  placeholder={`Search ${agentType}...`}
+                  placeholder={semanticEnabled ? `Semantic search ${agentType}...` : `Search ${agentType}...`}
                   className="mr-2 !text-mmd"
                   inputClassName="!text-mmd"
                   value={debouncedSearch}
@@ -160,6 +167,15 @@ const HeaderComponent = ({
                     </Button>
                   ))}
                 </div>
+                {onSemanticToggle && (
+                  <div className="ml-2 flex items-center">
+                    <SemanticSearchToggle
+                      enabled={semanticEnabled}
+                      onToggle={onSemanticToggle}
+                      isSearching={isSemanticSearching}
+                    />
+                  </div>
+                )}
               </div>
               <div className="flex items-center">
                 <div

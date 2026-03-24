@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams } from "react-router-dom";
 import PaginatorComponent from "@/components/common/paginatorComponent";
 import CardsWrapComponent from "@/components/core/cardsWrapComponent";
 import { IS_MAC } from "@/constants/constants";
 import { useGetFolderQuery } from "@/controllers/API/queries/folders/use-get-folder";
+import { useSemanticSearch } from "@/controllers/API/queries/semantic-search/use-semantic-search";
 import { CustomBanner } from "@/customization/components/custom-banner";
 import {
   ENABLE_AGENTCORE,
@@ -29,6 +30,7 @@ const HomePage = ({ type }: { type: "agents" | "components" | "mcp" }) => {
   const [pageIndex, setPageIndex] = useState(1);
   const [pageSize, setPageSize] = useState(12);
   const [search, setSearch] = useState("");
+  const [semanticEnabled, setSemanticEnabled] = useState(false);
   const navigate = useCustomNavigate();
 
   const { permissions, role } = useContext(AuthContext);
@@ -59,27 +61,60 @@ const HomePage = ({ type }: { type: "agents" | "components" | "mcp" }) => {
     }
   }, [folderId, folders, navigate]);
 
+  // When semantic search is active, fetch all agents in folder (no pagination limit)
+  // so we can properly filter against Pinecone results
+  const isSemanticActive = semanticEnabled && !!search;
+
   const { data: folderData, isLoading } = useGetFolderQuery({
     id: folderId ?? myCollectionId!,
-    page: pageIndex,
-    size: pageSize,
+    page: isSemanticActive ? 1 : pageIndex,
+    size: isSemanticActive ? 100 : pageSize,
     is_component: agentType === "components",
     is_agent: agentType === "agents",
-    search,
+    search: isSemanticActive ? "" : search,
   });
 
+  const { data: semanticData, isLoading: isSemanticLoading } = useSemanticSearch(
+    isSemanticActive
+      ? { entity_type: "agents", q: search, top_k: 50 }
+      : null,
+    { enabled: isSemanticActive },
+  );
+
+  // When semantic search is active, filter folder agents to only show matched IDs
+  const semanticIds = useMemo(() => {
+    if (!isSemanticActive || !semanticData?.results) return null;
+    return new Set(semanticData.results.map((r) => r.id));
+  }, [isSemanticActive, semanticData]);
+
+  const allAgents = folderData?.agents?.items ?? [];
+  const displayAgents = useMemo(() => {
+    if (!semanticIds) return allAgents;
+    // Filter to agents that exist in BOTH the folder AND semantic results
+    // Preserve semantic ranking order
+    const agentMap = new Map(allAgents.map((a) => [a.id, a]));
+    const ranked: typeof allAgents = [];
+    for (const result of semanticData?.results ?? []) {
+      const agent = agentMap.get(result.id);
+      if (agent) ranked.push(agent);
+    }
+    return ranked;
+  }, [allAgents, semanticIds, semanticData]);
+
   const data = {
-    agents: folderData?.agents?.items ?? [],
+    agents: displayAgents,
     name: folderData?.project?.name ?? "",
     description: folderData?.project?.description ?? "",
     parent_id: folderData?.project?.parent_id ?? "",
     components: folderData?.project?.components ?? [],
-    pagination: {
-      page: folderData?.agents?.page ?? 1,
-      size: folderData?.agents?.size ?? 12,
-      total: folderData?.agents?.total ?? 0,
-      pages: folderData?.agents?.pages ?? 0,
-    },
+    pagination: isSemanticActive
+      ? { page: 1, size: displayAgents.length, total: displayAgents.length, pages: 1 }
+      : {
+          page: folderData?.agents?.page ?? 1,
+          size: folderData?.agents?.size ?? 12,
+          total: folderData?.agents?.total ?? 0,
+          pages: folderData?.agents?.pages ?? 0,
+        },
   };
 
   useEffect(() => {
@@ -260,6 +295,9 @@ const HomePage = ({ type }: { type: "agents" | "components" | "mcp" }) => {
                 isEmptyFolder={isEmptyFolder}
                 selectedAgents={selectedAgents}
                 allowCreateInProject={allowCreateInProject}
+                semanticEnabled={semanticEnabled}
+                onSemanticToggle={setSemanticEnabled}
+                isSemanticSearching={isSemanticLoading && isSemanticActive}
               />
               {isEmptyFolder ? (
                 <EmptyFolder

@@ -64,9 +64,13 @@ async def embed_single(text: str) -> list[float]:
     url, headers, body = _build_request(config, text)
     provider = config["provider"]
 
-    async with httpx.AsyncClient(timeout=60.0) as client:
-        resp = await client.post(url, headers=headers, json=body)
-        resp.raise_for_status()
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            resp = await client.post(url, headers=headers, json=body)
+            resp.raise_for_status()
+    except Exception:
+        logger.warning("[LTM] Embedding request failed for single text (provider=%s)", provider, exc_info=True)
+        return []
 
     data = resp.json()
     logger.debug(f"[LTM] Embedding generated via {provider}")
@@ -81,9 +85,13 @@ async def embed_batch(texts: list[str]) -> list[list[float]]:
 
     url, headers, body = _build_request(config, texts)
 
-    async with httpx.AsyncClient(timeout=60.0) as client:
-        resp = await client.post(url, headers=headers, json=body)
-        resp.raise_for_status()
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            resp = await client.post(url, headers=headers, json=body)
+            resp.raise_for_status()
+    except Exception:
+        logger.warning("[LTM] Embedding request failed for batch of %d texts (provider=%s)", len(texts), config["provider"], exc_info=True)
+        return []
 
     data = resp.json()
     return [item["embedding"] for item in data.get("data", [])]

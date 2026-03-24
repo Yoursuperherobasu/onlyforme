@@ -16,6 +16,7 @@ class IngestRequest(BaseModel):
     text_key: str = "text"
     documents: list[DocumentItem] = Field(..., max_length=10000)
     embedding_vectors: list[list[float]] = Field(..., max_length=10000)
+    vector_ids: list[str] | None = None
     auto_create_index: bool = True
     embedding_dimension: int = Field(default=768, ge=1, le=20000)
     cloud_provider: str = "aws"
@@ -29,6 +30,16 @@ class IngestRequest(BaseModel):
         docs = info.data.get("documents")
         if docs is not None and len(v) != len(docs):
             raise ValueError(f"embedding_vectors length ({len(v)}) must match documents length ({len(docs)})")
+        return v
+
+    @field_validator("vector_ids")
+    @classmethod
+    def vector_ids_match_documents(cls, v, info):
+        if v is None:
+            return v
+        docs = info.data.get("documents")
+        if docs is not None and len(v) != len(docs):
+            raise ValueError(f"vector_ids length ({len(v)}) must match documents length ({len(docs)})")
         return v
 
 
@@ -51,6 +62,7 @@ class SearchRequest(BaseModel):
     use_reranking: bool = False
     rerank_model: str = "pinecone-rerank-v0"
     rerank_top_n: int = Field(default=5, ge=1, le=100)
+    metadata_filter: dict | None = None
 
 
 class SearchResultItem(BaseModel):
@@ -166,4 +178,18 @@ class DeleteNamespaceResponse(BaseModel):
     success: bool
     index_name: str
     namespace: str
+    message: str = ""
+
+
+class DeleteVectorsRequest(BaseModel):
+    index_name: str = Field(..., min_length=1, max_length=128)
+    namespace: str = Field(default="", max_length=256)
+    vector_ids: list[str] = Field(..., min_length=1, max_length=1000)
+
+
+class DeleteVectorsResponse(BaseModel):
+    success: bool
+    index_name: str
+    namespace: str
+    deleted_count: int
     message: str = ""

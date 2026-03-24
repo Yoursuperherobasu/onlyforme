@@ -10,6 +10,7 @@ import {
   Clock,
 } from "lucide-react";
 import { useContext, useEffect, useMemo, useState } from "react";
+import SemanticSearchToggle from "@/components/common/semanticSearchToggle";
 import type { ModelType, ModelEnvironment, ModelTypeFilter } from "@/types/models/models";
 import {
   DropdownMenu,
@@ -38,6 +39,7 @@ import {
   useGetRegistryModels,
   useDeleteRegistryModel,
 } from "@/controllers/API/queries/models";
+import { useSemanticSearch } from "@/controllers/API/queries/semantic-search/use-semantic-search";
 
 type ProviderFilter = "all" | string;
 type EnvFilter = "all" | ModelEnvironment;
@@ -91,6 +93,7 @@ export default function ModelCatalogue(): JSX.Element {
   const [providerFilter, setProviderFilter] = useState<ProviderFilter>("all");
   const [envFilter, setEnvFilter] = useState<EnvFilter>("all");
   const [searchQuery, setSearchQuery] = useState("");
+  const [semanticEnabled, setSemanticEnabled] = useState(false);
 
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [isRequestModalOpen, setIsRequestModalOpen] = useState(false);
@@ -122,6 +125,13 @@ export default function ModelCatalogue(): JSX.Element {
   const { data: models, isLoading, isError } = useGetRegistryModels({
     active_only: false,
   });
+
+  const { data: semanticData, isLoading: isLoadingSemantic, isError: isErrorSemantic } = useSemanticSearch(
+    semanticEnabled && searchQuery
+      ? { entity_type: "models", q: searchQuery, top_k: 60, registry_only: true }
+      : null,
+    { enabled: semanticEnabled && !!searchQuery },
+  );
 
   const deleteMutation = useDeleteRegistryModel();
 
@@ -159,24 +169,40 @@ export default function ModelCatalogue(): JSX.Element {
 
   /* ---------------------------------- Filtering ---------------------------------- */
 
-  const filteredModels = displayModels.filter((model) => {
-    const matchesType = model.model_type === modelTypeFilter;
-    const matchesProvider =
-      providerFilter === "all" || model.provider === providerFilter;
-    const normalizeEnv = (env: string) => (env === "test" ? "uat" : env);
-    const modelEnvs = (model.environments ?? []).map((env) => normalizeEnv(String(env).toLowerCase()));
-    const fallbackEnv = normalizeEnv(String(model.environment ?? "").toLowerCase());
-    const effectiveEnvs = modelEnvs.length ? modelEnvs : fallbackEnv ? [fallbackEnv] : [];
-    const matchesEnv =
-      envFilter === "all" || effectiveEnvs.includes(envFilter);
-    const matchesSearch =
-      !searchQuery ||
-      model.display_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      model.model_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      model.description?.toLowerCase().includes(searchQuery.toLowerCase());
+  // Build semantic score map for ranking
+  const semanticScores = semanticEnabled && searchQuery && semanticData?.results
+    ? new Map(semanticData.results.map((r) => [r.id, r.score]))
+    : null;
 
-    return matchesType && matchesProvider && matchesEnv && matchesSearch;
-  });
+  const filteredModels = (() => {
+    let result = displayModels.filter((model) => {
+      const matchesType = model.model_type === modelTypeFilter;
+      const matchesProvider =
+        providerFilter === "all" || model.provider === providerFilter;
+      const normalizeEnv = (env: string) => (env === "test" ? "uat" : env);
+      const modelEnvs = (model.environments ?? []).map((env) => normalizeEnv(String(env).toLowerCase()));
+      const fallbackEnv = normalizeEnv(String(model.environment ?? "").toLowerCase());
+      const effectiveEnvs = modelEnvs.length ? modelEnvs : fallbackEnv ? [fallbackEnv] : [];
+      const matchesEnv =
+        envFilter === "all" || effectiveEnvs.includes(envFilter);
+
+      const matchesSearch = semanticScores
+        ? semanticScores.has(model.id)
+        : !searchQuery ||
+          model.display_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          model.model_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          model.description?.toLowerCase().includes(searchQuery.toLowerCase());
+
+      return matchesType && matchesProvider && matchesEnv && matchesSearch;
+    });
+    // Sort by semantic relevance score when active (highest first)
+    if (semanticScores) {
+      result = [...result].sort((a, b) =>
+        (semanticScores.get(b.id) ?? 0) - (semanticScores.get(a.id) ?? 0)
+      );
+    }
+    return result;
+  })();
 
   /* ---------------------------------- Helpers ---------------------------------- */
 
@@ -302,12 +328,17 @@ export default function ModelCatalogue(): JSX.Element {
           <div className="relative">
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <input
-              placeholder={t("Search models...")}
+              placeholder={semanticEnabled ? t("Semantic search models...") : t("Search models...")}
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="w-full rounded-lg border bg-card py-2.5 pl-10 pr-4 text-sm sm:w-64"
             />
           </div>
+          <SemanticSearchToggle
+            enabled={semanticEnabled}
+            onToggle={setSemanticEnabled}
+            isSearching={isLoadingSemantic && semanticEnabled && !!searchQuery}
+          />
 
           {canAddModel ? (
             <ShadTooltip

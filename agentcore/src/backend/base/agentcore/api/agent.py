@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import io
 import json
 import re
@@ -408,7 +409,29 @@ async def create_agent(
         raise HTTPException(status_code=500, detail=str(e)) from e
     agent_read = AgentRead.model_validate(db_agent, from_attributes=True)
     agent_read.tags = await get_tags_for_agent(session, db_agent.id)
+
+    # Semantic search: upsert embedding (fire-and-forget)
+    asyncio.create_task(_upsert_agent_embedding(db_agent, agent_read.tags))
+
     return agent_read
+
+
+async def _upsert_agent_embedding(agent, tags: list[str] | None = None) -> None:
+    try:
+        from agentcore.services.semantic_search import upsert_entity_embedding
+
+        await upsert_entity_embedding(
+            entity_type="agents",
+            entity_id=str(agent.id),
+            name=agent.name,
+            description=agent.description,
+            tags=tags,
+            org_id=str(agent.org_id) if agent.org_id else None,
+            dept_id=str(agent.dept_id) if agent.dept_id else None,
+            user_id=str(agent.user_id) if agent.user_id else None,
+        )
+    except Exception:
+        logger.warning("Failed to upsert agent embedding for {}", agent.id)
 
 
 @router.get("/", response_model=list[AgentRead] | Page[AgentRead] | list[AgentHeader], status_code=200)
@@ -714,6 +737,10 @@ async def update_agent(
 
     agent_read = AgentRead.model_validate(db_agent, from_attributes=True)
     agent_read.tags = await get_tags_for_agent(session, db_agent.id)
+
+    # Semantic search: update embedding (fire-and-forget)
+    asyncio.create_task(_upsert_agent_embedding(db_agent, agent_read.tags))
+
     return agent_read
 
 
@@ -746,6 +773,12 @@ async def delete_agent(
         agent.deleted_at = datetime.now(timezone.utc)
         agent.lifecycle_status = LifecycleStatusEnum.ARCHIVED
         session.add(agent)
+
+        # Semantic search: delete embedding (fire-and-forget)
+        from agentcore.services.semantic_search import delete_entity_embedding
+
+        asyncio.create_task(delete_entity_embedding("agents", str(agent.id)))
+
     await session.commit()
     return {"message": "agent deleted successfully"}
 

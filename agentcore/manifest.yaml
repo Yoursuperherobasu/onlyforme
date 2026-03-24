@@ -114,6 +114,26 @@ deployments:
   version_number: v1
   environment: uat
   deployment_id: a17143cc-3d24-4216-99ea-be3951c383b7
+- agent_id: 48df33da-d9b5-4973-98ab-a50fc0a6244a
+  agent_name: Technical Documentation Writer
+  version_number: v1
+  environment: uat
+  deployment_id: afafc090-7391-413a-9691-12b14e613ba2
+- agent_id: 48df33da-d9b5-4973-98ab-a50fc0a6244a
+  agent_name: Technical Documentation Writer
+  version_number: v2
+  environment: uat
+  deployment_id: d4d372b3-9569-49e3-b992-7d860d2f8390
+- agent_id: 48df33da-d9b5-4973-98ab-a50fc0a6244a
+  agent_name: Technical Documentation Writer
+  version_number: v3
+  environment: uat
+  deployment_id: 5b9c306e-416e-4f72-879a-58c5d4fbafef
+- agent_id: 48df33da-d9b5-4973-98ab-a50fc0a6244a
+  agent_name: Technical Documentation Writer
+  version_number: v1
+  environment: prod
+  deployment_id: 0e8621da-d053-4579-83bd-1c3c665ec3c0
 - agent_id: dd373b79-87d9-4abc-93ab-aef26a45d474
   agent_name: testdev
   version_number: v1
