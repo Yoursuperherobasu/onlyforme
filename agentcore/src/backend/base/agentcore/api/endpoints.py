@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import time
 from datetime import date
 from collections.abc import AsyncGenerator
@@ -506,6 +507,7 @@ async def run_agent_generator(
 @router.post("/run/{agent_id_or_name}", response_model=None, response_model_exclude_none=True)
 async def simplified_run_agent(
     *,
+    agent_id_or_name: str,
     response: Response,
     background_tasks: BackgroundTasks,
     agent: Annotated[AgentRead | None, Depends(get_agent_by_id_or_endpoint_name)],
@@ -513,9 +515,7 @@ async def simplified_run_agent(
     stream: bool = False,
     agent_api_key: Annotated[AgentApiKey | None, Depends(validate_agent_api_key)] = None,
     env: Annotated[RunEnvironment, Depends(_parse_env)] = RunEnvironment.DEV,
-    version: str = Query(
-        description="Version to run (e.g. 'v1', 'v2'). For env=dev this is ignored but still required.",
-    ),
+    version: str = Query(description="Version to run (e.g. 'v1', 'v2'). For env=dev this is ignored."),
 ):
     """Executes a specified flow by ID with environment and version selection.
 
@@ -555,6 +555,29 @@ async def simplified_run_agent(
     """
     telemetry_service = get_telemetry_service()
     input_request = input_request if input_request is not None else SimplifiedAPIRequest()
+
+    # --- If env vars are set, use them; otherwise keep the values from the API request ---
+    env_agent = os.environ.get("AGENTCORE_AGENT_ID") or os.environ.get("AGENTCORE_AGENT_NAME")
+    if env_agent:
+        agent = await get_agent_by_id_or_endpoint_name(env_agent)
+        logger.info(f"[RUN_AGENT] agent resolved from ENV VAR: {env_agent}")
+    else:
+        logger.info(f"[RUN_AGENT] agent resolved from API REQUEST: {agent_id_or_name}")
+
+    env_run_env = os.environ.get("AGENTCORE_RUN_ENV")
+    if env_run_env:
+        env = _parse_env(env_run_env)
+        logger.info(f"[RUN_AGENT] env resolved from ENV VAR: {env_run_env}")
+    else:
+        logger.info(f"[RUN_AGENT] env resolved from API REQUEST: {env.value}")
+
+    env_version = os.environ.get("AGENTCORE_VERSION")
+    if env_version:
+        version = env_version
+        logger.info(f"[RUN_AGENT] version resolved from ENV VAR: {env_version}")
+    else:
+        logger.info(f"[RUN_AGENT] version resolved from API REQUEST: {version}")
+
     if agent is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="agent not found")
 
