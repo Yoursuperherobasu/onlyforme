@@ -1,6 +1,6 @@
-import { useContext, useMemo, useState } from "react";
+import { useContext, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Plus, Search } from "lucide-react";
+import { Globe, Plus, Search } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -24,6 +24,14 @@ import {
 import RequestPackageModal from "./components/request-package-modal";
 import MyPackageRequestsModal from "./components/my-package-requests-modal";
 import { AuthContext } from "@/contexts/authContext";
+import useRegionStore from "@/stores/regionStore";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 // ---------------------------------------------------------------------------
 // Shared helpers
@@ -359,6 +367,8 @@ const TABS: { key: TabKey; label: string; tooltip: string }[] = [
 export default function PackagesPage() {
   const { t } = useTranslation();
   const { permissions, role } = useContext(AuthContext);
+  const normalizedRole = String(role ?? "").toLowerCase();
+  const isRootAdmin = normalizedRole === "root";
   const can = (permissionKey: string) => permissions?.includes(permissionKey);
   const canRequestPackages = role !== "root" && can("request_packages");
   const [activeTab, setActiveTab] = useState<TabKey>("managed");
@@ -369,21 +379,41 @@ export default function PackagesPage() {
   const [includeFullGraph, setIncludeFullGraph] = useState(false);
   const [isRequestModalOpen, setIsRequestModalOpen] = useState(false);
   const [isMyRequestsOpen, setIsMyRequestsOpen] = useState(false);
+  const regions = useRegionStore((s) => s.regions);
+  const selectedRegionCode = useRegionStore((s) => s.selectedRegionCode);
+  const setSelectedRegion = useRegionStore((s) => s.setSelectedRegion);
+  const fetchRegions = useRegionStore((s) => s.fetchRegions);
+  const packageRegionCode = isRootAdmin ? selectedRegionCode : null;
 
   const { data: managedPackages, isLoading: loadingManaged } =
     useGetManagedPackages({
       include_history: includeManagedHistory,
       service: selectedService,
+      regionCode: packageRegionCode,
     });
   const { data: transitivePackages, isLoading: loadingTransitive } =
     useGetTransitivePackages({
       include_history: includeHistory,
       include_full_graph: includeFullGraph,
       service: selectedService,
+      regionCode: packageRegionCode,
     });
   const { data: services = [] } = useGetPackageServices({
-    include_history: true,
+      include_history: true,
+      regionCode: packageRegionCode,
   });
+
+  const isRemoteRegion = useMemo(() => {
+    if (!isRootAdmin || !selectedRegionCode || !regions.length) return false;
+    const hub = regions.find((region) => region.is_hub);
+    return hub ? hub.code !== selectedRegionCode : false;
+  }, [isRootAdmin, selectedRegionCode, regions]);
+
+  useEffect(() => {
+    if (isRootAdmin && regions.length === 0) {
+      fetchRegions();
+    }
+  }, [isRootAdmin, regions.length, fetchRegions]);
 
   const serviceOptions = useMemo(
     () => [
@@ -416,6 +446,24 @@ export default function PackagesPage() {
           </p>
         </div>
         <div className="flex items-center gap-3">
+          {isRootAdmin && regions.length > 0 && (
+            <div className="flex items-center gap-2">
+              <Globe className="h-4 w-4 text-muted-foreground" />
+              <Select value={selectedRegionCode ?? ""} onValueChange={setSelectedRegion}>
+                <SelectTrigger className="w-[220px]">
+                  <SelectValue placeholder={t("Select region")} />
+                </SelectTrigger>
+                <SelectContent>
+                  {regions.map((region) => (
+                    <SelectItem key={region.code} value={region.code}>
+                      {region.name}
+                      {region.is_hub ? ` (${t("Hub")})` : ""}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
           {canRequestPackages && (
             <Button onClick={() => setIsRequestModalOpen(true)}>
               <Plus className="mr-2 h-4 w-4" />
@@ -439,6 +487,16 @@ export default function PackagesPage() {
         open={isMyRequestsOpen}
         onOpenChange={setIsMyRequestsOpen}
       />
+
+      {isRootAdmin && isRemoteRegion && selectedRegionCode && (
+        <div className="border-b border-amber-200 bg-amber-50/70 px-8 py-3 dark:border-amber-900/30 dark:bg-amber-950/10">
+          <p className="text-sm text-amber-800 dark:text-amber-200">
+            {t("Viewing and managing package data for {{region}} from hub.", {
+              region: regions.find((r) => r.code === selectedRegionCode)?.name ?? selectedRegionCode,
+            })}
+          </p>
+        </div>
+      )}
 
       {/* Scrollable Content */}
       <div className="flex-1 overflow-auto p-4 sm:p-6">

@@ -1,905 +1,806 @@
-import { Fragment, useContext, useMemo, useRef, useState } from "react";
+import { useContext, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import Loading from "@/components/ui/loading";
-import { Textarea } from "@/components/ui/textarea";
-import { AuthContext } from "@/contexts/authContext";
+import { Globe } from "lucide-react";
+import { api } from "@/controllers/API/api";
+import { getURL } from "@/controllers/API/helpers/constants";
 import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
-import {
-  type ReleaseDetailInputPayload,
+  type ReleaseRecord,
   useGetCurrentRelease,
-  useGetReleaseDetails,
-  useGetReleasePackages,
+  useGetReleaseDocumentPreview,
+  useGetReleasePackageComparison,
   useGetReleases,
-  usePostBumpReleaseWithDetails,
+  usePostBumpReleaseWithDocument,
 } from "@/controllers/API/queries/releases";
+import { AuthContext } from "@/contexts/authContext";
 import useAlertStore from "@/stores/alertStore";
-
-type BumpType = "major" | "minor" | "patch";
-type InputMode = "sheet" | "manual";
+import useRegionStore from "@/stores/regionStore";
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import Loading from "@/components/ui/loading";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Textarea } from "@/components/ui/textarea";
 
 const ACTIVE_END_DATE = "9999-12-31";
 
-const BUMP_OPTIONS: {
-  value: BumpType;
-  label: string;
-  description: string;
-  activeClasses: string;
-  dot: string;
-}[] = [
-  {
-    value: "major",
-    label: "Major",
-    description: "Breaking changes",
-    activeClasses: "border-rose-400/50 bg-rose-500/5",
-    dot: "bg-rose-500",
-  },
-  {
-    value: "minor",
-    label: "Minor",
-    description: "New features",
-    activeClasses: "border-amber-400/50 bg-amber-500/5",
-    dot: "bg-amber-500",
-  },
-  {
-    value: "patch",
-    label: "Patch",
-    description: "Bug fixes",
-    activeClasses: "border-emerald-400/50 bg-emerald-500/5",
-    dot: "bg-emerald-500",
-  },
+type BumpType = "major" | "minor" | "patch";
+type PackageViewTab = "managed" | "transitive";
+
+const BUMP_OPTIONS: { value: BumpType; label: string; description: string }[] = [
+  { value: "major", label: "Major", description: "Breaking release" },
+  { value: "minor", label: "Minor", description: "Feature release" },
+  { value: "patch", label: "Patch", description: "Fix release" },
 ];
 
-const createEmptyManualRow = (): ReleaseDetailInputPayload => ({
-  section_no: undefined,
-  section_title: "",
-  module: "",
-  sub_module: "",
-  feature_capability: "",
-  description_details: "",
-});
-
-/* ─── Expanded detail rows ─── */
-function ExpandedReleaseDetails({ releaseId }: { releaseId: string }) {
-  const { t } = useTranslation();
-  const { data, isLoading } = useGetReleaseDetails({ releaseId });
-
-  if (isLoading) {
-    return (
-      <div className="flex items-center justify-center py-10">
-        <Loading />
-      </div>
-    );
-  }
-
-  if (!data || data.length === 0) {
-    return (
-      <p className="py-6 text-center text-sm italic text-muted-foreground">
-        {t("No detail rows attached to this release.")}
-      </p>
-    );
-  }
-
-  return (
-    <div className="overflow-x-auto">
-      <table className="w-full min-w-[980px] text-sm">
-        <thead>
-          <tr className="border-b border-border/40">
-            {["#", "Section", "Module", "Sub-Module", "Feature / Capability", "Description"].map((h) => (
-              <th
-                key={h}
-                className="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground/60"
-              >
-                {t(h)}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {data.map((row, i) => (
-            <tr
-              key={row.id}
-              className={`border-b border-border/25 transition-colors hover:bg-muted/20 ${
-                i % 2 !== 0 ? "bg-muted/10" : ""
-              }`}
-            >
-              <td className="px-4 py-2.5 font-mono text-xs text-muted-foreground">
-                {row.section_no ?? "—"}
-              </td>
-              <td className="px-4 py-2.5 text-muted-foreground">{row.section_title || "—"}</td>
-              <td className="px-4 py-2.5">{row.module || "—"}</td>
-              <td className="px-4 py-2.5 text-muted-foreground">{row.sub_module || "—"}</td>
-              <td className="px-4 py-2.5 font-medium text-foreground">{row.feature_capability}</td>
-              <td className="max-w-[200px] px-4 py-2.5 text-muted-foreground">
-                <span className="line-clamp-2">{row.description_details || "—"}</span>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
+function formatDate(value?: string | null) {
+  if (!value) return "-";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "-";
+  return date.toLocaleDateString();
 }
 
-function ExpandedReleasePackages({ releaseId }: { releaseId: string }) {
+function formatDateTime(value?: string | null) {
+  if (!value) return "-";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "-";
+  return date.toLocaleString();
+}
+
+function formatFileSize(size?: number | null) {
+  if (!size || size <= 0) return "-";
+  if (size < 1024) return `${size} B`;
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
+  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function formatComparisonStatus(status: string) {
+  if (status === "unchanged") return "Unchanged";
+  if (status === "upgraded") return "Upgraded";
+  if (status === "downgraded") return "Downgraded";
+  if (status === "new") return "New";
+  if (status === "removed") return "Removed";
+  return "Changed";
+}
+
+function comparisonStatusClass(status: string) {
+  if (status === "unchanged") return "border-slate-300 text-slate-600";
+  if (status === "upgraded") return "border-green-500/50 text-green-600";
+  if (status === "downgraded") return "border-amber-500/50 text-amber-600";
+  if (status === "new") return "border-blue-500/50 text-blue-600";
+  if (status === "removed") return "border-red-500/50 text-red-600";
+  return "border-violet-500/50 text-violet-600";
+}
+
+function ReleaseLibrariesTab({ releaseId, regionCode }: { releaseId: string; regionCode?: string | null }) {
   const { t } = useTranslation();
   const [selectedService, setSelectedService] = useState("all");
-  const { data, isLoading } = useGetReleasePackages({ releaseId, service: selectedService });
-  const [activeTab, setActiveTab] = useState<"managed" | "transitive">("managed");
+  const [activeTab, setActiveTab] = useState<PackageViewTab>("managed");
   const [searchQuery, setSearchQuery] = useState("");
+  const [showChangedOnly, setShowChangedOnly] = useState(false);
+  const { data, isLoading } = useGetReleasePackageComparison({ releaseId, service: selectedService, regionCode });
 
   const normalizedData = useMemo(
     () =>
       (data ?? []).map((row) => ({
         ...row,
         service_name: row.service_name || "unknown",
-        version: row.version || "",
-        version_spec: row.version_spec || "",
-        managed_roots: row.managed_roots ?? [],
-        managed_root_details: row.managed_root_details ?? [],
-        dependency_paths: row.dependency_paths ?? [],
+        released_version: row.released_version || "",
+        released_version_spec: row.released_version_spec || "",
+        current_version: row.current_version || "",
+        current_version_spec: row.current_version_spec || "",
       })),
     [data],
   );
 
   const managedPackages = normalizedData.filter((row) => row.package_type === "managed");
   const transitivePackages = normalizedData.filter((row) => row.package_type === "transitive");
+  const visiblePackages = activeTab === "managed" ? managedPackages : transitivePackages;
   const serviceOptions = useMemo(() => {
     const values = Array.from(new Set(normalizedData.map((row) => row.service_name))).sort();
     return ["all", ...values];
   }, [normalizedData]);
-  const visiblePackages = activeTab === "managed" ? managedPackages : transitivePackages;
+
   const filteredPackages = visiblePackages.filter((row) => {
     const q = searchQuery.trim().toLowerCase();
-    if (!q) return true;
-    return (
+    const matchesSearch =
+      !q ||
+      (
       row.name.toLowerCase().includes(q) ||
       row.service_name.toLowerCase().includes(q) ||
-      row.version.toLowerCase().includes(q) ||
-      row.version_spec.toLowerCase().includes(q) ||
-      row.managed_roots.some((root) => root.toLowerCase().includes(q)) ||
-      row.managed_root_details.some(
-        (root) => root.name.toLowerCase().includes(q) || root.version.toLowerCase().includes(q),
-      ) ||
-      row.dependency_paths.some((path) => path.toLowerCase().includes(q))
-    );
+      row.released_version.toLowerCase().includes(q) ||
+      row.current_version.toLowerCase().includes(q) ||
+      row.status.toLowerCase().includes(q)
+      );
+    const matchesDelta = showChangedOnly ? row.status !== "unchanged" : true;
+    return matchesSearch && matchesDelta;
   });
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center py-10">
+      <div className="flex items-center justify-center py-12">
         <Loading />
       </div>
     );
   }
 
-  if (!data || data.length === 0) {
-    return (
-      <p className="py-6 text-center text-sm italic text-muted-foreground">
-        {t("No package snapshot attached to this release.")}
-      </p>
-    );
-  }
-
   return (
-    <div className="px-5 py-4">
-      <div className="rounded-lg border border-border/50 bg-card">
-        <div className="grid grid-cols-[minmax(0,1fr)_12rem_16rem] items-center gap-3 border-b border-border/50 px-4 py-3">
-          <div className="flex min-w-0 items-center gap-3 overflow-x-auto whitespace-nowrap pr-1">
-            <button
-              type="button"
-              onClick={() => {
-                setActiveTab("managed");
-                setSearchQuery("");
-              }}
-              className={`inline-flex items-center gap-2 rounded-md px-3 py-1.5 text-sm transition-colors ${
-                activeTab === "managed"
-                  ? "bg-background text-foreground ring-1 ring-border"
-                  : "text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              {t("Managed")}
-              <span className="rounded-full bg-muted px-2 py-0.5 text-xs">{managedPackages.length}</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setActiveTab("transitive");
-                setSearchQuery("");
-              }}
-              className={`inline-flex items-center gap-2 rounded-md px-3 py-1.5 text-sm transition-colors ${
-                activeTab === "transitive"
-                  ? "bg-background text-foreground ring-1 ring-border"
-                  : "text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              {t("Transitive")}
-              <span className="rounded-full bg-muted px-2 py-0.5 text-xs">{transitivePackages.length}</span>
-            </button>
-          </div>
-          <select
-            value={selectedService}
-            onChange={(e) => setSelectedService(e.target.value)}
-            className="h-8 rounded-md border border-border bg-background px-2 text-sm text-foreground focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring"
-          >
-            {serviceOptions.map((serviceName) => (
-              <option key={serviceName} value={serviceName}>
-                {serviceName === "all" ? t("All Services") : serviceName}
-              </option>
-            ))}
-          </select>
-          <Input
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder={
+    <div className="space-y-4">
+      <div className="grid gap-3 rounded-lg border border-border bg-card p-4 lg:grid-cols-[auto_12rem_minmax(0,1fr)_auto] lg:items-center">
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={() => {
+              setActiveTab("managed");
+              setSearchQuery("");
+            }}
+            className={`inline-flex items-center gap-2 rounded-md px-3 py-1.5 text-sm transition-colors ${
               activeTab === "managed"
-                ? t("Search managed packages...")
-                : t("Search transitive packages...")
-            }
-            className="h-8 w-full text-sm"
-          />
+                ? "bg-background text-foreground ring-1 ring-border"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            {t("Managed")}
+            <span className="rounded-full bg-muted px-2 py-0.5 text-xs">{managedPackages.length}</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setActiveTab("transitive");
+              setSearchQuery("");
+            }}
+            className={`inline-flex items-center gap-2 rounded-md px-3 py-1.5 text-sm transition-colors ${
+              activeTab === "transitive"
+                ? "bg-background text-foreground ring-1 ring-border"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            {t("Transitive")}
+            <span className="rounded-full bg-muted px-2 py-0.5 text-xs">{transitivePackages.length}</span>
+          </button>
         </div>
-        {filteredPackages.length === 0 ? (
-          <div className="px-4 py-10 text-center text-sm text-muted-foreground">
-            {searchQuery ? t("No packages match your search.") : t("No packages found in this view.")}
-          </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[860px] text-sm">
-              <thead>
-                <tr className="border-b border-border/40 bg-muted/30 text-xs text-muted-foreground">
-                  <th className="px-4 py-2.5 text-left font-semibold uppercase tracking-wider">{t("Package")}</th>
-                  <th className="px-4 py-2.5 text-left font-semibold uppercase tracking-wider">{t("Service")}</th>
+        <select
+          value={selectedService}
+          onChange={(e) => setSelectedService(e.target.value)}
+          className="h-10 rounded-md border border-border bg-background px-3 text-sm text-foreground focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring"
+        >
+          {serviceOptions.map((serviceName) => (
+            <option key={serviceName} value={serviceName}>
+              {serviceName === "all" ? t("All Services") : serviceName}
+            </option>
+          ))}
+        </select>
+        <input
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          placeholder={
+            activeTab === "managed" ? t("Search managed packages...") : t("Search transitive packages...")
+          }
+          className="h-10 w-full rounded-md border border-border bg-background px-3 text-sm text-foreground outline-none ring-offset-background placeholder:text-muted-foreground focus:border-ring focus:ring-1 focus:ring-ring"
+        />
+        <button
+          type="button"
+          onClick={() => setShowChangedOnly((current) => !current)}
+          className={`h-10 rounded-md border px-3 text-sm transition-colors ${
+            showChangedOnly
+              ? "border-border bg-muted text-foreground"
+              : "border-border bg-background text-muted-foreground hover:text-foreground"
+          }`}
+        >
+          {showChangedOnly ? t("Showing Changed Only") : t("Show Changed Only")}
+        </button>
+      </div>
+
+      <div className="max-h-[60vh] overflow-auto rounded-lg border border-border bg-card">
+        <table className="w-full min-w-[980px] text-sm">
+          <thead className="sticky top-0 z-10 bg-card">
+            <tr className="border-b border-border bg-muted/30 text-xs text-muted-foreground">
+              <th className="px-4 py-3 text-left font-semibold uppercase tracking-wider">{t("Package")}</th>
+              <th className="px-4 py-3 text-left font-semibold uppercase tracking-wider">{t("Service")}</th>
+              {activeTab === "managed" && (
+                <th className="px-4 py-3 text-left font-semibold uppercase tracking-wider">{t("Released Spec")}</th>
+              )}
+              <th className="px-4 py-3 text-left font-semibold uppercase tracking-wider">{t("Released Version")}</th>
+              <th className="px-4 py-3 text-left font-semibold uppercase tracking-wider">{t("Current Version")}</th>
+              <th className="px-4 py-3 text-left font-semibold uppercase tracking-wider">{t("Status")}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {filteredPackages.length === 0 ? (
+              <tr>
+                <td
+                  colSpan={activeTab === "managed" ? 6 : 5}
+                  className="px-4 py-10 text-center text-sm text-muted-foreground"
+                >
+                  {searchQuery ? t("No packages match your search.") : t("No packages found in this view.")}
+                </td>
+              </tr>
+            ) : (
+              filteredPackages.map((row) => (
+                <tr
+                  key={`${row.service_name}-${row.package_type}-${row.name}`}
+                  className="border-b border-border/30 align-top last:border-b-0 hover:bg-muted/20"
+                >
+                  <td className="px-4 py-3 font-mono text-sm" title={row.name}>{row.name}</td>
+                  <td className="px-4 py-3 text-muted-foreground">{row.service_name}</td>
                   {activeTab === "managed" && (
-                    <th className="px-4 py-2.5 text-left font-semibold uppercase tracking-wider">{t("Declared")}</th>
+                    <td className="px-4 py-3 text-muted-foreground">{row.released_version_spec || "-"}</td>
                   )}
-                  <th className="px-4 py-2.5 text-left font-semibold uppercase tracking-wider">{t("Resolved")}</th>
-                  {activeTab === "transitive" && (
-                    <th className="px-4 py-2.5 text-left font-semibold uppercase tracking-wider">{t("Managed Root")}</th>
-                  )}
+                  <td className="px-4 py-3">{row.released_version || "-"}</td>
+                  <td className="px-4 py-3">{row.current_version || "-"}</td>
+                  <td className="px-4 py-3">
+                    <span
+                      className={`inline-flex rounded-full border px-2.5 py-0.5 text-xs font-medium ${comparisonStatusClass(row.status)}`}
+                    >
+                      {t(formatComparisonStatus(row.status))}
+                    </span>
+                  </td>
                 </tr>
-              </thead>
-              <tbody>
-                {filteredPackages.map((row) => (
-                  <tr
-                    key={row.id}
-                    className="border-b border-border/25 transition-colors hover:bg-muted/20"
-                  >
-                    <td className="px-4 py-2.5 font-mono text-sm">{row.name}</td>
-                    <td className="px-4 py-2.5 text-sm text-muted-foreground">{row.service_name}</td>
-                    {activeTab === "managed" && (
-                      <td className="px-4 py-2.5 text-muted-foreground">{row.version_spec || "—"}</td>
-                    )}
-                    <td className="px-4 py-2.5">{row.version}</td>
-                    {activeTab === "transitive" && (
-                      <td className="px-4 py-2.5 text-muted-foreground">
-                        {row.managed_root_details.length > 0 ? (
-                          <div className="flex flex-col gap-1 leading-tight">
-                            {row.managed_root_details.slice(0, 3).map((d) => (
-                              <div key={`${row.id}-${d.name}-${d.version}`}>
-                                {d.name}: {d.version}
-                              </div>
-                            ))}
-                            {row.managed_root_details.length > 3 && (
-                              <TooltipProvider>
-                                <Tooltip>
-                                  <TooltipTrigger asChild>
-                                    <button
-                                      type="button"
-                                      className="w-fit cursor-help text-xs text-muted-foreground/80 underline decoration-dotted underline-offset-2"
-                                    >
-                                      +{row.managed_root_details.length - 3} more
-                                    </button>
-                                  </TooltipTrigger>
-                                  <TooltipContent side="top" className="max-w-md">
-                                    <div className="flex max-h-64 flex-col gap-1 overflow-auto text-xs">
-                                      {row.managed_root_details.slice(3).map((d) => (
-                                        <div key={`${row.id}-more-${d.name}-${d.version}`}>
-                                          {d.name}: {d.version}
-                                        </div>
-                                      ))}
-                                    </div>
-                                  </TooltipContent>
-                                </Tooltip>
-                              </TooltipProvider>
-                            )}
-                            {row.dependency_paths.length > 0 && (
-                              <TooltipProvider>
-                                <Tooltip>
-                                  <TooltipTrigger asChild>
-                                    <button
-                                      type="button"
-                                      className="mt-1 w-fit cursor-help text-xs text-muted-foreground/80 underline decoration-dotted underline-offset-2"
-                                    >
-                                      {t("View paths")}
-                                    </button>
-                                  </TooltipTrigger>
-                                  <TooltipContent side="top" className="max-w-2xl">
-                                    <div className="flex max-h-72 flex-col gap-1 overflow-auto text-xs">
-                                      {row.dependency_paths.map((path, idx) => (
-                                        <div key={`${row.id}-path-${idx}`}>{path}</div>
-                                      ))}
-                                    </div>
-                                  </TooltipContent>
-                                </Tooltip>
-                              </TooltipProvider>
-                            )}
-                          </div>
-                        ) : (
-                          "—"
-                        )}
-                      </td>
-                    )}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
+              ))
+            )}
+          </tbody>
+        </table>
       </div>
     </div>
   );
 }
 
-/* ─── Small helpers ─── */
-function Rule() {
-  return <div className="border-t border-border/40" />;
-}
+function ReleaseDocumentTab({ release, regionCode }: { release: ReleaseRecord; regionCode?: string | null }) {
+  const { t } = useTranslation();
+  const { data, isLoading } = useGetReleaseDocumentPreview({ releaseId: release.id, regionCode });
+  const [showFallbackPreview, setShowFallbackPreview] = useState(false);
+  const [showViewerAssist, setShowViewerAssist] = useState(false);
 
-function Label({ children }: { children: React.ReactNode }) {
+  useEffect(() => {
+    setShowFallbackPreview(false);
+    setShowViewerAssist(false);
+  }, [release.id]);
+
+  useEffect(() => {
+    if (!data?.office_viewer_url || showFallbackPreview) return;
+    const timer = window.setTimeout(() => {
+      setShowViewerAssist(true);
+    }, 5000);
+    return () => window.clearTimeout(timer);
+  }, [data?.office_viewer_url, showFallbackPreview]);
+
+  const handleDownload = async () => {
+    const response = await api.get(`${getURL("RELEASES")}/${release.id}/document/download`, {
+      responseType: "blob",
+      ...(regionCode ? { headers: { "X-Region-Code": regionCode } } : {}),
+    });
+    const blob = new Blob([response.data], {
+      type: release.document_content_type ?? "application/octet-stream",
+    });
+    const url = window.URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = release.document_file_name ?? `${release.version}.docx`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    window.URL.revokeObjectURL(url);
+  };
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center py-12">
+        <Loading />
+      </div>
+    );
+  }
+
+  if (!data?.has_document) {
+    return (
+      <div className="rounded-lg border border-dashed border-border bg-muted/10 p-8 text-center text-sm text-muted-foreground">
+        {t("No release document is available for this release.")}
+      </div>
+    );
+  }
+
+  const officeViewerUrl = data.office_viewer_url || "";
+  const canTryOfficeViewer = Boolean(officeViewerUrl) && !showFallbackPreview;
+
   return (
-    <p className="mb-2.5 text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground/60">
-      {children}
-    </p>
+    <div className="space-y-4">
+      <div className="flex flex-col gap-3 rounded-lg border border-border bg-card p-4 md:flex-row md:items-center md:justify-between">
+        <div className="min-w-0 space-y-1">
+          <div className="truncate text-sm font-medium text-foreground" title={data.file_name || release.document_file_name || ""}>
+            {data.file_name || release.document_file_name}
+          </div>
+          <div className="text-xs text-muted-foreground">
+            {t("Uploaded")}: {formatDateTime(data.document_uploaded_at || release.document_uploaded_at)}
+            {" • "}
+            {t("Size")}: {formatFileSize(data.document_size || release.document_size)}
+          </div>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {officeViewerUrl && (
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => window.open(officeViewerUrl, "_blank", "noopener,noreferrer")}
+            >
+              {t("Open in Word Viewer")}
+            </Button>
+          )}
+          <Button type="button" variant="outline" onClick={handleDownload}>
+            {t("Download Document")}
+          </Button>
+        </div>
+      </div>
+
+      {canTryOfficeViewer ? (
+        <div className="space-y-3">
+          {showViewerAssist && (
+            <div className="flex flex-col gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 md:flex-row md:items-center md:justify-between">
+              <div>
+                {t("If the Word-style preview does not open correctly, switch to the fallback preview or download the document.")}
+              </div>
+              <Button type="button" variant="outline" onClick={() => setShowFallbackPreview(true)}>
+                {t("Use Fallback Preview")}
+              </Button>
+            </div>
+          )}
+          <div className="overflow-hidden rounded-lg border border-border bg-card">
+            <iframe
+              title={data.file_name || release.document_file_name || "Release Document"}
+              src={officeViewerUrl}
+              className="h-[72vh] w-full"
+            />
+          </div>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+            {officeViewerUrl
+              ? t("Word-style preview could not be used for this document. Showing fallback document preview.")
+              : t("Office-style preview is unavailable in this environment. Showing fallback document preview.")}
+          </div>
+          <div className="rounded-lg border border-border bg-card p-6">
+            <div
+              className="release-doc-html prose prose-sm max-w-none text-foreground [&_h1]:mb-3 [&_h1]:text-xl [&_h1]:font-semibold [&_h2]:mb-2 [&_h2]:mt-5 [&_h2]:text-lg [&_h2]:font-semibold [&_h3]:mb-2 [&_h3]:mt-4 [&_h3]:text-base [&_h3]:font-semibold [&_p]:mb-3 [&_table]:mb-4 [&_table]:w-full [&_table]:border-collapse [&_td]:border [&_td]:border-border [&_td]:px-3 [&_td]:py-2"
+              dangerouslySetInnerHTML={{ __html: data.html }}
+            />
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 
-/* ══════════════════════════════════════════════
-   MAIN PAGE
-══════════════════════════════════════════════ */
-export default function ReleaseManagementPage() {
+function ViewReleaseDialog({
+  release,
+  open,
+  onOpenChange,
+  regionCode,
+}: {
+  release: ReleaseRecord | null;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  regionCode?: string | null;
+}) {
   const { t } = useTranslation();
-  const { permissions } = useContext(AuthContext);
-  const can = (permissionKey: string) => permissions?.includes(permissionKey);
-  const canPublishRelease = can("publish_release");
+  const [activeTab, setActiveTab] = useState("document");
 
+  if (!release) return null;
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-h-[90vh] max-w-6xl overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>{t("Release {{version}}", { version: release.version })}</DialogTitle>
+          <DialogDescription>
+            {release.release_notes || t("Review the uploaded release document and the captured library snapshot.")}
+          </DialogDescription>
+        </DialogHeader>
+
+        <Tabs key={release.id} value={activeTab} onValueChange={setActiveTab} className="space-y-4">
+          <TabsList className="grid w-full grid-cols-2 rounded-lg border border-border bg-card p-1">
+            <TabsTrigger value="document">{t("Release Document")}</TabsTrigger>
+            <TabsTrigger value="libraries">{t("Packages")}</TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="document" className="space-y-4">
+            <ReleaseDocumentTab release={release} regionCode={regionCode} />
+          </TabsContent>
+
+          <TabsContent value="libraries" className="space-y-4">
+            <ReleaseLibrariesTab releaseId={release.id} regionCode={regionCode} />
+          </TabsContent>
+        </Tabs>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function CreateReleaseDialog({
+  open,
+  onOpenChange,
+  regionCode,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  regionCode?: string | null;
+}) {
+  const { t } = useTranslation();
+  const { setSuccessData, setErrorData } = useAlertStore();
   const [bumpType, setBumpType] = useState<BumpType>("patch");
   const [notes, setNotes] = useState("");
-  const [inputMode, setInputMode] = useState<InputMode>("sheet");
-  const [detailsFile, setDetailsFile] = useState<File | null>(null);
-  const [manualRows, setManualRows] = useState<ReleaseDetailInputPayload[]>([
-    createEmptyManualRow(),
-  ]);
-  const [expandedReleaseId, setExpandedReleaseId] = useState<string | null>(null);
+  const [documentFile, setDocumentFile] = useState<File | null>(null);
+  const [selectedFileName, setSelectedFileName] = useState("");
 
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const setSuccessData = useAlertStore((s) => s.setSuccessData);
-  const setErrorData = useAlertStore((s) => s.setErrorData);
+  const createReleaseMutation = usePostBumpReleaseWithDocument({
+    onSuccess: () => {
+      setSuccessData({ title: t("Release created successfully.") });
+      setNotes("");
+      setDocumentFile(null);
+      setSelectedFileName("");
+      setBumpType("patch");
+      onOpenChange(false);
+    },
+    onError: (err: any) => {
+      setErrorData({
+        title: err?.response?.data?.detail || err?.message || t("Failed to create release."),
+      });
+    },
+  });
 
-  const { data: currentRelease, isLoading: isLoadingCurrent } = useGetCurrentRelease();
-  const { data: releases, isLoading: isLoadingHistory } = useGetReleases();
-  const { mutate: bumpReleaseWithDetails, isPending: isBumping } =
-    usePostBumpReleaseWithDetails();
-
-  const isLoading = isLoadingCurrent || isLoadingHistory;
-  const history = useMemo(() => releases ?? [], [releases]);
-
-  const updateManualRow = (
-    index: number,
-    key: keyof ReleaseDetailInputPayload,
-    value: string | number | undefined,
-  ) =>
-    setManualRows((prev) =>
-      prev.map((row, i) => (i !== index ? row : { ...row, [key]: value })),
-    );
-
-  const removeManualRow = (index: number) =>
-    setManualRows((prev) =>
-      prev.length === 1 ? prev : prev.filter((_, i) => i !== index),
-    );
-
-  const handleDownloadTemplate = () => {
-    const link = document.createElement("a");
-    link.href = "/release_details_template.csv";
-    link.download = "release_details_template.csv";
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-  };
-
-  const handleSelectDetailsFile = () => {
-    fileInputRef.current?.click();
-  };
-
-  const handleClearDetailsFile = () => {
-    setDetailsFile(null);
-    if (fileInputRef.current) fileInputRef.current.value = "";
-  };
-
-  const handleCreateRelease = () => {
-    if (inputMode === "sheet" && !detailsFile) {
-      setErrorData({ title: t("Please upload a CSV/Excel file first.") });
+  const handleSubmit = () => {
+    if (!documentFile) {
+      setErrorData({ title: t("Please upload a .docx release document.") });
       return;
     }
-    const normalizedManualRows = manualRows
-      .map((row) => ({
-        ...row,
-        section_title: row.section_title?.trim() || undefined,
-        module: row.module?.trim() || undefined,
-        sub_module: row.sub_module?.trim() || undefined,
-        feature_capability: row.feature_capability?.trim() || "",
-        description_details: row.description_details?.trim() || undefined,
-      }))
-      .filter((row) => row.feature_capability);
-
-    if (inputMode === "manual" && normalizedManualRows.length === 0) {
-      setErrorData({ title: t("Add at least one row with Feature / Capability.") });
-      return;
-    }
-
-    bumpReleaseWithDetails(
-      {
-        bump_type: bumpType,
-        release_notes: notes.trim() || undefined,
-        details_file: inputMode === "sheet" ? detailsFile || undefined : undefined,
-        manual_details: inputMode === "manual" ? normalizedManualRows : undefined,
-      },
-      {
-        onSuccess: (res) => {
-          setNotes("");
-          setDetailsFile(null);
-          setManualRows([createEmptyManualRow()]);
-          if (fileInputRef.current) fileInputRef.current.value = "";
-          setSuccessData({
-            title: t("Release created: {{version}}", { version: res.version }),
-          });
-        },
-        onError: (error: any) => {
-          const message =
-            error?.response?.data?.detail ||
-            t("Failed to create release. Please try again.");
-          setErrorData({ title: message });
-        },
-      },
-    );
+    createReleaseMutation.mutate({
+      bump_type: bumpType,
+      release_notes: notes,
+      document_file: documentFile,
+      regionCode,
+    });
   };
 
-  /* ── ROOT: fills whatever container the router gives it ── */
   return (
-    <div className="flex h-full w-full flex-col overflow-hidden bg-background">
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>{t("Create Release")}</DialogTitle>
+          <DialogDescription>
+            {t("Publish a new release version with an uploaded Word document and the current library snapshot.")}
+          </DialogDescription>
+        </DialogHeader>
 
-      {/* ════════ TOP BAR ════════ */}
-      <header className="flex flex-shrink-0 items-center justify-between border-b border-border/60 bg-card px-7 py-3.5">
-        <div className="flex items-center gap-3">
-          <div className="h-7 w-0.5 rounded-full bg-primary/60" />
-          <div>
-            <p className="text-xs font-bold uppercase tracking-[0.18em] text-muted-foreground/50">
-              {t("Release Console")}
-            </p>
-            <h1 className="text-base font-semibold tracking-tight">{t("Release Management")}</h1>
-          </div>
-        </div>
-
-        {/* Active version badge */}
-        {currentRelease ? (
-          <div className="flex items-center gap-2.5 rounded-lg border border-emerald-500/20 bg-emerald-500/5 px-3.5 py-2">
-            <span className="relative flex h-2 w-2 flex-shrink-0">
-              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-60" />
-              <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
-            </span>
-            <div className="leading-tight">
-              <p className="font-mono text-sm font-bold text-emerald-600">{currentRelease.version}</p>
-              <p className="text-xs text-muted-foreground">
-                {currentRelease.start_date} — {currentRelease.end_date}
-              </p>
-            </div>
-            <div className="ml-2 border-l border-border/40 pl-3 text-right leading-tight">
-              <p className="text-base font-bold tabular-nums">{history.length}</p>
-              <p className="text-xs text-muted-foreground">{t("releases")}</p>
+        <div className="space-y-6 py-2">
+          <div className="space-y-2">
+            <p className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">{t("Version Bump")}</p>
+            <div className="grid gap-3 sm:grid-cols-3">
+              {BUMP_OPTIONS.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  onClick={() => setBumpType(option.value)}
+                  className={`rounded-lg border px-4 py-3 text-left transition-colors ${
+                    bumpType === option.value
+                      ? "border-primary bg-primary/5 text-foreground"
+                      : "border-border bg-card text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  <div className="font-medium">{t(option.label)}</div>
+                  <div className="mt-1 text-xs">{t(option.description)}</div>
+                </button>
+              ))}
             </div>
           </div>
-        ) : (
-          <div className="rounded-lg border border-border/40 bg-muted/30 px-3.5 py-2 text-sm text-muted-foreground">
-            {t("No active release")}
+
+          <div className="space-y-2">
+            <p className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">{t("Release Notes")}</p>
+            <Textarea
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              rows={4}
+              placeholder={t("Add an optional release summary.")}
+            />
           </div>
-        )}
-      </header>
 
-      {/* ════════ BODY ════════ */}
-      {isLoading ? (
-        <div className="flex flex-1 items-center justify-center">
-          <Loading />
-        </div>
-      ) : (
-        <div className="flex min-h-0 flex-1 overflow-hidden">
-
-          {/* ── LEFT SIDEBAR: Create Release ── */}
-          {canPublishRelease && (
-            <aside className="flex w-[320px] flex-shrink-0 flex-col overflow-y-auto border-r border-border/50 bg-card/40">
-
-            <div className="px-5 pt-5 pb-4">
-              <p className="text-sm font-semibold">{t("New Release")}</p>
-              <p className="mt-0.5 text-sm text-muted-foreground">
-                {t("Select a bump, attach details, then publish.")}
-              </p>
-            </div>
-
-            <Rule />
-
-            <div className="flex flex-col gap-5 px-5 py-5">
-
-              {/* Bump type */}
-              <div>
-                <Label>{t("Bump Type")}</Label>
-                <div className="flex flex-col gap-1.5">
-                  {BUMP_OPTIONS.map((opt) => {
-                    const active = bumpType === opt.value;
-                    return (
-                      <button
-                        key={opt.value}
-                        type="button"
-                        onClick={() => setBumpType(opt.value)}
-                        className={`flex items-center justify-between rounded-md border px-3 py-2 text-left transition-all ${
-                          active
-                            ? `${opt.activeClasses} shadow-sm`
-                            : "border-border/40 bg-background hover:border-border/70 hover:bg-muted/20"
-                        }`}
-                      >
-                        <div className="flex items-center gap-2">
-                          <span
-                            className={`h-1.5 w-1.5 rounded-full transition-opacity ${opt.dot} ${
-                              active ? "opacity-100" : "opacity-25"
-                            }`}
-                          />
-                          <span className="text-sm font-semibold">{t(opt.label)}</span>
-                        </div>
-                        <span className="text-sm text-muted-foreground">{t(opt.description)}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-
-              <Rule />
-
-              {/* Input mode toggle */}
-              <div>
-                <Label>{t("Details Source")}</Label>
-                <div className="flex overflow-hidden rounded-md border border-border/50 bg-background">
-                  {(["sheet", "manual"] as InputMode[]).map((mode) => (
-                    <button
-                      key={mode}
-                      type="button"
-                      onClick={() => setInputMode(mode)}
-                      className={`flex-1 py-1.5 text-sm font-medium transition-all ${
-                        inputMode === mode
-                          ? "bg-card text-foreground shadow-sm"
-                          : "text-muted-foreground hover:text-foreground"
-                      }`}
-                    >
-                      {mode === "sheet" ? t("Upload File") : t("Manual Entry")}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Conditional input area */}
-              {inputMode === "sheet" ? (
-                <div className="rounded-md border border-dashed border-border/60 bg-muted/10 p-3.5">
-                  <p className="mb-2 text-xs leading-relaxed text-muted-foreground">
-                    {t("Accepts .csv · .xlsx — Headers: S.No, Section, Module, Sub-Module, Feature, Description")}
-                  </p>
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    accept=".csv,.xlsx,.xlsm,.xltx"
-                    className="hidden"
-                    onChange={(e) => setDetailsFile(e.target.files?.[0] || null)}
-                  />
-                  <div className="mt-3 flex items-center gap-2">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      className="h-8 px-3 text-sm"
-                      onClick={handleSelectDetailsFile}
-                    >
-                      {detailsFile ? t("Replace file") : t("Upload details file")}
-                    </Button>
-                    {detailsFile && (
-                      <button
-                        type="button"
-                        onClick={handleClearDetailsFile}
-                        className="h-8 rounded-md px-2 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-                      >
-                        {t("Remove")}
-                      </button>
-                    )}
-                  </div>
-                  <div className="mt-2 rounded-md border border-border/50 bg-background/80 px-2.5 py-2">
-                    {detailsFile ? (
-                      <p className="truncate text-sm text-foreground">{detailsFile.name}</p>
-                    ) : (
-                      <p className="text-sm text-muted-foreground">{t("No file selected")}</p>
-                    )}
-                  </div>
-                  <button
-                    type="button"
-                    onClick={handleDownloadTemplate}
-                    className="mt-2 text-xs text-primary/70 underline-offset-2 hover:underline"
-                  >
-                    {t("Download blank template ↓")}
-                  </button>
-                </div>
-              ) : (
-                <p className="rounded-md border border-border/40 bg-muted/20 px-3 py-2.5 text-sm leading-relaxed text-muted-foreground">
-                  {t("Fill detail rows in the table on the right. Feature / Capability is required.")}
-                </p>
-              )}
-
-              <Rule />
-
-              {/* Notes */}
-              <div>
-                <Label>{t("Release Notes")}</Label>
-                <Textarea
-                  value={notes}
-                  onChange={(e) => setNotes(e.target.value)}
-                  placeholder={t("What changed in this release?")}
-                  rows={4}
-                  className="resize-none text-sm"
-                />
-              </div>
-            </div>
-
-            {/* Publish footer — sticky at bottom of sidebar */}
-            <div className="mt-auto border-t border-border/50 px-5 py-4">
-              <Button
-                onClick={handleCreateRelease}
-                disabled={isBumping}
-                size="sm"
-                className="w-full text-sm"
+          <div className="space-y-2">
+            <p className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">{t("Release Document")}</p>
+            <div className="rounded-lg border border-dashed border-border bg-muted/10 p-4">
+              <label
+                htmlFor="release-document-upload"
+                className="flex cursor-pointer items-center justify-between gap-3 rounded-md border border-border bg-background px-4 py-3 transition-colors hover:border-primary/40"
               >
-                {isBumping ? t("Publishing…") : t("Publish Release")}
-              </Button>
-              <p className="mt-1.5 text-center text-xs text-muted-foreground">
-                {t("Bumps version and closes the active window.")}
+                <div className="min-w-0">
+                  <div className="truncate text-sm font-medium text-foreground" title={selectedFileName}>
+                    {selectedFileName || t("Select release document")}
+                  </div>
+                  <div className="mt-1 text-xs text-muted-foreground">
+                    {documentFile
+                      ? `${formatFileSize(documentFile.size)} • .docx`
+                      : t("Upload one Word document for this release")}
+                  </div>
+                </div>
+                <span className="shrink-0 rounded-md border border-border bg-muted px-3 py-2 text-sm font-medium text-foreground">
+                  {t("Choose File")}
+                </span>
+              </label>
+              <input
+                id="release-document-upload"
+                type="file"
+                accept=".docx"
+                className="hidden"
+                onChange={(e) => {
+                  const file = e.target.files?.[0] ?? null;
+                  setDocumentFile(file);
+                  setSelectedFileName(file?.name ?? "");
+                }}
+              />
+              <p className="mt-2 text-xs text-muted-foreground">
+                {documentFile ? (
+                  <span title={documentFile.name}>{documentFile.name}</span>
+                ) : (
+                  t("Only .docx files are supported. The document will be stored securely in release documents.")
+                )}
               </p>
             </div>
-            </aside>
-          )}
+          </div>
 
-          {/* ── RIGHT MAIN AREA ── */}
-          <section className="flex min-w-0 flex-1 flex-col overflow-hidden">
+          <div className="flex justify-end gap-2">
+            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+              {t("Cancel")}
+            </Button>
+            <Button type="button" onClick={handleSubmit} disabled={createReleaseMutation.isPending}>
+              {createReleaseMutation.isPending ? t("Creating...") : t("Create Release")}
+            </Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
 
-            {/* Manual entry table — shown only when relevant */}
-            {canPublishRelease && inputMode === "manual" && (
-              <div className="flex-shrink-0 border-b border-border/50 bg-muted/5">
-                <div className="flex items-center justify-between px-6 py-3">
-                  <div>
-                    <p className="text-sm font-semibold">{t("Detail Rows")}</p>
-                    <p className="text-sm text-muted-foreground">
-                      {t("Feature / Capability is required per row.")}
-                    </p>
-                  </div>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="h-7 px-3 text-sm"
-                    onClick={() => setManualRows((prev) => [...prev, createEmptyManualRow()])}
-                  >
-                    + {t("Add Row")}
-                  </Button>
-                </div>
-                <div className="overflow-x-auto">
-                  <table className="w-full min-w-[960px]">
-                    <thead>
-                      <tr className="border-y border-border/40 bg-muted/30">
-                        {["#", "Section", "Module", "Sub-Module", "Feature / Capability *", "Description", ""].map((h) => (
-                          <th
-                            key={h}
-                            className="px-3 py-2 text-left text-xs font-bold uppercase tracking-wider text-muted-foreground/60"
-                          >
-                            {t(h)}
-                          </th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-border/25">
-                      {manualRows.map((row, index) => (
-                        <tr key={`row-${index}`} className="bg-background hover:bg-muted/10">
-                          <td className="w-14 px-3 py-1.5">
-                            <Input
-                              type="number"
-                              className="h-7 w-12 text-sm"
-                              value={row.section_no ?? ""}
-                              onChange={(e) => {
-                                const v = e.target.value;
-                                updateManualRow(
-                                  index,
-                                  "section_no",
-                                  v === "" ? undefined : Number.parseInt(v, 10),
-                                );
-                              }}
-                            />
-                          </td>
-                          {(
-                            [
-                              "section_title",
-                              "module",
-                              "sub_module",
-                              "feature_capability",
-                              "description_details",
-                            ] as (keyof ReleaseDetailInputPayload)[]
-                          ).map((field) => (
-                            <td key={field} className="px-3 py-1.5">
-                              <Input
-                                className="h-7 text-sm"
-                                value={(row[field] as string) || ""}
-                                onChange={(e) => updateManualRow(index, field, e.target.value)}
-                              />
-                            </td>
-                          ))}
-                          <td className="w-12 px-3 py-1.5">
-                            <button
-                              type="button"
-                              onClick={() => removeManualRow(index)}
-                              disabled={manualRows.length === 1}
-                              className="rounded px-2 py-1 text-sm text-muted-foreground transition-colors hover:text-destructive disabled:opacity-30"
-                            >
-                              ✕
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+export default function ReleaseManagementPage() {
+  const { t } = useTranslation();
+  const { permissions, userData } = useContext(AuthContext);
+  const normalizedRole = String(userData?.role || "").trim().toLowerCase();
+  const isRootAdmin = normalizedRole === "root";
+  const regions = useRegionStore((s) => s.regions);
+  const selectedRegionCode = useRegionStore((s) => s.selectedRegionCode);
+  const setSelectedRegion = useRegionStore((s) => s.setSelectedRegion);
+  const fetchRegions = useRegionStore((s) => s.fetchRegions);
+  const releaseRegionCode = isRootAdmin ? selectedRegionCode : null;
+  const { data: currentRelease, isLoading: isCurrentLoading } = useGetCurrentRelease({ regionCode: releaseRegionCode });
+  const { data: releases = [], isLoading: isReleasesLoading } = useGetReleases({ regionCode: releaseRegionCode });
+  const [createOpen, setCreateOpen] = useState(false);
+  const [selectedRelease, setSelectedRelease] = useState<ReleaseRecord | null>(null);
+
+  useEffect(() => {
+    if (isRootAdmin) {
+      fetchRegions();
+    }
+  }, [isRootAdmin, fetchRegions]);
+
+  const isRemoteRegion = useMemo(() => {
+    if (!isRootAdmin || !selectedRegionCode || !regions.length) return false;
+    const hub = regions.find((r) => r.is_hub);
+    return hub ? hub.code !== selectedRegionCode : false;
+  }, [isRootAdmin, selectedRegionCode, regions]);
+
+  const canPublishRelease = permissions?.includes("publish_release");
+  const sortedReleases = useMemo(
+    () => [...releases].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()),
+    [releases],
+  );
+
+  useEffect(() => {
+    setSelectedRelease(null);
+    setCreateOpen(false);
+  }, [releaseRegionCode]);
+
+  return (
+    <div className="flex h-full flex-col bg-background">
+      <div className="border-b border-border bg-background px-8 py-5">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div className="space-y-1">
+            <h1 className="text-xl font-semibold tracking-tight text-foreground md:text-2xl">
+              {t("Release Management")}
+            </h1>
+            <p className="text-sm text-muted-foreground">
+              {t("Review versioned releases, release documents, and captured library snapshots")}
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-3 self-start">
+            {isRootAdmin && regions.length > 1 && (
+              <div className="flex items-center gap-2">
+                <Globe className="h-4 w-4 text-muted-foreground" />
+                <Select value={selectedRegionCode ?? ""} onValueChange={setSelectedRegion}>
+                  <SelectTrigger className="h-9 w-[170px] text-sm">
+                    <SelectValue placeholder={t("Select Region")} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {regions.map((region) => (
+                      <SelectItem key={region.code} value={region.code}>
+                        {region.name}
+                        {region.is_hub ? " (Hub)" : ""}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
             )}
+            {canPublishRelease && (
+              <Button type="button" onClick={() => setCreateOpen(true)} className="self-start">
+                {t("Create Release")}
+              </Button>
+            )}
+          </div>
+        </div>
+      </div>
 
-            {/* ── Release History ── */}
-            <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-              <div className="flex flex-shrink-0 items-center justify-between border-b border-border/50 px-6 py-3.5">
-                <div>
-                  <p className="text-sm font-semibold">{t("Release History")}</p>
-                  <p className="text-sm text-muted-foreground">
-                    {t("Expand any version to inspect its attached detail rows.")}
-                  </p>
-                </div>
-                <span className="rounded-full border border-border/40 bg-muted/30 px-2.5 py-0.5 font-mono text-sm font-medium">
-                  {history.length}
-                </span>
+      {isRootAdmin && isRemoteRegion && selectedRegionCode && (
+        <div className="border-b border-amber-200 bg-amber-50 px-8 py-2.5">
+          <div className="flex items-center justify-between gap-4">
+            <p className="text-xs text-amber-800">
+              {t("Viewing and managing release data for {{region}} from hub.", {
+                region: regions.find((r) => r.code === selectedRegionCode)?.name ?? selectedRegionCode,
+              })}
+            </p>
+            <button
+              type="button"
+              onClick={() => {
+                const hub = regions.find((r) => r.is_hub);
+                if (hub) setSelectedRegion(hub.code);
+              }}
+              className="text-xs font-medium text-amber-700 hover:underline"
+            >
+              {t("Back to Hub")}
+            </button>
+          </div>
+        </div>
+      )}
+
+      <div className="flex-1 overflow-y-auto p-8">
+        <div className="space-y-6">
+          <section className="rounded-lg border border-border bg-card px-6 py-4">
+            <div className="grid gap-4 xl:grid-cols-[minmax(0,1.2fr)_minmax(0,2fr)] xl:items-center">
+              <div className="min-w-0">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                  {t("Current Release")}
+                </p>
+                {isCurrentLoading ? (
+                  <div className="mt-3 flex items-center gap-3 text-sm text-muted-foreground">
+                    <Loading />
+                  </div>
+                ) : currentRelease ? (
+                  <div className="mt-2 flex flex-wrap items-center gap-3">
+                    <span className="text-2xl font-semibold text-foreground">v{currentRelease.version}</span>
+                    <span className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-medium text-emerald-700">
+                      {t("Active")}
+                    </span>
+                    <span
+                      className="max-w-[28rem] truncate text-sm text-muted-foreground"
+                      title={currentRelease.release_notes || t("No release summary was provided for the active release.")}
+                    >
+                      {currentRelease.release_notes || t("No release summary was provided for the active release.")}
+                    </span>
+                  </div>
+                ) : (
+                  <p className="mt-2 text-sm text-muted-foreground">{t("No active release found.")}</p>
+                )}
               </div>
 
-              <div className="flex-1 overflow-y-auto">
-                <table className="w-full">
-                  <thead className="sticky top-0 z-10 bg-card/95 backdrop-blur-sm">
-                    <tr className="border-b border-border/50">
-                      {["Version", "Start Date", "End Date", "Status", "Notes", ""].map((h) => (
-                        <th
-                          key={h}
-                          className="px-5 py-2.5 text-left text-xs font-bold uppercase tracking-wider text-muted-foreground/60"
-                        >
-                          {t(h)}
-                        </th>
-                      ))}
+              {currentRelease && (
+                <div className="grid min-w-0 gap-4 sm:grid-cols-[9rem_minmax(0,1fr)_7rem_auto] sm:items-center">
+                  <div>
+                    <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                      {t("Start Date")}
+                    </div>
+                    <div className="mt-1 text-sm text-foreground">{formatDate(currentRelease.start_date)}</div>
+                  </div>
+                  <div className="min-w-0">
+                    <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                      {t("Document")}
+                    </div>
+                    <div className="mt-1 truncate text-sm text-foreground" title={currentRelease.document_file_name || ""}>
+                      {currentRelease.document_file_name || "-"}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                      {t("Packages")}
+                    </div>
+                    <div className="mt-1 text-sm text-foreground">{currentRelease.package_count ?? "-"}</div>
+                  </div>
+                  <div className="flex sm:justify-end">
+                    <Button type="button" variant="outline" size="sm" onClick={() => setSelectedRelease(currentRelease)}>
+                      {t("View Release")}
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </section>
+
+          <section className="space-y-3">
+            <div>
+              <h2 className="text-lg font-semibold text-foreground">{t("Release History")}</h2>
+              <p className="text-sm text-muted-foreground">
+                {t("Open any release to preview the document and review the captured library set.")}
+              </p>
+            </div>
+
+            <div className="rounded-lg border border-border bg-card">
+              <div className="max-h-[58vh] overflow-auto">
+                <table className="w-full min-w-[980px] text-sm">
+                  <thead className="sticky top-0 z-10 bg-card">
+                    <tr className="border-b border-border bg-muted/30 text-xs uppercase tracking-wider text-muted-foreground">
+                      <th className="px-4 py-3 text-left font-semibold">{t("Version")}</th>
+                      <th className="px-4 py-3 text-left font-semibold">{t("Status")}</th>
+                      <th className="px-4 py-3 text-left font-semibold">{t("Document")}</th>
+                      <th className="px-4 py-3 text-left font-semibold">{t("Created")}</th>
+                      <th className="px-4 py-3 text-left font-semibold">{t("Packages")}</th>
+                      <th className="px-4 py-3 text-left font-semibold">{t("Notes")}</th>
+                      <th className="px-4 py-3 text-center font-semibold">{t("Actions")}</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {history.length === 0 ? (
+                    {isReleasesLoading ? (
                       <tr>
-                        <td colSpan={6} className="py-20 text-center">
-                          <p className="text-3xl">📦</p>
-                          <p className="mt-3 text-sm font-medium text-muted-foreground">
-                            {t("No releases yet.")}
-                          </p>
-                          <p className="mt-1 text-xs text-muted-foreground/60">
-                            {t("Use the panel on the left to create your first release.")}
-                          </p>
+                        <td colSpan={7} className="px-4 py-12 text-center">
+                          <div className="flex justify-center">
+                            <Loading />
+                          </div>
+                        </td>
+                      </tr>
+                    ) : sortedReleases.length === 0 ? (
+                      <tr>
+                        <td colSpan={7} className="px-4 py-12 text-center text-sm text-muted-foreground">
+                          {t("No releases found")}
                         </td>
                       </tr>
                     ) : (
-                      history.map((release) => {
-                        const isActive = release.end_date === ACTIVE_END_DATE;
-                        const isExpanded = expandedReleaseId === release.id;
-
-                        return (
-                          <Fragment key={release.id}>
-                            <tr
-                              className={`border-b border-border/25 transition-colors hover:bg-muted/20 ${
-                                isExpanded ? "bg-muted/10" : ""
+                      sortedReleases.map((release) => (
+                        <tr key={release.id} className="border-b border-border/30 align-top last:border-b-0 hover:bg-muted/20">
+                          <td className="px-4 py-4">
+                            <div className="font-medium text-foreground">v{release.version}</div>
+                            <div className="text-xs text-muted-foreground">
+                              {release.major}.{release.minor}.{release.patch}
+                            </div>
+                          </td>
+                          <td className="px-4 py-4">
+                            <span
+                              className={`inline-flex rounded-full px-2.5 py-1 text-xs font-medium ${
+                                release.end_date === ACTIVE_END_DATE
+                                  ? "bg-emerald-100 text-emerald-700"
+                                  : "bg-muted text-muted-foreground"
                               }`}
                             >
-                              <td className="px-5 py-3">
-                                <span className="font-mono text-sm font-bold">{release.version}</span>
-                              </td>
-                              <td className="px-5 py-3 text-sm text-muted-foreground">
-                                {release.start_date}
-                              </td>
-                              <td className="px-5 py-3 text-sm text-muted-foreground">
-                                {isActive ? (
-                                  <span className="text-muted-foreground/30">—</span>
-                                ) : (
-                                  release.end_date
-                                )}
-                              </td>
-                              <td className="px-5 py-3">
-                                <span
-                                  className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-semibold ring-1 ring-inset ${
-                                    isActive
-                                      ? "bg-emerald-500/10 text-emerald-600 ring-emerald-500/20"
-                                      : "bg-zinc-500/8 text-zinc-500 ring-zinc-500/15"
-                                  }`}
-                                >
-                                  {isActive && (
-                                    <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" />
-                                  )}
-                                  {isActive ? t("Active") : t("Closed")}
-                                </span>
-                              </td>
-                              <td className="max-w-xs px-5 py-3">
-                                <span className="line-clamp-1 text-sm text-muted-foreground">
-                                  {release.release_notes || (
-                                    <span className="text-muted-foreground/30">—</span>
-                                  )}
-                                </span>
-                              </td>
-                              <td className="px-5 py-3 text-right">
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    setExpandedReleaseId((prev) =>
-                                      prev === release.id ? null : release.id,
-                                    )
-                                  }
-                                  className="inline-flex items-center gap-1 rounded border border-border/50 bg-background px-2.5 py-1 text-sm font-medium text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground"
-                                >
-                                  {isExpanded ? "↑ Hide" : "↓ Details"}
-                                </button>
-                              </td>
-                            </tr>
-
-                            {/* ── Expanded detail section — classy ── */}
-                            {isExpanded && (
-                              <tr>
-                                <td colSpan={6} className="bg-card/60 px-0 py-0">
-                                  {/* Header strip */}
-                                  <div className="flex items-center gap-3 border-y border-border/30 bg-muted/20 px-5 py-2.5">
-                                    <div className="h-3.5 w-0.5 rounded-full bg-primary/50" />
-                                    <p className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground/60">
-                                      {t("Detail Rows")}
-                                    </p>
-                                    <span className="text-xs text-muted-foreground/40">·</span>
-                                    <span className="font-mono text-sm font-bold text-foreground">
-                                      {release.version}
-                                    </span>
-                                  </div>
-                                  <ExpandedReleaseDetails releaseId={release.id} />
-                                  <div className="flex items-center gap-3 border-y border-border/30 bg-muted/20 px-5 py-2.5">
-                                    <div className="h-3.5 w-0.5 rounded-full bg-primary/50" />
-                                    <p className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground/60">
-                                      {t("Package Snapshot")}
-                                    </p>
-                                    <span className="text-xs text-muted-foreground/40">·</span>
-                                    <span className="font-mono text-sm font-bold text-foreground">
-                                      {release.version}
-                                    </span>
-                                  </div>
-                                  <ExpandedReleasePackages releaseId={release.id} />
-                                </td>
-                              </tr>
-                            )}
-                          </Fragment>
-                        );
-                      })
+                              {release.end_date === ACTIVE_END_DATE ? t("Active") : t("Closed")}
+                            </span>
+                          </td>
+                          <td className="px-4 py-4" title={release.document_file_name || ""}>
+                            <div className="max-w-[280px] truncate text-foreground">
+                              {release.document_file_name || "-"}
+                            </div>
+                            <div className="mt-1 text-xs text-muted-foreground">
+                              {release.has_document ? t("Uploaded") : t("Unavailable")}
+                            </div>
+                          </td>
+                          <td className="px-4 py-4 text-muted-foreground">{formatDate(release.created_at)}</td>
+                          <td className="px-4 py-4 text-foreground">{release.package_count ?? "-"}</td>
+                          <td className="px-4 py-4 text-muted-foreground" title={release.release_notes || ""}>
+                            <div className="max-w-[320px] line-clamp-2 break-words">{release.release_notes || "-"}</div>
+                          </td>
+                          <td className="px-4 py-4 text-center">
+                            <Button type="button" variant="outline" size="sm" onClick={() => setSelectedRelease(release)}>
+                              {t("View")}
+                            </Button>
+                          </td>
+                        </tr>
+                      ))
                     )}
                   </tbody>
                 </table>
@@ -907,7 +808,18 @@ export default function ReleaseManagementPage() {
             </div>
           </section>
         </div>
-      )}
+      </div>
+
+      <CreateReleaseDialog open={createOpen} onOpenChange={setCreateOpen} regionCode={releaseRegionCode} />
+      <ViewReleaseDialog
+        key={selectedRelease?.id ?? "release-view-dialog"}
+        release={selectedRelease}
+        regionCode={releaseRegionCode}
+        open={Boolean(selectedRelease)}
+        onOpenChange={(open) => {
+          if (!open) setSelectedRelease(null);
+        }}
+      />
     </div>
   );
 }

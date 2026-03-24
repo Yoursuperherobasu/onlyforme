@@ -4,51 +4,38 @@ import { getURL } from "../../helpers/constants";
 import { UseRequestProcessor } from "../../services/request-processor";
 import type { ReleaseRecord } from "./use-get-releases";
 
-export type ReleaseDetailInputPayload = {
-  section_no?: number;
-  section_title?: string;
-  module?: string;
-  sub_module?: string;
-  feature_capability: string;
-  description_details?: string;
-};
-
-export type ReleaseBumpWithDetailsPayload = {
+export type ReleaseBumpWithDocumentPayload = {
   bump_type: "major" | "minor" | "patch";
   release_notes?: string;
-  details_file?: File;
-  manual_details?: ReleaseDetailInputPayload[];
+  document_file: File;
+  regionCode?: string | null;
 };
 
-export const usePostBumpReleaseWithDetails = (options?: any) => {
+export const usePostBumpReleaseWithDocument = (options?: any) => {
   const { mutate, queryClient } = UseRequestProcessor();
 
-  const bumpReleaseWithDetailsFn = async (
-    payload: ReleaseBumpWithDetailsPayload,
+  const bumpReleaseWithDocumentFn = async (
+    payload: ReleaseBumpWithDocumentPayload,
   ): Promise<ReleaseRecord> => {
     const body = new FormData();
     body.append("bump_type", payload.bump_type);
-
     if (payload.release_notes?.trim()) {
       body.append("release_notes", payload.release_notes.trim());
     }
+    body.append("document_file", payload.document_file);
 
-    if (payload.details_file) {
-      body.append("details_file", payload.details_file);
-    } else {
-      body.append("details_json", JSON.stringify(payload.manual_details ?? []));
-    }
-
-    const res = await api.post(`${getURL("RELEASES")}/bump-with-details`, body);
+    const res = await api.post(`${getURL("RELEASES")}/bump-with-document`, body, {
+      ...(payload.regionCode ? { headers: { "X-Region-Code": payload.regionCode } } : {}),
+    });
     return res.data;
   };
 
-  return mutate(["usePostBumpReleaseWithDetails"], bumpReleaseWithDetailsFn, {
+  return mutate(["usePostBumpReleaseWithDocument"], bumpReleaseWithDocumentFn, {
     ...options,
     onSettled: (...args) => {
       queryClient.invalidateQueries({ queryKey: ["useGetCurrentRelease"] });
       queryClient.invalidateQueries({ queryKey: ["useGetReleases"] });
       options?.onSettled?.(...args);
     },
-  }) as UseMutationResult<ReleaseRecord, any, ReleaseBumpWithDetailsPayload>;
+  }) as UseMutationResult<ReleaseRecord, any, ReleaseBumpWithDocumentPayload>;
 };

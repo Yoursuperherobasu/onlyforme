@@ -37,36 +37,46 @@ export interface CreatePackageRequestPayload {
   package_name: string;
   requested_version: string;
   justification: string;
+  regionCode?: string | null;
 }
 
 export const useGetMyPackageRequests: useQueryFunctionType<
-  undefined,
-  PackageRequestItem[]
-> = (options?) => {
-  const { query } = UseRequestProcessor();
-
-  const fn = async (): Promise<PackageRequestItem[]> => {
-    const res = await api.get(`${getURL("PACKAGES")}/requests/mine`);
-    return res.data;
-  };
-
-  return query(["useGetMyPackageRequests"], fn, options);
-};
-
-export const useGetPackageRequestsForApproval: useQueryFunctionType<
-  { status?: string },
+  { regionCode?: string | null } | undefined,
   PackageRequestItem[]
 > = (params, options?) => {
   const { query } = UseRequestProcessor();
+  const regionCode = params?.regionCode ?? null;
 
   const fn = async (): Promise<PackageRequestItem[]> => {
-    const res = await api.get(`${getURL("PACKAGES")}/requests`, {
-      params: params?.status ? { status: params.status } : undefined,
+    const res = await api.get(`${getURL("PACKAGES")}/requests/mine`, {
+      headers: regionCode ? { "X-Region-Code": regionCode } : undefined,
     });
     return res.data;
   };
 
-  return query(["useGetPackageRequestsForApproval", params?.status ?? "all"], fn, options);
+  return query(["useGetMyPackageRequests", regionCode ?? "local"], fn, options);
+};
+
+export const useGetPackageRequestsForApproval: useQueryFunctionType<
+  { status?: string; regionCode?: string | null },
+  PackageRequestItem[]
+> = (params, options?) => {
+  const { query } = UseRequestProcessor();
+  const regionCode = params?.regionCode ?? null;
+
+  const fn = async (): Promise<PackageRequestItem[]> => {
+    const res = await api.get(`${getURL("PACKAGES")}/requests`, {
+      params: params?.status ? { status: params.status } : undefined,
+      headers: regionCode ? { "X-Region-Code": regionCode } : undefined,
+    });
+    return res.data;
+  };
+
+  return query(
+    ["useGetPackageRequestsForApproval", params?.status ?? "all", regionCode ?? "local"],
+    fn,
+    options,
+  );
 };
 
 export const useCreatePackageRequest: useMutationFunctionType<
@@ -77,7 +87,10 @@ export const useCreatePackageRequest: useMutationFunctionType<
   const { mutate, queryClient } = UseRequestProcessor();
 
   const fn = async (payload: CreatePackageRequestPayload): Promise<PackageRequestItem> => {
-    const res = await api.post(`${getURL("PACKAGES")}/requests`, payload);
+    const { regionCode, ...body } = payload;
+    const res = await api.post(`${getURL("PACKAGES")}/requests`, body, {
+      headers: regionCode ? { "X-Region-Code": regionCode } : undefined,
+    });
     return res.data;
   };
 
@@ -93,11 +106,13 @@ export const useCreatePackageRequest: useMutationFunctionType<
 interface RequestActionPayload {
   requestId: string;
   comments?: string;
+  regionCode?: string | null;
 }
 
 interface DeployActionPayload {
   requestId: string;
   deployment_notes?: string;
+  regionCode?: string | null;
 }
 
 export const useApprovePackageRequest: useMutationFunctionType<
@@ -108,9 +123,13 @@ export const useApprovePackageRequest: useMutationFunctionType<
   const { mutate, queryClient } = UseRequestProcessor();
 
   const fn = async (payload: RequestActionPayload): Promise<PackageRequestItem> => {
-    const res = await api.post(`${getURL("PACKAGES")}/requests/${payload.requestId}/approve`, {
-      comments: payload.comments ?? "",
-    });
+    const res = await api.post(
+      `${getURL("PACKAGES")}/requests/${payload.requestId}/approve`,
+      { comments: payload.comments ?? "" },
+      {
+        headers: payload.regionCode ? { "X-Region-Code": payload.regionCode } : undefined,
+      },
+    );
     return res.data;
   };
 
@@ -132,9 +151,13 @@ export const useRejectPackageRequest: useMutationFunctionType<
   const { mutate, queryClient } = UseRequestProcessor();
 
   const fn = async (payload: RequestActionPayload): Promise<PackageRequestItem> => {
-    const res = await api.post(`${getURL("PACKAGES")}/requests/${payload.requestId}/reject`, {
-      comments: payload.comments ?? "",
-    });
+    const res = await api.post(
+      `${getURL("PACKAGES")}/requests/${payload.requestId}/reject`,
+      { comments: payload.comments ?? "" },
+      {
+        headers: payload.regionCode ? { "X-Region-Code": payload.regionCode } : undefined,
+      },
+    );
     return res.data;
   };
 
@@ -156,9 +179,13 @@ export const useDeployPackageRequest: useMutationFunctionType<
   const { mutate, queryClient } = UseRequestProcessor();
 
   const fn = async (payload: DeployActionPayload): Promise<PackageRequestItem> => {
-    const res = await api.post(`${getURL("PACKAGES")}/requests/${payload.requestId}/deploy`, {
-      deployment_notes: payload.deployment_notes ?? "",
-    });
+    const res = await api.post(
+      `${getURL("PACKAGES")}/requests/${payload.requestId}/deploy`,
+      { deployment_notes: payload.deployment_notes ?? "" },
+      {
+        headers: payload.regionCode ? { "X-Region-Code": payload.regionCode } : undefined,
+      },
+    );
     return res.data;
   };
 

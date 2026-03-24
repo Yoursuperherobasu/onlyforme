@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { AgentCard } from "./components/AgentCard";
 import { Button } from "@/components/ui/button";
-import { Search } from "lucide-react";
+import { Globe, Search } from "lucide-react";
 import ActionModal from "./components/ActionModal";
 import McpConfigModal from "./components/McpConfigModal";
 import { useContext } from "react";
@@ -10,6 +10,14 @@ import { AuthContext } from "@/contexts/authContext";
 import useAlertStore from "@/stores/alertStore";
 import { useCustomNavigate } from "@/customization/hooks/use-custom-navigate";
 import { useDeployPackageRequest, useGetPackageRequestsForApproval } from "@/controllers/API/queries/packages";
+import useRegionStore from "@/stores/regionStore";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 import { useGetApprovals, type ApprovalAgent } from "@/controllers/API/queries/approvals";
 import { useApprovalActionModal, useApprovalActions } from "./hooks";
@@ -37,25 +45,44 @@ export default function ApprovalPage() {
   const setSuccessData = useAlertStore((state) => state.setSuccessData);
   const can = (permissionKey: string) => permissions?.includes(permissionKey);
   const isRoot = String(role ?? "").toLowerCase() === "root";
+  const regions = useRegionStore((s) => s.regions);
+  const selectedRegionCode = useRegionStore((s) => s.selectedRegionCode);
+  const setSelectedRegion = useRegionStore((s) => s.setSelectedRegion);
+  const fetchRegions = useRegionStore((s) => s.fetchRegions);
+  const packageRegionCode = isRoot ? selectedRegionCode : null;
   const [isMcpConfigOpen, setIsMcpConfigOpen] = useState(false);
   const [selectedMcpApprovalId, setSelectedMcpApprovalId] = useState<string | null>(null);
 
   /* ================= MODAL & ACTIONS MANAGEMENT ================= */
   const { isOpen, selectedAgent, action, openModal, closeModal } =
     useApprovalActionModal();
-  const { handleApprove, handleReject } = useApprovalActions();
+  const { handleApprove, handleReject } = useApprovalActions(packageRegionCode);
 
   /* ================= API QUERIES ================= */
   // Fetch all approvals from backend
   const { data: agents = [], isLoading: isLoadingAgents } = useGetApprovals();
   const { data: packageRequests = [], isLoading: isLoadingPackageRequests } =
     useGetPackageRequestsForApproval(
-      {},
+      { regionCode: packageRegionCode },
       {
         enabled: isRoot,
       },
     );
   const deployPackageRequestMutation = useDeployPackageRequest();
+
+  useEffect(() => {
+    if (isRoot && regions.length === 0) {
+      fetchRegions();
+    }
+  }, [isRoot, regions.length, fetchRegions]);
+
+  const isRemoteRegion =
+    isRoot && !!selectedRegionCode && regions.length > 0
+      ? (() => {
+          const hub = regions.find((region) => region.is_hub);
+          return hub ? hub.code !== selectedRegionCode : false;
+        })()
+      : false;
 
   const visibleTabs = isRoot
     ? APPROVAL_TABS.filter((tab) => tab.id === "package")
@@ -144,6 +171,7 @@ export default function ApprovalPage() {
         {
           requestId: agent.id,
           deployment_notes: "Marked as deployed by root",
+          regionCode: packageRegionCode,
         },
         {
           onSuccess: () => {
@@ -195,6 +223,24 @@ export default function ApprovalPage() {
           </p>
         </div>
         <div className="flex items-center gap-3">
+          {isRoot && regions.length > 0 && (
+            <div className="flex items-center gap-2">
+              <Globe className="h-4 w-4 text-muted-foreground" />
+              <Select value={selectedRegionCode ?? ""} onValueChange={setSelectedRegion}>
+                <SelectTrigger className="w-[220px]">
+                  <SelectValue placeholder={t("Select region")} />
+                </SelectTrigger>
+                <SelectContent>
+                  {regions.map((region) => (
+                    <SelectItem key={region.code} value={region.code}>
+                      {region.name}
+                      {region.is_hub ? ` (${t("Hub")})` : ""}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
           {/* Search Bar */}
           <div className="relative">
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -208,6 +254,16 @@ export default function ApprovalPage() {
           </div>
         </div>
       </div>
+
+      {isRoot && isRemoteRegion && selectedRegionCode && (
+        <div className="border-b border-amber-200 bg-amber-50/70 px-4 py-3 sm:px-6 md:px-8 dark:border-amber-900/30 dark:bg-amber-950/10">
+          <p className="text-sm text-amber-800 dark:text-amber-200">
+            {t("Viewing and managing package approvals for {{region}} from hub.", {
+              region: regions.find((r) => r.code === selectedRegionCode)?.name ?? selectedRegionCode,
+            })}
+          </p>
+        </div>
+      )}
 
       {/* Filter Tabs + Status Tabs */}
       <div className="flex items-center gap-3 border-b border-border px-4 py-3 sm:px-6 md:px-8">

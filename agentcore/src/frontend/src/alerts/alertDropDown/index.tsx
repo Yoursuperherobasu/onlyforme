@@ -38,7 +38,7 @@ const AlertDropdown = forwardRef<HTMLDivElement, AlertDropdownType>(
     const mergedNotifications = [
       ...serverNotifications.map((item) => {
         const loweredTitle = item.title.toLowerCase();
-        const type = loweredTitle.includes("was approved")
+        const type = loweredTitle.includes("was approved") || loweredTitle.includes("was deployed")
           ? ("success" as const)
           : loweredTitle.includes("was rejected")
             ? ("error" as const)

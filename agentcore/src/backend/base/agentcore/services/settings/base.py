@@ -203,6 +203,10 @@ class Settings(BaseSettings):
 
 
     storage_type: str = "local"
+    azure_release_documents_container_name: str = Field(
+        default="",
+        validation_alias="AZURE_RELEASE_DOCUMENTS_CONTAINER_NAME",
+    )
 
     fallback_to_env_var: bool = True
     """If set to True, Global Variables set in the UI will fallback to a environment variable

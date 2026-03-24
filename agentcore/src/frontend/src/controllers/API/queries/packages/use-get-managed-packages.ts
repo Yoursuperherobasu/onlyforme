@@ -20,6 +20,7 @@ export type ManagedPackage = {
 export type GetManagedPackagesParams = {
   include_history?: boolean;
   service?: string;
+  regionCode?: string | null;
 };
 
 export const useGetManagedPackages: useQueryFunctionType<
@@ -30,6 +31,7 @@ export const useGetManagedPackages: useQueryFunctionType<
   const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
   const includeHistory = params?.include_history ?? false;
   const service = params?.service ?? "all";
+  const regionCode = params?.regionCode ?? null;
 
   const getManagedPackagesFn = async (): Promise<ManagedPackage[]> => {
     if (!isAuthenticated) return [];
@@ -38,12 +40,13 @@ export const useGetManagedPackages: useQueryFunctionType<
         include_history: includeHistory,
         service,
       },
+      headers: regionCode ? { "X-Region-Code": regionCode } : undefined,
     });
     return res.data;
   };
 
   const queryResult: UseQueryResult<ManagedPackage[], any> = query(
-    ["useGetManagedPackages", includeHistory, service],
+    ["useGetManagedPackages", includeHistory, service, regionCode ?? "local"],
     getManagedPackagesFn,
     {
       refetchOnWindowFocus: false,

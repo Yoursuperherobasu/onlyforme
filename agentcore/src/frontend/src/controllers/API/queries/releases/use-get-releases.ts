@@ -19,22 +19,34 @@ export type ReleaseRecord = {
   updated_at: string;
   is_active: boolean;
   package_count?: number;
+  has_document: boolean;
+  document_file_name: string | null;
+  document_content_type: string | null;
+  document_size: number | null;
+  document_uploaded_by: string | null;
+  document_uploaded_at: string | null;
 };
 
-export const useGetReleases: useQueryFunctionType<undefined, ReleaseRecord[]> = (
-  options?,
+type ReleaseQueryParams = {
+  regionCode?: string | null;
+};
+
+export const useGetReleases: useQueryFunctionType<ReleaseQueryParams | undefined, ReleaseRecord[]> = (
+  params,
+  options?: any,
 ) => {
   const { query } = UseRequestProcessor();
   const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
 
   const getReleasesFn = async (): Promise<ReleaseRecord[]> => {
     if (!isAuthenticated) return [];
-    const res = await api.get(`${getURL("RELEASES")}`);
+    const config = params?.regionCode ? { headers: { "X-Region-Code": params.regionCode } } : undefined;
+    const res = await api.get(`${getURL("RELEASES")}`, config);
     return res.data;
   };
 
   const queryResult: UseQueryResult<ReleaseRecord[], any> = query(
-    ["useGetReleases"],
+    ["useGetReleases", params?.regionCode ?? "local"],
     getReleasesFn,
     {
       refetchOnWindowFocus: false,
