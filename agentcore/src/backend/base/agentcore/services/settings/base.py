@@ -363,8 +363,8 @@ class Settings(BaseSettings):
 
     # Manifest
     manifest_file_path: str = ""
-    """Absolute or relative path to the manifest.yaml file used by the publish/notify flow.
-    When empty, defaults to <project_root>/manifest.yaml."""
+    """Absolute or relative path to the agents.yaml file used by the publish/notify flow.
+    When empty, defaults to <project_root>/agents.yaml."""
 
     # Git manifest sync
     git_provider: str = ""
@@ -383,8 +383,8 @@ class Settings(BaseSettings):
     """PAT token with repo write access for the Azure DevOps repo."""
     git_branch: str = "main"
     """Branch to commit the manifest file to (applies to both providers)."""
-    git_manifest_file: str = "manifest.yaml"
-    """Path of the manifest file inside the repo (e.g. 'helm-chart/manifest.yaml').
+    git_manifest_file: str = "agents.yaml"
+    """Path of the manifest file inside the repo (e.g. 'helm-chart/agents.yaml').
     Applies to both providers."""
 
     # Public Agent Settings

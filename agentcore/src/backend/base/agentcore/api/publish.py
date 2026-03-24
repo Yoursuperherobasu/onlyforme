@@ -1442,7 +1442,7 @@ async def publish_notify_verify(
 
     Triggered after agent publish (UAT) or approval (PROD). Looks up the
     deployment record in the appropriate table, verifies that the agent_id
-    and version match, updates manifest.yaml, and returns the full deployment
+    and version match, updates agents.yaml, and returns the full deployment
     details for downstream deployment orchestration.
 
     Raises:
@@ -1497,7 +1497,7 @@ async def publish_notify_verify(
         f"status={record.status} is_active={record.is_active}",
     )
 
-    # Append core deployment details to manifest.yaml.
+    # Append core deployment details to agents.yaml.
     # Failure here is non-fatal — the API response is always returned regardless.
     from agentcore.services.manifest import add_manifest_entry
 
@@ -1732,7 +1732,7 @@ async def uat_deploy_action(
         msg = f"UAT v{record.version_number} updated: {', '.join(changes)}"
         logger.info(f"{msg} | deploy_id={deploy_id} user={current_user.id}")
 
-        # ─── Sync manifest.yaml on publish/unpublish/activate/deactivate ──
+        # ─── Sync agents.yaml on publish/unpublish/activate/deactivate ──
         from agentcore.services.manifest import add_manifest_entry, remove_manifest_entry
         effective_status = record.status.value if hasattr(record.status, "value") else str(record.status)
         if record.is_active and effective_status == "PUBLISHED":

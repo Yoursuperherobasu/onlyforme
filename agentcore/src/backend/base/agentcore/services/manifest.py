@@ -12,9 +12,9 @@ from agentcore.services.deps import get_settings_service
 
 
 def _resolve_manifest_path() -> Path:
-    """Return the absolute path to manifest.yaml, resolved from settings."""
+    """Return the absolute path to agents.yaml, resolved from settings."""
     configured = get_settings_service().settings.manifest_file_path
-    manifest_path = Path(configured) if configured else Path("manifest.yaml")
+    manifest_path = Path(configured) if configured else Path("agents.yaml")
     if not manifest_path.is_absolute():
         env_dir = Path(find_dotenv()).resolve().parent
         manifest_path = (env_dir / manifest_path).resolve()
@@ -47,7 +47,7 @@ def add_manifest_entry(
     try:
         path = _resolve_manifest_path()
         data = _load_manifest(path)
-        deployments: list = data.get("deployments", [])
+        deployments: list = data.get("agents", [])
 
         if any(d.get("deployment_id") == deployment_id for d in deployments):
             logger.debug(f"[MANIFEST] Entry for {deployment_id} already exists, skipping add.")
@@ -60,7 +60,7 @@ def add_manifest_entry(
             "environment": environment,
             "deployment_id": deployment_id,
         })
-        updated = {"deployments": deployments}
+        updated = {"agents": deployments}
         _save_manifest(path, updated)
         logger.info(f"[MANIFEST] Added entry for deployment_id={deployment_id} (total: {len(deployments)})")
 
@@ -78,7 +78,7 @@ def remove_manifest_entry(*, deployment_id: str) -> None:
     try:
         path = _resolve_manifest_path()
         data = _load_manifest(path)
-        deployments: list = data.get("deployments", [])
+        deployments: list = data.get("agents", [])
 
         original_len = len(deployments)
         deployments = [d for d in deployments if d.get("deployment_id") != deployment_id]
@@ -87,7 +87,7 @@ def remove_manifest_entry(*, deployment_id: str) -> None:
             logger.debug(f"[MANIFEST] No entry found for {deployment_id}, nothing to remove.")
             return
 
-        updated = {"deployments": deployments}
+        updated = {"agents": deployments}
         _save_manifest(path, updated)
         logger.info(f"[MANIFEST] Removed entry for deployment_id={deployment_id} (remaining: {len(deployments)})")
 

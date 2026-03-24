@@ -1,4 +1,4 @@
-"""Push manifest.yaml to a Git repository (GitHub or Azure DevOps) via PAT token."""
+"""Push agents.yaml to a Git repository (GitHub or Azure DevOps) via PAT token."""
 
 from __future__ import annotations
 
@@ -216,7 +216,7 @@ def push_manifest_to_git(data: dict, commit_message: str) -> None:
         return  # git sync disabled
 
     branch = s.git_branch or "main"
-    file_path = s.git_manifest_file or "manifest.yaml"
+    file_path = s.git_manifest_file or "agents.yaml"
 
     if provider in ("github", "both"):
         if not s.github_repo_url:
