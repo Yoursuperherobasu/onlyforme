@@ -119,3 +119,13 @@ deployments:
   version_number: v1
   environment: prod
   deployment_id: cf9448bb-ae9b-42dc-a338-7150e640c3c1
+- agent_id: 17fba846-59e0-4442-afd2-c085221eef54
+  agent_name: mem-agent-sharon-simple
+  version_number: v1
+  environment: uat
+  deployment_id: fcac3568-b1c0-4386-88a7-ffc9bf99572e
+- agent_id: 17fba846-59e0-4442-afd2-c085221eef54
+  agent_name: mem-agent-sharon-simple
+  version_number: v2
+  environment: uat
+  deployment_id: 084e3335-8727-489d-9fce-6f506f6817f2
