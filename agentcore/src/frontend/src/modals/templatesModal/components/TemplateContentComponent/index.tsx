@@ -71,9 +71,7 @@ export default function TemplateContentComponent({
   }, [searchQuery, currentTab]);
 
   const handleCardClick = (example) => {
-    if (example.data) {
-      updateIds(example.data);
-    }
+    updateIds(example.data);
     addAgent({ agent: example })
       .then((id) => {
         if (!id) return;
