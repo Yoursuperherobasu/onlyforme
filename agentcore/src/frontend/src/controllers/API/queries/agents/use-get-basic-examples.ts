@@ -1,6 +1,7 @@
 import useAgentsManagerStore from "@/stores/agentsManagerStore";
 import type { useQueryFunctionType } from "@/types/api";
 import type { AgentType } from "@/types/agent";
+import { PREBUILT_TEMPLATES } from "@/data/prebuilt-templates";
 import { api } from "../../api";
 import { getURL } from "../../helpers/constants";
 import { UseRequestProcessor } from "../../services/request-processor";
@@ -18,10 +19,9 @@ export const useGetBasicExamplesQuery: useQueryFunctionType<
 
   const responseFn = async () => {
     const { data } = await getBasicExamplesFn();
-    if (data) {
-      setExamples(data);
-    }
-    return data;
+    const examples = data?.length ? data : PREBUILT_TEMPLATES;
+    setExamples(examples);
+    return examples;
   };
 
   const queryResult = query(["useGetBasicExamplesQuery"], responseFn, {
