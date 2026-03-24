@@ -42,6 +42,7 @@ export interface ModelType {
   default_params?: Record<string, any> | null;
   is_active: boolean;
   created_by?: string | null;
+  created_by_email?: string | null;
   created_at?: string;
   updated_at?: string;
 }

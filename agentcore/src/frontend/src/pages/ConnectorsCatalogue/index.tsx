@@ -1137,7 +1137,7 @@ export default function ConnectorsCatalogueView(): JSX.Element {
                           <td className="w-[150px] min-w-[150px] px-4 py-4 text-sm text-muted-foreground">
                             <div
                               className="max-w-[140px] truncate"
-                              title={c.created_by || "-"}
+                              title={c.created_by_email || c.created_by || "-"}
                             >
                               {c.created_by || "-"}
                             </div>

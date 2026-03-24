@@ -62,6 +62,26 @@ export default function AgentCatalogueView({
   const setErrorData = useAlertStore((state) => state.setErrorData);
   const can = (permissionKey: string) => permissions?.includes(permissionKey);
 
+  const getIdentityDisplay = (nameLike?: string | null, emailLike?: string | null) => {
+    const normalizedName = nameLike?.trim() || "";
+    if (normalizedName && !normalizedName.includes("@")) return normalizedName;
+    const normalizedEmail = emailLike?.trim() || "";
+    if (normalizedEmail) return normalizedEmail.split("@", 1)[0];
+    if (normalizedName) {
+      return normalizedName.includes("@")
+        ? normalizedName.split("@", 1)[0]
+        : normalizedName;
+    }
+    return t("Unknown");
+  };
+
+  const getIdentityEmail = (nameLike?: string | null, emailLike?: string | null) => {
+    const normalizedEmail = emailLike?.trim() || "";
+    if (normalizedEmail) return normalizedEmail;
+    const normalizedName = nameLike?.trim() || "";
+    return normalizedName.includes("@") ? normalizedName : "";
+  };
+
   const { data: registryData, isLoading: isLoadingRegistry } = useGetRegistry(
     {
       search: searchQuery || undefined,
@@ -578,15 +598,13 @@ export default function AgentCatalogueView({
                         </div>
                         <p className="text-xs text-muted-foreground">
                           {(() => {
-                            const rawName = agent.listed_by_username?.trim() || "";
-                            const displayName = rawName
-                              ? rawName.includes("@")
-                                ? rawName.split("@", 1)[0]
-                                : rawName
-                              : t("Unknown");
-                            const hoverEmail = (
-                              agent.listed_by_email?.trim() ||
-                              (rawName.includes("@") ? rawName : "")
+                            const displayName = getIdentityDisplay(
+                              agent.listed_by_username,
+                              agent.listed_by_email,
+                            );
+                            const hoverEmail = getIdentityEmail(
+                              agent.listed_by_username,
+                              agent.listed_by_email,
                             );
                             return (
                               <>

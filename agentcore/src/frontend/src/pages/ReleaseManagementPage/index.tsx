@@ -590,6 +590,10 @@ export default function ReleaseManagementPage() {
   }, [isRootAdmin, selectedRegionCode, regions]);
 
   const canPublishRelease = permissions?.includes("publish_release");
+  const pageTitle = isRootAdmin ? t("Release Management") : t("Release Versions");
+  const pageSubtitle = isRootAdmin
+    ? t("Review versioned releases, release documents, and captured library snapshots")
+    : t("Review released versions, release documents, and captured package snapshots");
   const sortedReleases = useMemo(
     () => [...releases].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()),
     [releases],
@@ -606,10 +610,10 @@ export default function ReleaseManagementPage() {
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div className="space-y-1">
             <h1 className="text-xl font-semibold tracking-tight text-foreground md:text-2xl">
-              {t("Release Management")}
+              {pageTitle}
             </h1>
             <p className="text-sm text-muted-foreground">
-              {t("Review versioned releases, release documents, and captured library snapshots")}
+              {pageSubtitle}
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-3 self-start">

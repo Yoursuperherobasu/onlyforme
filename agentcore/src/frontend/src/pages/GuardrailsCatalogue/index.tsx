@@ -524,7 +524,7 @@ export default function GuardrailsView({
                               <td className="px-4 py-4 text-sm text-muted-foreground">
                                 <div
                                   className="max-w-[170px] truncate"
-                                  title={guardrail.created_by || "-"}
+                                  title={guardrail.created_by_email || guardrail.created_by || "-"}
                                 >
                                   {guardrail.created_by || "-"}
                                 </div>

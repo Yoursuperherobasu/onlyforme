@@ -721,7 +721,7 @@ const SideBarFoldersButtonsComponent = ({
                 name="Tag"
                 className="h-4 w-4"
               />
-              {t("Release Management")}
+              {isRootAdmin ? t("Release Management") : t("Release Versions")}
             </SidebarMenuButton>
           </SidebarMenuItem>
         )}

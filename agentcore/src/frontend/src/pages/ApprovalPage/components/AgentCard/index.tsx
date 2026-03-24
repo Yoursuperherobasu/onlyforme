@@ -82,12 +82,21 @@ export function AgentCard({
   const currentUserId = String(userData?.id ?? "");
   const approverNameRaw = approver?.name?.trim() ?? "";
   const approverEmail = approver?.email?.trim() ?? "";
+  const approverDisplayName = (() => {
+    if (approverNameRaw && !approverNameRaw.includes("@")) return approverNameRaw;
+    if (approverEmail) return approverEmail.split("@", 1)[0];
+    if (approverNameRaw) {
+      const atIndex = approverNameRaw.indexOf("@");
+      return atIndex > 0 ? approverNameRaw.slice(0, atIndex) : approverNameRaw;
+    }
+    return t("Unknown");
+  })();
   const isApproverYou =
     approver?.id && String(approver.id) === currentUserId && currentUserId !== "";
   const approverLabel = approver
     ? isApproverYou
       ? t("You")
-      : approverNameRaw || t("Unknown")
+      : approverDisplayName
     : "";
   const canModerate = entityType === "package" ? true : can("view_approval_page");
   const submittedDisplay = (() => {
@@ -97,6 +106,9 @@ export function AgentCard({
   })();
   const submittedByDisplay = (() => {
     const raw = submittedBy?.name?.trim() ?? "";
+    const explicit = submittedBy?.email?.trim() ?? "";
+    if (raw && !raw.includes("@")) return raw;
+    if (explicit) return explicit.split("@", 1)[0];
     if (!raw) return t("Unknown");
     const atIndex = raw.indexOf("@");
     return atIndex > 0 ? raw.slice(0, atIndex) : raw;
