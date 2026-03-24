@@ -121,6 +121,7 @@ class ControlPanelAgentItem(BaseModel):
     agent_id: UUID
     agent_name: str
     agent_description: str | None = None
+    publish_description: str | None = None
     version_number: str
     version_label: str
     promoted_from_uat_id: UUID | None = None
@@ -729,6 +730,7 @@ async def list_control_panel_agents(
                     agent_id=dep.agent_id,
                     agent_name=dep.agent_name,
                     agent_description=dep.agent_description,
+                    publish_description=dep.publish_description,
                     version_number=version_number,
                     version_label=version_label,
                     promoted_from_uat_id=promoted_from_uat_id,

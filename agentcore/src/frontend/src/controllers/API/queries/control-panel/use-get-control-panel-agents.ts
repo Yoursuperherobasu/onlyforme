@@ -8,6 +8,7 @@ export interface ControlPanelAgentItem {
   agent_id: string;
   agent_name: string;
   agent_description?: string | null;
+  publish_description?: string | null;
   version_number: string;
   version_label: string;
   promoted_from_uat_id?: string | null;
