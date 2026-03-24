@@ -485,6 +485,7 @@ async def run_agent_generator(
         - On error, logs the error and sends it via event_manager.on_error()
         - Always sends a final None event to signal completion
     """
+    _gen_start = time.perf_counter()
     try:
         result = await simple_run_agent(
             agent=agent,
@@ -496,9 +497,13 @@ async def run_agent_generator(
             uat_deployment=uat_deployment,
         )
         event_manager.on_end(data={"result": result.model_dump()})
+        from agentcore.observability.metrics_registry import record_agent_run
+        record_agent_run(agent.name or "unknown", "success", (time.perf_counter() - _gen_start) * 1000)
         await client_consumed_queue.get()
     except (ValueError, InvalidChatInputError, SerializationError) as e:
         logger.error(f"Error running agent: {e}")
+        from agentcore.observability.metrics_registry import record_agent_run
+        record_agent_run(agent.name or "unknown", "error", (time.perf_counter() - _gen_start) * 1000)
         event_manager.on_error(data={"error": str(e)})
     finally:
         await event_manager.queue.put((None, None, time.time))
@@ -600,6 +605,11 @@ async def simplified_run_agent(
         response.headers["X-Generated-Api-Key"] = auto_generated_key
 
     start_time = time.perf_counter()
+    from agentcore.observability.metrics_registry import (
+        record_agent_run, adjust_active_sessions, record_session_duration,
+    )
+    _agent_name = agent.name if agent else "unknown"
+    adjust_active_sessions(1)
 
     if stream:
         asyncio_queue: asyncio.Queue = asyncio.Queue()
@@ -631,6 +641,8 @@ async def simplified_run_agent(
 
             async def on_disconnect_rmq() -> None:
                 logger.debug("Client disconnected, cleaning up RabbitMQ run job")
+                adjust_active_sessions(-1)
+                record_session_duration((time.perf_counter() - start_time) * 1000)
                 await queue_service.cleanup_job(job_id)
 
             return StreamingResponse(
@@ -654,6 +666,8 @@ async def simplified_run_agent(
 
         async def on_disconnect() -> None:
             logger.debug("Client disconnected, closing tasks")
+            adjust_active_sessions(-1)
+            record_session_duration((time.perf_counter() - start_time) * 1000)
             main_task.cancel()
 
         return StreamingResponse(
@@ -720,6 +734,7 @@ async def simplified_run_agent(
                         run_error_message="",
                     ),
                 )
+                record_agent_run(_agent_name, "success", (end_time - start_time) * 1000)
                 from agentcore.api.v1_schemas import RunResponse
                 return RunResponse(**result_data)
 
@@ -735,10 +750,13 @@ async def simplified_run_agent(
                     run_error_message=str(exc),
                 ),
             )
+            record_agent_run(_agent_name, "error", (time.perf_counter() - start_time) * 1000)
             if isinstance(exc, ValueError):
                 raise APIException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, exception=exc, agent=agent) from exc
             raise
         finally:
+            adjust_active_sessions(-1)
+            record_session_duration((time.perf_counter() - start_time) * 1000)
             # Cleanup the queue
             queue_service._queues.pop(job_id, None)
 
@@ -761,6 +779,9 @@ async def simplified_run_agent(
                 run_error_message="",
             ),
         )
+        record_agent_run(_agent_name, "success", (end_time - start_time) * 1000)
+        adjust_active_sessions(-1)
+        record_session_duration((end_time - start_time) * 1000)
 
     except ValueError as exc:
         background_tasks.add_task(
@@ -771,12 +792,18 @@ async def simplified_run_agent(
                 run_error_message=str(exc),
             ),
         )
+        record_agent_run(_agent_name, "error", (time.perf_counter() - start_time) * 1000)
+        adjust_active_sessions(-1)
+        record_session_duration((time.perf_counter() - start_time) * 1000)
         if "badly formed hexadecimal UUID string" in str(exc):
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
         if "not found" in str(exc):
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
         raise APIException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, exception=exc, agent=agent) from exc
     except InvalidChatInputError as exc:
+        record_agent_run(_agent_name, "error", (time.perf_counter() - start_time) * 1000)
+        adjust_active_sessions(-1)
+        record_session_duration((time.perf_counter() - start_time) * 1000)
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     except Exception as exc:
         background_tasks.add_task(
@@ -787,6 +814,9 @@ async def simplified_run_agent(
                 run_error_message=str(exc),
             ),
         )
+        record_agent_run(_agent_name, "error", (time.perf_counter() - start_time) * 1000)
+        adjust_active_sessions(-1)
+        record_session_duration((time.perf_counter() - start_time) * 1000)
         raise APIException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, exception=exc, agent=agent) from exc
 
     return result

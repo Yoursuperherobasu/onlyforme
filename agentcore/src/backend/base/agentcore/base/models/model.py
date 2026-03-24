@@ -290,6 +290,20 @@ class LCModelNode(Node):
                 self.status = result
             else:
                 self.status = result
+
+            # Fallback: record LLM call even when streaming didn't produce an AIMessage.
+            # The normal path records via _set_trace_usage_from_message() above,
+            # but streaming can silently fail to accumulate chunks into an AIMessage,
+            # leaving record_llm_call() never invoked.
+            if should_stream and not isinstance(message, AIMessage):
+                from agentcore.observability.metrics_registry import record_llm_call
+                record_llm_call(
+                    model_name=getattr(self, "model_name", "") or self.display_name,
+                    provider=getattr(self, "model_provider", "unknown"),
+                    duration_ms=(_time_mod.perf_counter() - _llm_start) * 1000,
+                    input_tokens=0,
+                    output_tokens=0,
+                )
         except Exception as e:
             if message := self._get_exception_message(e):
                 raise ValueError(message) from e
