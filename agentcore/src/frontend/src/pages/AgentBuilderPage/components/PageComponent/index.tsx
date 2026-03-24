@@ -33,6 +33,7 @@ import {
   NOTE_NODE_MIN_WIDTH,
 } from "@/constants/constants";
 import { useGetBuildsQuery } from "@/controllers/API/queries/_builds";
+import { useGetPublishStatus } from "@/controllers/API/queries/agents/use-get-publish-status";
 import CustomLoader from "@/customization/components/custom-loader";
 import { useCustomNavigate } from "@/customization/hooks/use-custom-navigate";
 import { track } from "@/customization/utils/analytics";
@@ -206,10 +207,24 @@ export default function Page({
   const [lastSelection, setLastSelection] =
     useState<OnSelectionChangeParams | null>(null);
   const currentAgentId = useAgentsManagerStore((state) => state.currentAgentId);
-  const { data: approvalDetails } = useGetApprovalDetails(
+  const { data: publishStatus } = useGetPublishStatus(
     { agent_id: currentAgentId },
     {
       enabled: !!currentAgentId && !view,
+      retry: false,
+    },
+  );
+  const shouldFetchApprovalDetails =
+    !!currentAgentId &&
+    !view &&
+    !!(
+      publishStatus?.has_pending_approval ||
+      publishStatus?.latest_review_decision
+    );
+  const { data: approvalDetails } = useGetApprovalDetails(
+    { agent_id: currentAgentId },
+    {
+      enabled: shouldFetchApprovalDetails,
       refetchInterval: (query) => (query.state.data ? 30000 : false),
     },
   );
