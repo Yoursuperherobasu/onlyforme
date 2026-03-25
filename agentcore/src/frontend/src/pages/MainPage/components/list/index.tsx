@@ -311,6 +311,42 @@ const ListComponent = ({
                 </ShadTooltip>
               )}
             </div>
+            {(agentData.description?.trim() || (agentData.tags ?? []).length > 0) && (
+              <div className="mt-1 flex min-w-0 flex-col gap-2">
+                {agentData.description?.trim() && (
+                  <p
+                    className="max-w-[36rem] truncate text-xs leading-5 text-muted-foreground"
+                    title={agentData.description}
+                  >
+                    {agentData.description}
+                  </p>
+                )}
+                {(agentData.tags ?? []).length > 0 && (
+                  <div
+                    className="relative flex min-w-0 flex-wrap gap-1.5 group/tags"
+                    title={agentData.tags?.join(", ") || undefined}
+                  >
+                    {(agentData.tags ?? []).slice(0, 3).map((tag) => (
+                      <span
+                        key={tag}
+                        className="inline-flex max-w-[120px] items-center rounded-md border border-border/60 bg-muted/40 px-2 py-0.5 text-[11px] font-medium text-muted-foreground"
+                        title={tag}
+                      >
+                        <span className="truncate">{tag}</span>
+                      </span>
+                    ))}
+                    {(agentData.tags ?? []).length > 3 && (
+                      <span
+                        className="inline-flex items-center rounded-md border border-border/60 bg-muted/40 px-2 py-0.5 text-[11px] font-medium text-muted-foreground"
+                        title={agentData.tags?.join(", ") || undefined}
+                      >
+                        +{(agentData.tags ?? []).length - 3}
+                      </span>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </div>
 

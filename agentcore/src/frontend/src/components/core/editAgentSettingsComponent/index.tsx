@@ -14,6 +14,7 @@ export const EditAgentSettings: React.FC<
     submitForm?: () => void;
     locked?: boolean;
     setLocked?: (v: boolean) => void;
+    nameDisabled?: boolean;
     tags?: string[];
     setTags?: (tags: string[]) => void;
   }
@@ -29,12 +30,14 @@ export const EditAgentSettings: React.FC<
   submitForm,
   locked = false,
   setLocked,
+  nameDisabled = false,
   tags = [],
   setTags,
 }: InputProps & {
   submitForm?: () => void;
   locked?: boolean;
   setLocked?: (v: boolean) => void;
+  nameDisabled?: boolean;
   tags?: string[];
   setTags?: (tags: string[]) => void;
 }): JSX.Element => {
@@ -129,13 +132,18 @@ export const EditAgentSettings: React.FC<
               onDoubleClickCapture={handleFocus}
               data-testid="input-agent-name"
               autoFocus
-              disabled={locked}
+              disabled={nameDisabled}
             />
           </Form.Control>
         ) : (
           <span className="font-normal text-muted-foreground word-break-break-word">
             {name}
           </span>
+        )}
+        {nameDisabled && (
+          <p className="mt-2 text-xs text-muted-foreground">
+            Published name is locked after the first release.
+          </p>
         )}
         <Form.Message match="valueMissing" className="field-invalid">
           Please enter a name
@@ -170,7 +178,6 @@ export const EditAgentSettings: React.FC<
               maxLength={descriptionMaxLength}
               onDoubleClickCapture={handleFocus}
               onKeyDown={handleDescriptionKeyDown}
-              disabled={locked}
             />
           </Form.Control>
         ) : (
@@ -199,7 +206,6 @@ export const EditAgentSettings: React.FC<
               onChange={setTags}
               placeholder="Add tags (e.g. rag, chatbot, hitl)..."
               maxTags={10}
-              disabled={locked}
             />
           </div>
         </div>

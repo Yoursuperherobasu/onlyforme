@@ -178,12 +178,13 @@ const PublishButton = ({}: PublishButtonProps) => {
   useEffect(() => {
     if (open) {
       setAgentNameInput(lockedPublishedAgentName || currentAgent?.name || "");
+      setPublishDescription(currentAgent?.description ?? "");
       setPublishTags(currentAgent?.tags ?? []);
       setSelectedEmails([]);
       setEmailDraft("");
       setEmailValidationResults([]);
     }
-  }, [open, currentAgent?.name, currentAgent?.tags, lockedPublishedAgentName]);
+  }, [open, currentAgent?.name, currentAgent?.description, currentAgent?.tags, lockedPublishedAgentName]);
 
   useEffect(() => {
     if (!open) {
@@ -399,15 +400,19 @@ const PublishButton = ({}: PublishButtonProps) => {
 
     const nameChangedOnFirstPublish =
       isFirstPublish && trimmedPublishedName !== (currentAgent?.name ?? "");
+    const trimmedDescription = publishDescription.trim();
+    const currentDescription = (currentAgent?.description ?? "").trim();
+    const descriptionChanged = trimmedDescription !== currentDescription;
     const tagsChanged =
       JSON.stringify(publishTags.slice().sort()) !==
       JSON.stringify((currentAgent?.tags ?? []).slice().sort());
 
-    if (nameChangedOnFirstPublish || tagsChanged) {
+    if (nameChangedOnFirstPublish || descriptionChanged || tagsChanged) {
       try {
         const updatedAgent = await mutateUpdateAgent({
           id: currentAgent.id,
           ...(nameChangedOnFirstPublish ? { name: trimmedPublishedName } : {}),
+          ...(descriptionChanged ? { description: trimmedDescription } : {}),
           ...(tagsChanged ? { tags: publishTags } : {}),
         });
 
@@ -497,7 +502,7 @@ const PublishButton = ({}: PublishButtonProps) => {
         ...(isFirstPublish
           ? { published_agent_name: trimmedPublishedName }
           : {}),
-        publish_description: publishDescription.trim() || undefined,
+        publish_description: trimmedDescription || undefined,
         recipient_emails:
           normalizedEmails.length > 0 ? normalizedEmails : undefined,
       });
@@ -597,15 +602,18 @@ const PublishButton = ({}: PublishButtonProps) => {
               htmlFor="publish-description"
               className="text-sm font-medium"
             >
-              Publish description (optional)
+              Description
             </Label>
             <Textarea
               id="publish-description"
               value={publishDescription}
               onChange={(event) => setPublishDescription(event.target.value)}
-              placeholder="What changed in this release?"
+              placeholder="Enter agent description"
               className="min-h-[72px] bg-background"
             />
+            <span className="text-xs text-muted-foreground">
+              The latest saved description will be used for this publish. Changes here are saved back to the agent first.
+            </span>
           </div>
 
           <div className="space-y-3 rounded-lg border bg-muted/20 p-4">
@@ -618,7 +626,7 @@ const PublishButton = ({}: PublishButtonProps) => {
               placeholder="Add tags (e.g. rag, chatbot, hitl)..."
             />
             <span className="text-xs text-muted-foreground">
-              Tags help categorize this agent in the Agent Registry.
+              The latest saved tags are used for this publish. Changes here are saved back to the agent first.
             </span>
           </div>
 

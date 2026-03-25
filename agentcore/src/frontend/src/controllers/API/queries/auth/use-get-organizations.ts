@@ -7,6 +7,7 @@ import { UseRequestProcessor } from "../../services/request-processor";
 export type OrganizationListItem = {
   id: string;
   name: string;
+  status?: string | null;
 };
 
 export const useGetOrganizations: useMutationFunctionType<

@@ -11,6 +11,7 @@ import { AuthContext } from "../../contexts/authContext";
 import {
   useGetAssignableRoles,
   useGetDepartments,
+  useGetOrganizations,
 } from "../../controllers/API/queries/auth";
 import type {
   inputHandlerEventType,
@@ -40,7 +41,8 @@ export default function UserManagementModal({
   const [availableRoles, setAvailableRoles] = useState<string[]>([]);
   const [expiresAt, setExpiresAt] = useState<string>(data?.expires_at ?? "");
   const [departmentId, setDepartmentId] = useState("");
-  const [departments, setDepartments] = useState<Array<{ id: string; name: string }>>([]);
+  const [departments, setDepartments] = useState<Array<{ id: string; name: string; org_id: string }>>([]);
+  const [organizations, setOrganizations] = useState<Array<{ id: string; name: string; status?: string | null }>>([]);
   const [departmentName, setDepartmentName] = useState("");
   const [organizationName, setOrganizationName] = useState("");
   const [organizationDescription, setOrganizationDescription] = useState("");
@@ -49,6 +51,7 @@ export default function UserManagementModal({
   const [usernameError, setUsernameError] = useState("");
   const { mutate: mutateGetAssignableRoles } = useGetAssignableRoles();
   const { mutate: mutateGetDepartments } = useGetDepartments(undefined as any);
+  const { mutate: mutateGetOrganizations } = useGetOrganizations(undefined as any);
   const [inputState, setInputState] = useState<UserInputType>(CONTROL_NEW_USER);
   const { userData } = useContext(AuthContext);
 
@@ -114,10 +117,35 @@ export default function UserManagementModal({
     if (userData?.role !== "super_admin") return;
     mutateGetDepartments(undefined, {
       onSuccess: (res) => {
-        setDepartments((res ?? []).map((dept) => ({ id: dept.id, name: dept.name })));
+        setDepartments(
+          (res ?? []).map((dept) => ({
+            id: dept.id,
+            name: dept.name,
+            org_id: dept.org_id,
+          })),
+        );
       },
       onError: () => {
         setDepartments([]);
+      },
+    });
+  }, [open, userData?.role]);
+
+  useEffect(() => {
+    if (!open) return;
+    if (userData?.role !== "root") return;
+    mutateGetOrganizations(undefined, {
+      onSuccess: (res) => {
+        setOrganizations(
+          (res ?? []).map((org) => ({
+            id: org.id,
+            name: org.name,
+            status: org.status,
+          })),
+        );
+      },
+      onError: () => {
+        setOrganizations([]);
       },
     });
   }, [open, userData?.role]);
@@ -239,6 +267,72 @@ export default function UserManagementModal({
     );
   }
 
+  function normalizeNameKey(value: string | null | undefined): string {
+    return (value ?? "").trim().toLowerCase();
+  }
+
+  function validateOrganizationNameUniqueness(): boolean {
+    if (!requiresOrganizationBootstrap) return true;
+    const normalizedName = normalizeNameKey(organizationName);
+    if (!normalizedName) return true;
+    const existingNormalized = normalizeNameKey(data?.organization_name);
+    const duplicate = organizations.some((org) => {
+      const candidate = normalizeNameKey(org.name);
+      return (
+        String(org.status ?? "active").toLowerCase() === "active" &&
+        candidate === normalizedName &&
+        candidate !== existingNormalized
+      );
+    });
+    if (duplicate) {
+      setOrganizationError("An organization with this name already exists.");
+      return false;
+    }
+    setOrganizationError("");
+    return true;
+  }
+
+  function validateDepartmentNameUniqueness(): boolean {
+    if (!isCreatingDepartmentAdmin) return true;
+    const normalizedName = normalizeNameKey(departmentName);
+    if (!normalizedName) return true;
+
+    const normalizedOrganizationName = normalizeNameKey(
+      organizationName || organizations[0]?.name,
+    );
+    if (normalizedOrganizationName && normalizedName === normalizedOrganizationName) {
+      setDepartmentError("Department name cannot be the same as the organization name.");
+      return false;
+    }
+
+    const scopedOrgIds = Array.from(
+      new Set(departments.map((dept) => String(dept.org_id || ""))),
+    ).filter(Boolean);
+
+    if (scopedOrgIds.length !== 1) {
+      setDepartmentError("");
+      return true;
+    }
+
+    const existingNormalized = normalizeNameKey(data?.department_name);
+    const duplicate = departments.some((dept) => {
+      const candidate = normalizeNameKey(dept.name);
+      return (
+        String(dept.org_id) === scopedOrgIds[0] &&
+        candidate === normalizedName &&
+        candidate !== existingNormalized
+      );
+    });
+
+    if (duplicate) {
+      setDepartmentError("A department with this name already exists in the organization.");
+      return false;
+    }
+
+    setDepartmentError("");
+    return true;
+  }
+
   function validateUsernameInput(value: string, allowBulk: boolean): boolean {
     if (!allowBulk) {
       return validateUsernameEmail(value);
@@ -353,6 +447,12 @@ export default function UserManagementModal({
             }
             if (requiresOrganizationBootstrap && !organizationName.trim()) {
               setOrganizationError("Organization name is required.");
+              return;
+            }
+            if (!validateOrganizationNameUniqueness()) {
+              return;
+            }
+            if (!validateDepartmentNameUniqueness()) {
               return;
             }
             if (!(await canProceedWithDepartmentChange())) {
@@ -506,6 +606,7 @@ export default function UserManagementModal({
                     <input
                       onChange={({ target: { value } }) => {
                         setDepartmentName(value);
+                        setDepartmentError("");
                       }}
                       value={departmentName}
                       className="primary-input"
@@ -513,6 +614,11 @@ export default function UserManagementModal({
                       placeholder="Department name"
                     />
                   </Form.Control>
+                  {departmentError && (
+                    <div className="mt-1 text-xs text-destructive">
+                      {departmentError}
+                    </div>
+                  )}
                 </div>
               </Form.Field>
             )}

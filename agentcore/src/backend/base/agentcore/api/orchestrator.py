@@ -2,13 +2,17 @@
 from __future__ import annotations
 
 import asyncio
+import json as _json
 import json
+import os
 from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID, uuid4
 
+import httpx
+
 from fastapi import APIRouter, HTTPException, Query, status
-from fastapi.encoders import jsonable_encoder
+
 from loguru import logger
 from pydantic import BaseModel
 from sqlalchemy import func, or_, true
@@ -16,10 +20,9 @@ from sqlmodel import col, select
 
 from fastapi.responses import StreamingResponse
 
-from agentcore.api.utils import CurrentActiveUser, DbSession, build_graph_from_data
-from agentcore.api.v1_schemas import InputValueRequest, RunResponse
+from agentcore.api.utils import CurrentActiveUser, DbSession
 from agentcore.services.database.models.agent.model import Agent
-from agentcore.events.event_manager import EventManager, create_default_event_manager
+from agentcore.events.event_manager import create_default_event_manager
 from agentcore.services.database.models.agent_deployment_prod.model import (
     AgentDeploymentProd,
     DeploymentPRODStatusEnum,
@@ -238,6 +241,80 @@ def _extract_text(payload: Any) -> str:
         return str(payload)
 
 
+async def _orch_call_run_api(
+    *,
+    agent_id: str,
+    env: str,
+    version: str,
+    input_value: str,
+    session_id: str,
+    files: list[str] | None = None,
+    stream: bool = False,
+    event_manager=None,
+) -> tuple[str, bool, list]:
+    """Call POST /api/v1/run/{agent_id} internally with the AGENTCORE_INTERNAL_SECRET header.
+
+    Returns (response_text, was_interrupted, content_blocks=[]).
+    For streaming, SSE token/add_message events are forwarded to event_manager;
+    the function waits for the 'end' event to obtain the final text.
+    """
+    from agentcore.services.deps import get_settings_service
+    settings = get_settings_service().settings
+    base_url = f"http://{settings.host}:{settings.port}"
+    secret = os.environ.get("AGENTCORE_INTERNAL_SECRET", "")
+    url = (
+        f"{base_url}/api/run/{agent_id}"
+        f"?env={env}&version={version}&stream={str(stream).lower()}"
+    )
+    body: dict = {"input_value": input_value, "session_id": session_id}
+    if files:
+        body["files"] = files
+    headers = {"X-Internal-Secret": secret, "Content-Type": "application/json"}
+
+    if not stream:
+        async with httpx.AsyncClient(timeout=300) as client:
+            resp = await client.post(url, json=body, headers=headers)
+            resp.raise_for_status()
+        payload = resp.json()
+        text = _extract_text(payload)
+        interrupted = any(
+            (o.get("outputs") or [{}])[0].get("results", {}).get("metadata", {}).get("status") == "interrupted"
+            for o in (payload.get("outputs") or [])
+            if isinstance(o, dict)
+        )
+        return text, interrupted, []
+
+    # --- Streaming: forward SSE events to event_manager, collect final text ---
+    final_text = ""
+    was_interrupted = False
+    async with httpx.AsyncClient(timeout=300) as client:
+        async with client.stream("POST", url, json=body, headers=headers) as resp:
+            resp.raise_for_status()
+            async for line in resp.aiter_lines():
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    evt = _json.loads(line)
+                except Exception:  # noqa: BLE001
+                    continue
+                etype = evt.get("event", "")
+                edata = evt.get("data", {})
+                if etype == "token" and event_manager:
+                    event_manager.on_token(data=edata)
+                elif etype == "add_message" and event_manager:
+                    event_manager.on_message(data=edata)
+                elif etype == "end":
+                    result = edata.get("result", edata)
+                    final_text = _extract_text(result)
+                    if isinstance(result, dict) and result.get("interrupted"):
+                        was_interrupted = True
+                elif etype == "error":
+                    raise ValueError(edata.get("error", "Stream error from /run"))
+
+    return final_text, was_interrupted, []
+
+
 async def _lookup_agent_project(session, agent_id: UUID) -> tuple[str | None, str | None]:
     """Look up the agent's project_id and project_name for observability metadata."""
     try:
@@ -258,99 +335,6 @@ async def _lookup_agent_project(session, agent_id: UUID) -> tuple[str | None, st
     return None, None
 
 
-async def _build_orch_graph(
-    *,
-    agent_id: str,
-    agent_name: str,
-    snapshot: dict,
-    user_id: str | None,
-    session_id: str | None = None,
-    deployment_id: str | None = None,
-    org_id: str | None = None,
-    dept_id: str | None = None,
-    stream: bool = False,
-    is_prod_deployment: bool = False,
-    project_id: str | None = None,
-    project_name: str | None = None,
-):
-    """Build a graph from a published snapshot, ready for execution.
-
-    Returns (graph, inputs, outputs).
-    """
-    from agentcore.processing.process import process_tweaks
-    from agentcore.services.deps import get_chat_service
-
-    graph_data = snapshot.copy()
-    graph_data = process_tweaks(graph_data, {}, stream=stream)
-
-    graph = await build_graph_from_data(
-        agent_id=agent_id,
-        payload=graph_data,
-        user_id=user_id,
-        agent_name=agent_name,
-        session_id=session_id,
-        project_id=project_id,
-        project_name=project_name,
-        chat_service=get_chat_service(),
-    )
-
-    # Always update user_id after retrieving the graph — the graph may have
-    # been returned from cache with a *different* user's ID. Without this,
-    # node-level messages (stored by _store_orch_message) would carry the
-    # stale user_id, causing sessions to leak across users.
-    graph.user_id = user_id
-
-    if stream:
-        for vertex in graph.vertices:
-            if isinstance(vertex.template.get("stream"), dict):
-                vertex.update_raw_params({"stream": True}, overwrite=True)
-
-    # Orchestration chat persists messages/transactions in its own tables.
-    graph.skip_dev_logging = True
-
-    # Tell nodes NOT to persist messages — the orchestrator endpoint stores
-    # user messages and agent replies explicitly with correct metadata.
-    # Node-level persistence would create duplicates and "Message empty."
-    # entries from intermediate nodes (e.g. RegistryModelComponent).
-    graph.orch_skip_node_persist = True
-
-    # Pass orch context so the adapter logs to orch_transaction.
-    graph.orch_session_id = session_id
-    graph.orch_deployment_id = deployment_id
-    graph.orch_org_id = org_id
-    graph.orch_dept_id = dept_id
-
-    # Set prod/uat deployment context so the adapter tags Langfuse traces
-    # with the correct environment ("production" vs "uat").
-    if is_prod_deployment:
-        graph.prod_deployment_id = deployment_id
-        graph.prod_org_id = org_id
-        graph.prod_dept_id = dept_id
-    else:
-        graph.uat_deployment_id = deployment_id
-        graph.uat_org_id = org_id
-        graph.uat_dept_id = dept_id
-
-    inputs = [
-        InputValueRequest(
-            components=[],
-            input_value="",  # placeholder, set before run
-            type="chat",
-        )
-    ]
-
-    # Prefer ChatOutput vertices; fall back to any output vertex
-    outputs = [
-        vertex.id
-        for vertex in graph.vertices
-        if vertex.is_output and "chat" in vertex.id.lower()
-    ]
-    if not outputs:
-        outputs = [vertex.id for vertex in graph.vertices if vertex.is_output]
-
-    return graph, inputs, outputs
-
-
 def _serialize_content_blocks(content_blocks: list) -> list:
     """Serialize ContentBlock objects to dicts for JSON storage."""
     serialized = []
@@ -360,105 +344,6 @@ def _serialize_content_blocks(content_blocks: list) -> list:
         elif isinstance(block, dict):
             serialized.append(block)
     return serialized
-
-
-def _extract_content_blocks_from_graph(graph) -> list:
-    """Extract content_blocks from all built vertices in the graph.
-
-    After graph execution, intermediate vertices (like Agent/Worker Node)
-    may contain Messages with tool call content_blocks in their artifacts.
-    Output vertices (ChatOutput) typically only have text.
-    """
-    content_blocks: list = []
-    for vertex in graph.vertices:
-        if not getattr(vertex, "built", False):
-            continue
-        artifacts = getattr(vertex, "artifacts", None)
-        if artifacts is None:
-            continue
-        # Direct Message object with content_blocks
-        if hasattr(artifacts, "content_blocks") and artifacts.content_blocks:
-            content_blocks.extend(artifacts.content_blocks)
-        # Dict wrapping a Message
-        elif isinstance(artifacts, dict):
-            for val in artifacts.values():
-                if hasattr(val, "content_blocks") and val.content_blocks:
-                    content_blocks.extend(val.content_blocks)
-    return content_blocks
-
-
-async def _run_agent_from_snapshot(
-    *,
-    agent_id: str,
-    agent_name: str,
-    snapshot: dict,
-    input_value: str,
-    session_id: str | None,
-    user_id: str | None,
-    files: list[str] | None = None,
-    stream: bool = False,
-    event_manager: EventManager | None = None,
-    deployment_id: str | None = None,
-    org_id: str | None = None,
-    dept_id: str | None = None,
-    is_prod_deployment: bool = False,
-    project_id: str | None = None,
-    project_name: str | None = None,
-) -> tuple[str, str | None, bool, list]:
-    """Build a graph from a published snapshot and run it.
-
-    Returns (response_text, session_id, was_interrupted, content_blocks).
-    """
-    from agentcore.processing.process import run_graph_internal
-
-    graph, inputs, outputs = await _build_orch_graph(
-        agent_id=agent_id,
-        agent_name=agent_name,
-        snapshot=snapshot,
-        user_id=user_id,
-        session_id=session_id,
-        deployment_id=deployment_id,
-        org_id=org_id,
-        dept_id=dept_id,
-        stream=stream,
-        is_prod_deployment=is_prod_deployment,
-        project_id=project_id,
-        project_name=project_name,
-    )
-
-    inputs[0].input_value = input_value
-
-    task_result, result_session_id = await run_graph_internal(
-        graph=graph,
-        agent_id=agent_id,
-        session_id=session_id,
-        inputs=inputs,
-        outputs=outputs,
-        files=files,
-        stream=stream,
-        event_manager=event_manager,
-    )
-
-    # Check if the graph was interrupted (HITL pause)
-    was_interrupted = any(
-        (getattr(ro, "metadata", None) or {}).get("status") == "interrupted"
-        for ro in task_result
-    )
-    if was_interrupted:
-        logger.info(f"[ORCH] Graph interrupted (HITL) — no response text to extract")
-        return "", result_session_id, True, []
-
-    # Extract content_blocks (tool calls, etc.) from all built vertices
-    content_blocks = _extract_content_blocks_from_graph(graph)
-
-    run_response = RunResponse(outputs=task_result, session_id=result_session_id)
-    encoded = jsonable_encoder(run_response)
-    logger.debug(f"[ORCH] RunResponse encoded payload: {json.dumps(encoded, default=str)[:2000]}")
-    response_text = _extract_text(encoded)
-    logger.info(f"[ORCH] Extracted response text: {response_text[:500] if response_text else '(empty)'}")
-
-    return response_text, result_session_id, False, content_blocks
-
 
 
 async def _resolve_agent(
@@ -802,23 +687,17 @@ async def orch_chat(
         )
         await orch_add_message(user_msg, session)
 
-        # -- 4. Run the agent from its deployment snapshot -------------------
-        project_id, project_name = await _lookup_agent_project(session, agent_id)
+        # -- 4. Run the agent via /run API -----------------------------------
         logger.info(f"[ORCH] Agent={deployment.agent_name} | session={body.session_id} | input_value={body.input_value!r}")
-        agent_text, _, _was_hitl, agent_content_blocks = await _run_agent_from_snapshot(
+        _env_str = "prod" if isinstance(deployment, AgentDeploymentProd) else "uat"
+        _version_str = f"v{deployment.version_number}"
+        agent_text, _was_hitl, agent_content_blocks = await _orch_call_run_api(
             agent_id=str(agent_id),
-            agent_name=deployment.agent_name,
-            snapshot=deployment.agent_snapshot,
+            env=_env_str,
+            version=_version_str,
             input_value=body.input_value,
             session_id=body.session_id,
-            user_id=str(current_user.id),
             files=body.files,
-            deployment_id=str(deployment_id),
-            org_id=str(deployment.org_id) if deployment.org_id else None,
-            dept_id=str(deployment.dept_id) if deployment.dept_id else None,
-            is_prod_deployment=isinstance(deployment, AgentDeploymentProd),
-            project_id=project_id,
-            project_name=project_name,
         )
 
         if not agent_text or not agent_text.strip():
@@ -945,24 +824,19 @@ async def orch_chat_stream(
     dep_files = body.files
 
     async def _run_and_persist():
-        """Background coroutine: run the agent, persist reply, close the queue."""
+        """Background coroutine: run the agent via /run API, persist reply, close the queue."""
         try:
-            agent_text, _result_sid, was_interrupted, agent_content_blocks = await _run_agent_from_snapshot(
+            _env_str = "prod" if dep_is_prod else "uat"
+            _version_str = f"v{deployment.version_number}"
+            agent_text, was_interrupted, agent_content_blocks = await _orch_call_run_api(
                 agent_id=agent_id_str,
-                agent_name=agent_name,
-                snapshot=snapshot,
+                env=_env_str,
+                version=_version_str,
                 input_value=input_value,
                 session_id=chat_session_id,
-                user_id=user_id_str,
                 files=dep_files,
                 stream=True,
                 event_manager=event_manager,
-                deployment_id=str(dep_deployment_id),
-                org_id=dep_org_id,
-                dept_id=dep_dept_id,
-                is_prod_deployment=dep_is_prod,
-                project_id=orch_project_id,
-                project_name=orch_project_name,
             )
 
             # When interrupted (HITL pause), _emit_hitl_pause_event already

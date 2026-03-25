@@ -71,6 +71,62 @@ def _normalize_identity(value: str | None) -> str | None:
     return stripped.lower() if "@" in stripped else stripped
 
 
+def _normalize_name_key(value: str | None) -> str | None:
+    stripped = _strip_or_none(value)
+    if not stripped:
+        return None
+    return stripped.lower()
+
+
+async def _find_organization_by_normalized_name(
+    session: DbSession,
+    organization_name: str | None,
+) -> Organization | None:
+    normalized_name = _normalize_name_key(organization_name)
+    if not normalized_name:
+        return None
+    return (
+        await session.exec(
+            select(Organization).where(
+                func.lower(func.trim(Organization.name)) == normalized_name,
+            )
+        )
+    ).first()
+
+
+async def _find_department_by_normalized_name(
+    session: DbSession,
+    *,
+    org_id: UUID,
+    department_name: str | None,
+) -> Department | None:
+    normalized_name = _normalize_name_key(department_name)
+    if not normalized_name:
+        return None
+    return (
+        await session.exec(
+            select(Department).where(
+                Department.org_id == org_id,
+                func.lower(func.trim(Department.name)) == normalized_name,
+            )
+        )
+    ).first()
+
+
+def _ensure_department_name_differs_from_org(
+    *,
+    department_name: str | None,
+    organization_name: str | None,
+) -> None:
+    department_key = _normalize_name_key(department_name)
+    organization_key = _normalize_name_key(organization_name)
+    if department_key and organization_key and department_key == organization_key:
+        raise HTTPException(
+            status_code=400,
+            detail="Department name cannot be the same as the organization name.",
+        )
+
+
 def _format_notification_email_status(
     response: Response,
     *,
@@ -319,11 +375,12 @@ async def _resolve_creator_org(
     if not organization_name:
         raise HTTPException(status_code=400, detail="Organization name is required.")
 
+    normalized_name = _normalize_name_key(organization_name)
     org = (
         await session.exec(
             select(Organization).where(
                 Organization.id.in_(list(org_ids)),
-                Organization.name == organization_name,
+                func.lower(func.trim(Organization.name)) == normalized_name,
             )
         )
     ).first()
@@ -1121,13 +1178,7 @@ async def add_user(
         if creator_role == "root":
             # Reactivate a suspended/deleted org with the same name if one exists
             # (e.g. after a super_admin was deleted and is being recreated).
-            org = (
-                await session.exec(
-                    select(Organization).where(
-                        Organization.name == organization_name,
-                    )
-                )
-            ).first()
+            org = await _find_organization_by_normalized_name(session, organization_name)
             if org:
                 org.status = "active"
                 org.owner_user_id = new_user.id
@@ -1191,16 +1242,17 @@ async def add_user(
             if target_role == "department_admin":
                 if not department_name:
                     raise HTTPException(status_code=400, detail="Department name is required for department admins.")
+                _ensure_department_name_differs_from_org(
+                    department_name=department_name,
+                    organization_name=org.name if org else organization_name,
+                )
                 # Reactivate an archived department with the same name if one exists
                 # (e.g. after a dept_admin was deleted and is being recreated).
-                department = (
-                    await session.exec(
-                        select(Department).where(
-                            Department.org_id == org_id,
-                            Department.name == department_name,
-                        )
-                    )
-                ).first()
+                department = await _find_department_by_normalized_name(
+                    session,
+                    org_id=org_id,
+                    department_name=department_name,
+                )
                 if department:
                     department.status = "active"
                     department.admin_user_id = new_user.id
@@ -1337,6 +1389,8 @@ async def add_user(
             detail = "This username is unavailable."
         elif "email" in error_msg.lower():
             detail = "This email is already in use."
+        elif "organization" in error_msg.lower() or "ix_organization_name" in error_msg.lower():
+            detail = "An organization with this name already exists."
         elif "department" in error_msg.lower() or "uq_department" in error_msg.lower():
             detail = "A department with this name already exists in the organization."
         else:
@@ -1423,7 +1477,7 @@ async def list_visible_organizations(
             )
         ).all()
 
-    return [{"id": str(org.id), "name": org.name} for org in orgs]
+    return [{"id": str(org.id), "name": org.name, "status": org.status} for org in orgs]
 
 
 @router.get("/whoami", response_model=UserReadWithPermissions)
@@ -1957,9 +2011,10 @@ async def patch_user(
                         detail="Organization name is required for super admin.",
                     )
             else:
-                organization = (
-                    await session.exec(select(Organization).where(Organization.name == organization_name))
-                ).first()
+                organization = await _find_organization_by_normalized_name(
+                    session,
+                    organization_name,
+                )
                 if not organization:
                     organization = Organization(
                         name=organization_name,
