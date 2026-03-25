@@ -19,9 +19,15 @@ async def lifespan(app: FastAPI):
 
     if settings.database_url:
         from app.database import init_db
+        from app.services.packages import sync_packages_to_db
 
         await init_db(settings.database_url)
         logger.info("Database connected")
+        try:
+            await sync_packages_to_db()
+            logger.info("Pinecone-service package sync completed")
+        except Exception:  # pragma: no cover - startup should not fail on package sync issues
+            logger.exception("Pinecone-service package sync failed during startup")
 
     yield
 

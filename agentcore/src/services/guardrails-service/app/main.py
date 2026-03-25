@@ -23,9 +23,15 @@ async def lifespan(app: FastAPI):
     # Initialise database if configured
     if settings.database_url:
         from app.database import init_db
+        from app.services.packages import sync_packages_to_db
 
         await init_db(settings.database_url)
         logger.info("Database connected")
+        try:
+            await sync_packages_to_db()
+            logger.info("Guardrails-service package sync completed")
+        except Exception:  # pragma: no cover - startup should not fail on package sync issues
+            logger.exception("Guardrails-service package sync failed during startup")
 
     yield
     logger.info("Guardrails Service shutting down")
