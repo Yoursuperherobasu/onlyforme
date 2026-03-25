@@ -638,7 +638,10 @@ async def simplified_run_agent(
         from agentcore.services.deps import get_rabbitmq_service
 
         rabbitmq_service = get_rabbitmq_service()
-        if rabbitmq_service.is_enabled():
+        # Pods handle run jobs directly via HTTP — skip RabbitMQ to avoid
+        # competing consumers stealing a job whose job_id is in this pod's memory.
+        _is_agent_pod = bool(os.environ.get("AGENTCORE_IS_POD"))
+        if rabbitmq_service.is_enabled() and not _is_agent_pod:
             from agentcore.services.deps import get_queue_service
 
             queue_service = get_queue_service()
@@ -699,7 +702,8 @@ async def simplified_run_agent(
     from agentcore.services.deps import get_rabbitmq_service
 
     rabbitmq_service_ns = get_rabbitmq_service()
-    if rabbitmq_service_ns.is_enabled():
+    _is_agent_pod_ns = bool(os.environ.get("AGENTCORE_IS_POD"))
+    if rabbitmq_service_ns.is_enabled() and not _is_agent_pod_ns:
         from agentcore.services.deps import get_queue_service
 
         queue_service = get_queue_service()

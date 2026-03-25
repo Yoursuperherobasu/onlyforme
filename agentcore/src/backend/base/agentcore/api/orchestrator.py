@@ -5,13 +5,16 @@ import asyncio
 import json as _json
 import json
 import os
+from contextvars import ContextVar
 from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID, uuid4
 
+_request_base_url: ContextVar[str | None] = ContextVar("_request_base_url", default=None)
+
 import httpx
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, HTTPException, Query, Request, status
 
 from loguru import logger
 from pydantic import BaseModel
@@ -260,7 +263,12 @@ async def _orch_call_run_api(
     """
     from agentcore.services.deps import get_settings_service
     settings = get_settings_service().settings
-    base_url = f"http://{settings.host}:{settings.port}"
+    base_url = (
+        _request_base_url.get()
+        or os.environ.get("LOCALHOST_BACKEND_URL")
+        or f"http://{settings.host}:{settings.port}"
+    )
+    logger.info(f"[ORCH] base_url resolved to: {base_url}")
     secret = os.environ.get("AGENTCORE_INTERNAL_SECRET", "")
     url = (
         f"{base_url}/api/run/{agent_id}"
@@ -638,6 +646,7 @@ async def list_orch_agents(
 @router.post("/chat", response_model=OrchChatResponse, status_code=200)
 async def orch_chat(
     *,
+    request: Request,
     session: DbSession,
     current_user: CurrentActiveUser,
     body: OrchChatRequest,
@@ -650,6 +659,7 @@ async def orch_chat(
     Context reset: when the agent changes mid-session, a system message is
     inserted as a divider and the new agent starts with a fresh context.
     """
+    _request_base_url.set(str(request.base_url).rstrip("/"))
     try:
         # -- 1. Resolve agent (sticky routing) -----------------------------
         agent_id, deployment_id, deployment = await _resolve_agent(
@@ -752,6 +762,7 @@ async def orch_chat(
 @router.post("/chat/stream", status_code=200)
 async def orch_chat_stream(
     *,
+    request: Request,
     session: DbSession,
     current_user: CurrentActiveUser,
     body: OrchChatRequest,
@@ -765,6 +776,7 @@ async def orch_chat_stream(
       - ``token``        – subsequent chunks ``{chunk, id}``
       - ``end``          – signals stream is done, carries final ``{agent_text, message_id}``
     """
+    _request_base_url.set(str(request.base_url).rstrip("/"))
     # -- 1. Resolve agent (sticky routing) -------------------------------
     agent_id, deployment_id, deployment = await _resolve_agent(
         session,
@@ -980,6 +992,8 @@ async def orch_chat_stream(
             "is_prod_deployment": dep_is_prod,
             "project_id": orch_project_id,
             "project_name": orch_project_name,
+            "env": "prod" if dep_is_prod else "uat",
+            "version": f"v{deployment.version_number}",
         }
         await rabbitmq_service.publish_orchestrator_job(job_data)
         logger.info(f"Orchestrator job {job_id} published to RabbitMQ")
