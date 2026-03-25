@@ -24,15 +24,10 @@ import { msalConfig } from "./authConfig";
 /* ================================================ */
 
 /**
- * MSAL instance should be created outside React tree
+ * MSAL instance should be created outside React tree.
+ * MSAL Browser v4 requires initialize() before any interaction.
  */
 const msalInstance = new PublicClientApplication(msalConfig);
-
-// If user already logged in, set active account
-const accounts = msalInstance.getAllAccounts();
-if (!msalInstance.getActiveAccount() && accounts.length > 0) {
-  msalInstance.setActiveAccount(accounts[0]);
-}
 
 // Listen for login success and set account
 msalInstance.addEventCallback((event) => {
@@ -50,17 +45,37 @@ const root = ReactDOM.createRoot(
   document.getElementById("root") as HTMLElement
 );
 
-// If your App DOES NOT need msalInstance yet → just keep <App />
-// If you want SSO inside app → pass instance as prop
+// Initialize MSAL, handle any pending redirects, then render
+msalInstance
+  .initialize()
+  .then(() => msalInstance.handleRedirectPromise())
+  .then(() => {
+    // Set active account after initialization
+    const accounts = msalInstance.getAllAccounts();
+    if (!msalInstance.getActiveAccount() && accounts.length > 0) {
+      msalInstance.setActiveAccount(accounts[0]);
+    }
 
-root.render(
-  <React.StrictMode>
-    <I18nextProvider i18n={i18n}>
-      <MsalProvider instance={msalInstance}>
-        <App />
-      </MsalProvider>
-    </I18nextProvider>
-  </React.StrictMode>
-);
+    root.render(
+      <React.StrictMode>
+        <I18nextProvider i18n={i18n}>
+          <MsalProvider instance={msalInstance}>
+            <App />
+          </MsalProvider>
+        </I18nextProvider>
+      </React.StrictMode>
+    );
+  })
+  .catch((err) => {
+    console.error("[MSAL] Initialization failed:", err);
+    // Render app without MSAL so the page isn't blank
+    root.render(
+      <React.StrictMode>
+        <I18nextProvider i18n={i18n}>
+          <App />
+        </I18nextProvider>
+      </React.StrictMode>
+    );
+  });
 
 reportWebVitals();

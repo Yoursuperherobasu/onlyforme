@@ -526,6 +526,72 @@ async def _target_has_managed_users(session: DbSession, target_user: User) -> bo
     return False
 
 
+async def _super_admin_subordinate_department_admin_ids(
+    session: DbSession,
+    *,
+    target_user: User,
+) -> list[UUID]:
+    org_ids = await _get_admin_org_ids(session, target_user)
+    if not org_ids:
+        return []
+
+    return list(
+        (
+            await session.exec(
+                select(distinct(User.id))
+                .join(
+                    UserOrganizationMembership,
+                    UserOrganizationMembership.user_id == User.id,
+                )
+                .where(
+                    User.deleted_at.is_(None),
+                    User.id != target_user.id,
+                    UserOrganizationMembership.org_id.in_(list(org_ids)),
+                    UserOrganizationMembership.status.in_(list(ACTIVE_ORG_STATUSES)),
+                    func.lower(User.role) == "department_admin",
+                )
+            )
+        ).all()
+    )
+
+
+async def _get_super_admin_delete_blocker(
+    session: DbSession,
+    *,
+    target_user: User,
+) -> str | None:
+    subordinate_dept_admin_ids = await _super_admin_subordinate_department_admin_ids(
+        session,
+        target_user=target_user,
+    )
+    if not subordinate_dept_admin_ids:
+        return None
+
+    subordinate_dept_admins = (
+        await session.exec(
+            select(User).where(User.id.in_(subordinate_dept_admin_ids))
+        )
+    ).all()
+
+    blocking_admins: list[str] = []
+    for dept_admin in subordinate_dept_admins:
+        if await _target_has_managed_users(session, dept_admin):
+            blocking_admins.append(
+                _strip_or_none(dept_admin.display_name)
+                or _strip_or_none(dept_admin.username)
+                or str(dept_admin.id)
+            )
+
+    if not blocking_admins:
+        return None
+
+    blockers = ", ".join(sorted(blocking_admins))
+    return (
+        "This super admin cannot be deleted because these department admins still "
+        f"have users under them: {blockers}."
+    )
+
+
 async def _owned_agent_ids_for_user(session: DbSession, user_id: UUID) -> list[UUID]:
     return list(
         (
@@ -648,11 +714,23 @@ async def _get_delete_user_blocker(
     *,
     target_user: User,
 ) -> str | None:
-    if await _target_has_managed_users(session, target_user):
-        target_role_label = normalize_role(target_user.role).replace("_", " ")
+    target_role = normalize_role(target_user.role)
+
+    if target_role == "super_admin":
+        super_admin_blocker = await _get_super_admin_delete_blocker(
+            session,
+            target_user=target_user,
+        )
+        if super_admin_blocker:
+            return super_admin_blocker
+
+    if target_role == "department_admin" and await _target_has_managed_users(
+        session,
+        target_user,
+    ):
         return (
-            f"This {target_role_label} still has users under them. "
-            "Delete those users first, then delete this account."
+            "This department admin still has users under them. "
+            "Delete or reassign those users first, then delete this account."
         )
 
     active_uat_count, active_prod_count = await _active_runtime_dependency_counts(

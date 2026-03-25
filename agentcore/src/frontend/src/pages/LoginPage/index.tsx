@@ -96,7 +96,21 @@ export default function LoginPage(): JSX.Element {
 
       console.log("🟣 [SSO] Starting Azure login...");
 
-      const response = await instance.loginPopup(loginRequest);
+      let response;
+      try {
+        response = await instance.loginPopup(loginRequest);
+      } catch (popupErr: any) {
+        // If popup was blocked by browser, fall back to redirect flow
+        if (
+          popupErr?.errorCode === "popup_window_error" ||
+          popupErr?.errorCode === "empty_window_error"
+        ) {
+          console.warn("🟡 [SSO] Popup blocked, falling back to redirect...");
+          await instance.loginRedirect(loginRequest);
+          return; // page will navigate away; redirect response handled on reload
+        }
+        throw popupErr;
+      }
       console.log("🟣 [SSO] Azure popup success:", response);
 
       const idToken = response.idToken;
