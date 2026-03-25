@@ -130,6 +130,11 @@ type HitlSeriesResponse = {
   series: PendingSeriesPoint[];
 };
 
+const formatPercentMetric = (value: number | null | undefined): string => {
+  if (value == null || !Number.isFinite(value)) return "0%";
+  return `${value.toFixed(2)}%`;
+};
+
 // --- Section Definitions (data unchanged from original) -------------------
 
 const sections: SectionConfig[] = [
@@ -829,7 +834,7 @@ export default function DashboardAdmin(): JSX.Element {
       .then(([u, p95, p99, er, cpu, mem, sc]) => {
         const uv = gv(u?.data?.prometheus), p95v = gv(p95?.data?.prometheus), p99v = gv(p99?.data?.prometheus), erv = gv(er?.data?.prometheus), cpuv = gv(cpu?.data?.prometheus), memv = gv(mem?.data?.prometheus);
         const dv = gsv(sc?.data, "Desired Replicas (HPA)"); let se = 0; for (let i = 1; i < dv.length; i++) if (dv[i] !== dv[i-1]) se++;
-        setPlatformKpis([{ name: "Platform Uptime %", value: uv != null ? `${uv.toFixed(2)}%` : "0%" }, { name: "API Latency P95", value: p95v != null ? `${Math.round(p95v)}ms` : "0ms" }, { name: "API Latency P99", value: p99v != null ? `${Math.round(p99v)}ms` : "0ms" }, { name: "Error Rate %", value: erv != null ? `${erv.toFixed(2)}%` : "0%" }, { name: "AKS Pod Scaling Events", value: `${se}` }, { name: "CPU/Memory Saturation %", value: cpuv != null && memv != null ? `${Math.round(cpuv)}% / ${Math.round(memv)}%` : "0%" }]);
+        setPlatformKpis([{ name: "Platform Uptime %", value: uv != null ? `${uv.toFixed(2)}%` : "0%" }, { name: "API Latency P95", value: p95v != null ? `${Math.round(p95v)}ms` : "0ms" }, { name: "API Latency P99", value: p99v != null ? `${Math.round(p99v)}ms` : "0ms" }, { name: "Error Rate %", value: erv != null ? `${erv.toFixed(2)}%` : "0%" }, { name: "AKS Pod Scaling Events", value: `${se}` }, { name: "CPU/Memory Saturation %", value: cpuv != null && memv != null ? `${formatPercentMetric(cpuv)} / ${formatPercentMetric(memv)}` : "0%" }]);
       }).catch(() => setPlatformKpis(platformKpiFallback));
   }, [isSuperAdmin, refreshTick]);
   useEffect(() => {
@@ -1094,6 +1099,5 @@ export default function DashboardAdmin(): JSX.Element {
     </div>
   );
 }
-
 
 

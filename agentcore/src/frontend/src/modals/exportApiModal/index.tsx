@@ -14,9 +14,9 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { PROXY_TARGET } from "@/customization/config-constants";
 import { useDarkStore } from "@/stores/darkStore";
 import { api } from "@/controllers/API/api";
+import { customGetHostProtocol } from "@/customization/utils/custom-get-host-protocol";
 
 interface ExportApiModalProps {
   open: boolean;
@@ -47,18 +47,8 @@ export default function ExportApiModal({
   const [loading, setLoading] = useState(false);
   const [copiedField, setCopiedField] = useState<string | null>(null);
 
-  const hostIp =
-    process.env.HOST_IP ||
-    import.meta.env.VITE_HOST_IP ||
-    "127.0.0.1";
-  const backendPort =
-    process.env.BACKEND_PORT ||
-    import.meta.env.VITE_BACKEND_PORT ||
-    "7860";
-  const rawBaseUrl = import.meta.env.VITE_API_URL || PROXY_TARGET;
-  const baseUrl = rawBaseUrl
-    .replace(/\$\{HOST_IP\}/g, hostIp)
-    .replace(/\$\{BACKEND_PORT\}/g, backendPort);
+  const { protocol, host } = customGetHostProtocol();
+  const baseUrl = `${protocol}//${host}`;
   const envCode = environment === "uat" ? 1 : 2;
   const runUrl = `${baseUrl}/api/run/${agentId}?env=${envCode}&version=${version}`;
 

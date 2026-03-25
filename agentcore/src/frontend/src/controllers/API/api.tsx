@@ -41,6 +41,11 @@ function forceSessionExpiryLogout() {
     return;
   }
 
+  // Already on login page — nothing to do, avoid a reload loop
+  if (window.location.pathname.includes("login")) {
+    return;
+  }
+
   isHandlingSessionExpiry = true;
 
   void useAuthStore.getState().logout();
@@ -51,9 +56,8 @@ function forceSessionExpiryLogout() {
 
   const currentPath = `${window.location.pathname}${window.location.search}`;
   const isHomePath = currentPath === "/" || currentPath === "/agents";
-  const isLoginPage = window.location.pathname.includes("login");
   const redirectSuffix =
-    !isHomePath && !isLoginPage
+    !isHomePath
       ? `?redirect=${encodeURIComponent(currentPath)}`
       : "";
 
@@ -73,7 +77,6 @@ function ApiInterceptor() {
 
   const { mutate: mutationLogout, mutateAsync: mutationLogoutAsync } = useLogout();
   const { mutateAsync: mutationRenewAccessTokenAsync } = useRefreshAccessToken();
-  const isLoginPage = location.pathname.includes("login");
   const customHeaders = useCustomApiHeaders();
 
   const setHealthCheckTimeout = useUtilityStore(
@@ -223,7 +226,7 @@ function ApiInterceptor() {
   }, [accessToken, setErrorData, customHeaders]);
 
   function checkErrorCount() {
-    if (isLoginPage) return;
+    if (window.location.pathname.includes("login")) return;
 
     const currentErrorCount =
       useAuthStore.getState().authenticationErrorCount ?? 0;
@@ -242,7 +245,7 @@ function ApiInterceptor() {
   }
 
   async function tryToRenewAccessToken(error: AxiosError) {
-    if (isLoginPage) return null;
+    if (window.location.pathname.includes("login")) return null;
     if (error.config?.headers) {
       for (const [key, value] of Object.entries(customHeaders)) {
         error.config.headers[key] = value;
