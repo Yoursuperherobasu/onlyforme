@@ -106,12 +106,6 @@ class RequestCancelledMiddleware(BaseHTTPMiddleware):
 _app_ready = False
 
 
-def _is_truthy_env(value: str | None, default: bool = False) -> bool:
-    if value is None:
-        return default
-    return value.strip().lower() in {"1", "true", "yes", "on"}
-
-
 def get_lifespan(*, fix_migration=True, version=None):
     telemetry_service = get_telemetry_service()
 
@@ -135,18 +129,11 @@ def get_lifespan(*, fix_migration=True, version=None):
             await initialize_services(fix_migration=fix_migration)
             logger.debug(f"Services initialized in {asyncio.get_event_loop().time() - start_time:.2f}s")
 
-            package_sync_on_startup = _is_truthy_env(
-                os.getenv("PACKAGE_SYNC_ON_STARTUP"),
-                default=True,
-            )
-            if package_sync_on_startup:
-                current_time = asyncio.get_event_loop().time()
-                logger.debug("Syncing packages to database")
-                from agentcore.services.packages import sync_packages_to_db
-                await sync_packages_to_db()
-                logger.debug(f"Packages synced in {asyncio.get_event_loop().time() - current_time:.2f}s")
-            else:
-                logger.debug("Skipping startup package sync (PACKAGE_SYNC_ON_STARTUP is disabled)")
+            current_time = asyncio.get_event_loop().time()
+            logger.debug("Syncing packages to database")
+            from agentcore.services.packages import sync_packages_to_db
+            await sync_packages_to_db()
+            logger.debug(f"Packages synced in {asyncio.get_event_loop().time() - current_time:.2f}s")
 
             current_time = asyncio.get_event_loop().time()
             logger.debug("Setting up LLM caching")
