@@ -613,7 +613,7 @@ function SectionCard({
                   Global
                 </span>
               )}
-              <span className="text-xxs font-bold text-foreground">{t(kpi.value)}</span>
+              <span className="text-xxs font-bold text-foreground">{kpi.value}</span>
             </div>
           ))}
         </div>
@@ -654,7 +654,7 @@ function SectionCard({
                     )}
                   </div>
                   <p className="mt-2 text-2xl font-bold text-foreground leading-none tracking-tight">
-                    {t(kpi.value)}
+                    {kpi.value}
                   </p>
                   {/* subtle bg glow */}
                   <div
@@ -1099,5 +1099,4 @@ export default function DashboardAdmin(): JSX.Element {
     </div>
   );
 }
-
 

@@ -3,6 +3,7 @@ import type { AgGridReact } from "ag-grid-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, Edit2 } from "lucide-react";
 import { useContext, useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import ForwardedIconComponent from "@/components/common/genericIconComponent";
 import ShadTooltip from "@/components/common/shadTooltipComponent";
 import TableComponent from "@/components/core/parameterRenderComponent/components/tableComponent";
@@ -94,6 +95,7 @@ const KnowledgeBasesTab = ({
   setQuantitySelected,
   isShiftPressed,
 }: KnowledgeBasesTabProps) => {
+  const { t } = useTranslation();
   const tableRef = useRef<AgGridReact<any>>(null);
   const { setErrorData, setSuccessData } = useAlertStore((state) => ({
     setErrorData: state.setErrorData,
@@ -197,16 +199,16 @@ const KnowledgeBasesTab = ({
       : selectedDeptId
         ? [selectedDeptId]
         : [];
-    if (selectedIds.length === 0) return "Select departments";
+    if (selectedIds.length === 0) return t("Select departments");
     const names = selectedIds.map((id) => deptNameMap.get(id)).filter(Boolean) as string[];
     if (names.length === 0) {
       return selectedIds.length > 1
-        ? `${selectedIds.length} departments`
-        : "Select departments";
+        ? t("{{count}} departments", { count: selectedIds.length })
+        : t("Select departments");
     }
     if (names.length <= 2) return names.join(", ");
     return `${names.slice(0, 2).join(", ")} +${names.length - 2}`;
-  }, [canMultiDept, deptNameMap, selectedDeptId, selectedDeptIds]);
+  }, [canMultiDept, deptNameMap, selectedDeptId, selectedDeptIds, t]);
   const [pendingUploadFiles, setPendingUploadFiles] = useState<File[]>([]);
   const { validateFileSize } = useFileSizeValidator();
   const uploadFile = useUploadFile({ multiple: true });
@@ -223,14 +225,14 @@ const KnowledgeBasesTab = ({
     { kb_id: knowledgeBaseToEdit?.id || "" },
     {
       onSuccess: () => {
-        setSuccessData({ title: "Knowledge base visibility updated successfully" });
+        setSuccessData({ title: t("Knowledge base visibility updated successfully") });
         setIsEditVisibilityModalOpen(false);
         setKnowledgeBaseToEdit(null);
       },
       onError: (error: any) => {
         setErrorData({
-          title: "Failed to update visibility",
-          list: [error?.response?.data?.detail || "Unexpected error"],
+          title: t("Failed to update visibility"),
+          list: [error?.response?.data?.detail || t("Unexpected error")],
         });
       },
     },
@@ -243,18 +245,20 @@ const KnowledgeBasesTab = ({
     {
       onSuccess: () => {
         setSuccessData({
-          title: `Knowledge Base "${knowledgeBaseToDelete?.name}" deleted successfully!`,
+          title: t('Knowledge Base "{{name}}" deleted successfully!', {
+            name: knowledgeBaseToDelete?.name,
+          }),
         });
         queryClient.invalidateQueries({ queryKey: ["useGetFilesV2"] });
         resetDeleteState();
       },
       onError: (error: any) => {
         setErrorData({
-          title: "Failed to delete knowledge base",
+          title: t("Failed to delete knowledge base"),
           list: [
             error?.response?.data?.detail ||
               error?.message ||
-              "An unknown error occurred",
+              t("An unknown error occurred"),
           ],
         });
         resetDeleteState();
@@ -320,17 +324,17 @@ const KnowledgeBasesTab = ({
         `${getURL("FILE_MANAGEMENT", { id: fileToDelete.id }, true)}`,
       );
       setSuccessData({
-        title: `File "${fileToDelete.name}" deleted successfully!`,
+        title: t('File "{{name}}" deleted successfully!', { name: fileToDelete.name }),
       });
       queryClient.invalidateQueries({ queryKey: ["useGetFilesV2"] });
       queryClient.invalidateQueries({ queryKey: ["useGetKnowledgeBases"] });
     } catch (error: any) {
       setErrorData({
-        title: "Failed to delete file",
+        title: t("Failed to delete file"),
         list: [
           error?.response?.data?.detail ||
             error?.message ||
-            "An unknown error occurred",
+            t("An unknown error occurred"),
         ],
       });
     } finally {
@@ -457,12 +461,12 @@ const KnowledgeBasesTab = ({
         public_dept_ids: scope?.public_dept_ids,
       });
       setSuccessData({
-        title: `File${filesIds.length > 1 ? "s" : ""} uploaded successfully`,
+        title: t(`File${filesIds.length > 1 ? "s" : ""} uploaded successfully`),
       });
     } catch (error: any) {
       setErrorData({
-        title: "Error uploading file",
-        list: [error.message || "An error occurred while uploading the file"],
+        title: t("Error uploading file"),
+        list: [error.message || t("An error occurred while uploading the file")],
       });
     }
   };
@@ -499,8 +503,8 @@ const KnowledgeBasesTab = ({
       setPendingUploadFiles((prev) => [...prev, ...validFiles]);
     } catch (error: any) {
       setErrorData({
-        title: "Error selecting files",
-        list: [error.message || "Could not select files"],
+        title: t("Error selecting files"),
+        list: [error.message || t("Could not select files")],
       });
     }
   };
@@ -594,7 +598,7 @@ const KnowledgeBasesTab = ({
 
   const formatDepartmentScope = (row: DisplayRow) => {
     if (row.rowType !== "kb") return "";
-    if (row.visibility === "ORGANIZATION") return "All departments";
+    if (row.visibility === "ORGANIZATION") return t("All departments");
     const deptIds = new Set<string>();
     (row.public_dept_ids || []).forEach((id) => deptIds.add(id));
     if (row.dept_id) deptIds.add(row.dept_id);
@@ -611,7 +615,7 @@ const KnowledgeBasesTab = ({
 
     return [
       {
-        headerName: "Name",
+      headerName: t("Name"),
         field: "name",
         flex: 3,
         sortable: false,
@@ -654,11 +658,11 @@ const KnowledgeBasesTab = ({
                       {params.value}
                     </span>
                     <span className="shrink-0 text-xs text-muted-foreground">
-                      ({fileCount} file{fileCount !== 1 ? "s" : ""})
+                      ({fileCount} {t(fileCount !== 1 ? "files" : "file")})
                     </span>
                   </div>
                 </div>
-                <ShadTooltip content="Add files to this knowledge base" side="left">
+                <ShadTooltip content={t("Add files to this knowledge base")} side="left">
                   <button
                     className="ml-2 flex shrink-0 items-center rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
                     onClick={(e) => {
@@ -699,7 +703,7 @@ const KnowledgeBasesTab = ({
                   {type ? `.${type}` : ""}
                 </span>
               </div>
-              <ShadTooltip content="Delete file" side="left">
+              <ShadTooltip content={t("Delete file")} side="left">
                 {params.data?.can_delete ? (
                   <button
                     className="ml-2 flex items-center rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-destructive"
@@ -722,7 +726,7 @@ const KnowledgeBasesTab = ({
         },
       },
       {
-        headerName: "Visibility",
+        headerName: t("Visibility"),
         field: "visibility",
         flex: 1,
         sortable: false,
@@ -733,15 +737,15 @@ const KnowledgeBasesTab = ({
           if (params.data?.rowType === "file") return "";
           const v = params.data?.visibility || "PRIVATE";
           const labels: Record<string, string> = {
-            PRIVATE: "Private",
-            DEPARTMENT: "Department",
-            ORGANIZATION: "Organization",
+            PRIVATE: t("Private"),
+            DEPARTMENT: t("Department"),
+            ORGANIZATION: t("Organization"),
           };
           return labels[v] || v;
         },
       },
       {
-        headerName: "Size",
+        headerName: t("Size"),
         field: "size",
         flex: 1,
         sortable: false,
@@ -753,7 +757,7 @@ const KnowledgeBasesTab = ({
         },
       },
       {
-        headerName: "Modified",
+        headerName: t("Modified"),
         field: "last_activity",
         flex: 1,
         sortable: false,
@@ -772,7 +776,7 @@ const KnowledgeBasesTab = ({
       ...(showCreatedBy
         ? [
             {
-              headerName: "Created By",
+              headerName: t("Created By"),
               field: "created_by_email",
               flex: 1.2,
               sortable: false,
@@ -803,8 +807,8 @@ const KnowledgeBasesTab = ({
       ...(showDepartment
         ? [
             {
-              headerName: "Department Scope",
-              headerTooltip: "Department Scope",
+              headerName: t("Department Scope"),
+              headerTooltip: t("Department Scope"),
               field: "department_name",
               flex: 1.2,
               sortable: false,
@@ -824,7 +828,7 @@ const KnowledgeBasesTab = ({
       ...(showActions
         ? [
             {
-              headerName: "Actions",
+              headerName: t("Actions"),
               field: "actions",
               flex: 0.8,
               sortable: false,
@@ -854,7 +858,7 @@ const KnowledgeBasesTab = ({
                       }}
                     >
                       <Edit2 className="mr-2 h-4 w-4" />
-                      Edit
+                      {t("Edit")}
                     </Button>
                   </div>
                 );
@@ -889,19 +893,19 @@ const KnowledgeBasesTab = ({
       <BaseModal.Header
         description={
           isExistingKB
-            ? `Add more files to "${knowledgeBaseName}"`
-            : "Create a new knowledge base by uploading files."
+        ? t('Add more files to "{{name}}"', { name: knowledgeBaseName })
+            : t("Create a new knowledge base by uploading files.")
         }
       >
-        {isExistingKB ? "Add Files" : "Upload Knowledge Base"}
+        {isExistingKB ? t("Add Files") : t("Upload Knowledge Base")}
       </BaseModal.Header>
       <BaseModal.Content className="min-h-0 max-h-[70vh] overflow-y-auto">
         <div className="flex flex-col gap-4 px-1">
           {/* KB Name */}
           <div className="space-y-1.5">
-            <Label className="text-sm font-medium">Knowledge Base Name</Label>
+            <Label className="text-sm font-medium">{t("Knowledge Base Name")}</Label>
             <Input
-              placeholder="Enter knowledge base name"
+              placeholder={t("Enter knowledge base name")}
               value={knowledgeBaseName}
               onChange={(event) => {
                 setKnowledgeBaseName(event.target.value);
@@ -914,18 +918,18 @@ const KnowledgeBasesTab = ({
           {/* Visibility */}
           {!isExistingKB && (
             <div className="space-y-1.5">
-              <Label className="text-sm font-medium">Visibility Scope</Label>
+              <Label className="text-sm font-medium">{t("Visibility Scope")}</Label>
               <Select
                 value={visibilityScope}
                 onValueChange={(value) => setVisibilityScope(value as VisibilityScope)}
               >
                 <SelectTrigger className="w-full">
-                  <SelectValue placeholder="Select visibility" />
+                  <SelectValue placeholder={t("Select visibility")} />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="private">Private</SelectItem>
-                  <SelectItem value="department">Department</SelectItem>
-                  <SelectItem value="organization">Organization</SelectItem>
+                  <SelectItem value="private">{t("Private")}</SelectItem>
+                  <SelectItem value="department">{t("Department")}</SelectItem>
+                  <SelectItem value="organization">{t("Organization")}</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -933,7 +937,7 @@ const KnowledgeBasesTab = ({
 
           {!isExistingKB && visibilityScope === "organization" && (
             <div className="space-y-1.5">
-              <Label className="text-sm font-medium">Organization</Label>
+              <Label className="text-sm font-medium">{t("Organization")}</Label>
               <Select
                 value={selectedOrgId}
                 onValueChange={setSelectedOrgId}
@@ -944,7 +948,7 @@ const KnowledgeBasesTab = ({
                 }
               >
                 <SelectTrigger className="w-full">
-                  <SelectValue placeholder="Select organization" />
+                  <SelectValue placeholder={t("Select organization")} />
                 </SelectTrigger>
                 <SelectContent>
                   {visibilityOptions.organizations.map((org) => (
@@ -961,7 +965,7 @@ const KnowledgeBasesTab = ({
             <>
               {canMultiDept && (
                 <div className="space-y-1.5">
-                  <Label className="text-sm font-medium">Organization</Label>
+                  <Label className="text-sm font-medium">{t("Organization")}</Label>
                   <Select
                     value={selectedOrgId}
                     onValueChange={(value) => {
@@ -971,7 +975,7 @@ const KnowledgeBasesTab = ({
                     }}
                   >
                     <SelectTrigger className="w-full">
-                      <SelectValue placeholder="Select organization" />
+                      <SelectValue placeholder={t("Select organization")} />
                     </SelectTrigger>
                     <SelectContent>
                       {visibilityOptions.organizations.map((org) => (
@@ -985,7 +989,7 @@ const KnowledgeBasesTab = ({
               )}
               <div className="space-y-1.5">
                 <Label className="text-sm font-medium">
-                  Department{canMultiDept ? "s" : ""}
+                  {canMultiDept ? t("Departments") : t("Department")}
                 </Label>
                 {canMultiDept ? (
                   <DropdownMenu>
@@ -1030,7 +1034,7 @@ const KnowledgeBasesTab = ({
                     disabled
                   >
                     <SelectTrigger className="w-full">
-                      <SelectValue placeholder="Select department" />
+                      <SelectValue placeholder={t("Select department")} />
                     </SelectTrigger>
                     <SelectContent>
                       {visibilityOptions.departments.map((dept) => (
@@ -1048,7 +1052,7 @@ const KnowledgeBasesTab = ({
           {/* File selection area */}
           <div className="space-y-1.5">
             <div className="flex items-center justify-between">
-              <Label className="text-sm font-medium">Files</Label>
+              <Label className="text-sm font-medium">{t("Files")}</Label>
               <Button
                 variant="outline"
                 size="sm"
@@ -1056,7 +1060,7 @@ const KnowledgeBasesTab = ({
                 onClick={handleChooseFiles}
               >
                 <ForwardedIconComponent name="Plus" className="mr-1 h-3.5 w-3.5" />
-                Choose Files
+                {t("Choose Files")}
               </Button>
             </div>
 
@@ -1070,7 +1074,7 @@ const KnowledgeBasesTab = ({
                   className="mb-2 h-8 w-8 text-muted-foreground/50"
                 />
                 <p className="text-sm text-muted-foreground">
-                  Click to select files or use the button above
+                  {t("Click to select files or use the button above")}
                 </p>
               </div>
             ) : (
@@ -1099,7 +1103,7 @@ const KnowledgeBasesTab = ({
                         </div>
                         <div className="ml-3 flex shrink-0 items-center gap-2">
                           <span className="rounded bg-muted px-1.5 py-0.5 text-xxs uppercase text-muted-foreground">
-                            {fileType || "file"}
+                            {fileType || t("file")}
                           </span>
                           <span className="text-xs text-muted-foreground">
                             {formatFileSize(file.size)}
@@ -1123,13 +1127,12 @@ const KnowledgeBasesTab = ({
 
             {pendingUploadFiles.length > 0 && (
               <p className="text-xs text-muted-foreground">
-                {pendingUploadFiles.length} file
-                {pendingUploadFiles.length !== 1 ? "s" : ""} selected
+                {t("{{count}} file(s) selected", { count: pendingUploadFiles.length })}
                 {" \u00B7 "}
                 {formatFileSize(
                   pendingUploadFiles.reduce((acc, f) => acc + f.size, 0),
                 )}{" "}
-                total
+                {t("total")}
               </p>
             )}
           </div>
@@ -1137,7 +1140,7 @@ const KnowledgeBasesTab = ({
       </BaseModal.Content>
       <BaseModal.Footer
         submit={{
-          label: isExistingKB ? "Upload Files" : "Upload Knowledge Base",
+          label: isExistingKB ? t("Upload Files") : t("Upload Knowledge Base"),
           dataTestId: "upload-files-with-kb-button",
           disabled:
             pendingUploadFiles.length === 0 ||
@@ -1150,7 +1153,7 @@ const KnowledgeBasesTab = ({
             const kbName = knowledgeBaseName.trim();
             if (!kbName) {
               setErrorData({
-                title: "Knowledge base name is required",
+                title: t("Knowledge base name is required"),
               });
               return;
             }
@@ -1182,10 +1185,10 @@ const KnowledgeBasesTab = ({
       <div className="flex flex-shrink-0 flex-col gap-3 border-b px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-6 md:px-8 md:py-4">
         <div>
           <div className="mb-1 flex items-center gap-3">
-            <h1 className="text-lg font-semibold md:text-xl">Knowledge Hub</h1>
+            <h1 className="text-lg font-semibold md:text-xl">{t("Knowledge Hub")}</h1>
           </div>
           <p className="text-sm text-muted-foreground">
-            Manage knowledge sources for agents
+            {t("Manage knowledge sources for agents")}
           </p>
         </div>
 
@@ -1195,7 +1198,7 @@ const KnowledgeBasesTab = ({
               icon="Search"
               data-testid="search-kb-input"
               type="text"
-              placeholder="Search knowledge bases..."
+              placeholder={t("Search knowledge bases...")}
               className="w-full"
               value={quickFilterText || ""}
               onChange={(event) => setQuickFilterText(event.target.value)}
@@ -1205,7 +1208,7 @@ const KnowledgeBasesTab = ({
             className="flex items-center gap-2 font-semibold"
             onClick={handleOpenUploadModal}
           >
-            <ForwardedIconComponent name="Plus" /> Upload Knowledge Base
+            <ForwardedIconComponent name="Plus" /> {t("Upload Knowledge Base")}
           </Button>
         </div>
       </div>
@@ -1257,7 +1260,7 @@ const KnowledgeBasesTab = ({
         setOpen={setIsDeleteModalOpen}
         onConfirm={confirmDelete}
         description={`knowledge base "${knowledgeBaseToDelete?.name || ""}"`}
-        note="This action cannot be undone"
+        note={t("This action cannot be undone")}
       >
         <></>
       </DeleteConfirmationModal>
@@ -1267,7 +1270,7 @@ const KnowledgeBasesTab = ({
         setOpen={setIsFileDeleteModalOpen}
         onConfirm={confirmDeleteFile}
         description={`file "${fileToDelete?.name || ""}"`}
-        note="This action cannot be undone"
+        note={t("This action cannot be undone")}
       >
         <></>
       </DeleteConfirmationModal>
@@ -1277,31 +1280,31 @@ const KnowledgeBasesTab = ({
         open={isEditVisibilityModalOpen}
         setOpen={setIsEditVisibilityModalOpen}
       >
-        <BaseModal.Header description="Update visibility scope for this knowledge base.">
-          Edit Visibility
+        <BaseModal.Header description={t("Update visibility scope for this knowledge base.")}>
+          {t("Edit Visibility")}
         </BaseModal.Header>
         <BaseModal.Content className="min-h-0 max-h-[70vh] overflow-y-auto">
           <div className="flex flex-col gap-4 px-1">
             <div className="space-y-1.5">
-              <Label className="text-sm font-medium">Visibility Scope</Label>
+              <Label className="text-sm font-medium">{t("Visibility Scope")}</Label>
               <Select
                 value={visibilityScope}
                 onValueChange={(value) => setVisibilityScope(value as VisibilityScope)}
               >
                 <SelectTrigger className="w-full">
-                  <SelectValue placeholder="Select visibility" />
+                  <SelectValue placeholder={t("Select visibility")} />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="private">Private</SelectItem>
-                  <SelectItem value="department">Department</SelectItem>
-                  <SelectItem value="organization">Organization</SelectItem>
+                  <SelectItem value="private">{t("Private")}</SelectItem>
+                  <SelectItem value="department">{t("Department")}</SelectItem>
+                  <SelectItem value="organization">{t("Organization")}</SelectItem>
                 </SelectContent>
               </Select>
             </div>
 
             {visibilityScope === "organization" && (
               <div className="space-y-1.5">
-                <Label className="text-sm font-medium">Organization</Label>
+                <Label className="text-sm font-medium">{t("Organization")}</Label>
                 <Select
                   value={selectedOrgId}
                   onValueChange={setSelectedOrgId}
@@ -1312,7 +1315,7 @@ const KnowledgeBasesTab = ({
                   }
                 >
                   <SelectTrigger className="w-full">
-                    <SelectValue placeholder="Select organization" />
+                    <SelectValue placeholder={t("Select organization")} />
                   </SelectTrigger>
                   <SelectContent>
                     {visibilityOptions.organizations.map((org) => (
@@ -1329,7 +1332,7 @@ const KnowledgeBasesTab = ({
               <>
                 {canMultiDept && (
                   <div className="space-y-1.5">
-                    <Label className="text-sm font-medium">Organization</Label>
+                    <Label className="text-sm font-medium">{t("Organization")}</Label>
                     <Select
                       value={selectedOrgId}
                       onValueChange={(value) => {
@@ -1339,7 +1342,7 @@ const KnowledgeBasesTab = ({
                       }}
                     >
                       <SelectTrigger className="w-full">
-                        <SelectValue placeholder="Select organization" />
+                        <SelectValue placeholder={t("Select organization")} />
                       </SelectTrigger>
                       <SelectContent>
                         {visibilityOptions.organizations.map((org) => (
@@ -1353,7 +1356,7 @@ const KnowledgeBasesTab = ({
                 )}
                 <div className="space-y-1.5">
                   <Label className="text-sm font-medium">
-                    Department{canMultiDept ? "s" : ""}
+                    {canMultiDept ? t("Departments") : t("Department")}
                   </Label>
                   {canMultiDept ? (
                     <DropdownMenu>
@@ -1398,7 +1401,7 @@ const KnowledgeBasesTab = ({
                       disabled
                     >
                       <SelectTrigger className="w-full">
-                        <SelectValue placeholder="Select department" />
+                        <SelectValue placeholder={t("Select department")} />
                       </SelectTrigger>
                       <SelectContent>
                         {visibilityOptions.departments.map((dept) => (
@@ -1416,7 +1419,7 @@ const KnowledgeBasesTab = ({
         </BaseModal.Content>
         <BaseModal.Footer
           submit={{
-            label: "Save",
+            label: t("Save"),
             disabled:
               updateVisibilityMutation.isPending ||
               (visibilityScope === "organization" && !selectedOrgId) ||

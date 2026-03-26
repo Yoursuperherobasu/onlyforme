@@ -6,6 +6,7 @@
 
 import { Eye, EyeOff, Trash2, Loader2, RefreshCw } from "lucide-react";
 import { useState, useEffect, useCallback } from "react";
+import { useTranslation } from "react-i18next";
 import { api } from "@/controllers/API/api";
 
 interface OutlookFormFields {
@@ -28,6 +29,7 @@ interface Props {
 }
 
 export default function OutlookConnectorForm({ form, onChange, isEditing, connectorId }: Props) {
+  const { t } = useTranslation();
   const [showSecret, setShowSecret] = useState(false);
   const [accounts, setAccounts] = useState<LinkedAccount[]>([]);
   const [loadingAccounts, setLoadingAccounts] = useState(false);
@@ -68,7 +70,7 @@ export default function OutlookConnectorForm({ form, onChange, isEditing, connec
   return (
     <>
       <div>
-        <label className="mb-1.5 block text-sm font-medium">Azure Tenant ID</label>
+        <label className="mb-1.5 block text-sm font-medium">{t("Azure Tenant ID")}</label>
         <input
           value={form.outlook_tenant_id}
           onChange={(e) => onChange("outlook_tenant_id", e.target.value)}
@@ -77,7 +79,7 @@ export default function OutlookConnectorForm({ form, onChange, isEditing, connec
         />
       </div>
       <div>
-        <label className="mb-1.5 block text-sm font-medium">Client ID (App Registration)</label>
+        <label className="mb-1.5 block text-sm font-medium">{t("Client ID (App Registration)")}</label>
         <input
           value={form.outlook_client_id}
           onChange={(e) => onChange("outlook_client_id", e.target.value)}
@@ -87,9 +89,9 @@ export default function OutlookConnectorForm({ form, onChange, isEditing, connec
       </div>
       <div>
         <label className="mb-1.5 block text-sm font-medium">
-          Client Secret{" "}
+          {t("Client Secret")}{" "}
           {isEditing && (
-            <span className="text-xs text-muted-foreground">(leave blank to keep current)</span>
+            <span className="text-xs text-muted-foreground">{t("(leave blank to keep current)")}</span>
           )}
         </label>
         <div className="relative">
@@ -98,7 +100,7 @@ export default function OutlookConnectorForm({ form, onChange, isEditing, connec
             value={form.outlook_client_secret}
             onChange={(e) => onChange("outlook_client_secret", e.target.value)}
             className="w-full rounded-lg border border-border bg-background px-3 py-2 pr-10 text-sm focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring"
-            placeholder={isEditing ? "(unchanged)" : "client-secret"}
+            placeholder={isEditing ? t("(unchanged)") : t("client-secret")}
           />
           <button
             type="button"
@@ -110,19 +112,19 @@ export default function OutlookConnectorForm({ form, onChange, isEditing, connec
         </div>
       </div>
       <p className="text-xs text-muted-foreground">
-        After saving, use the OAuth flow to link individual mailboxes to this connector.
+        {t("After saving, use the OAuth flow to link individual mailboxes to this connector.")}
       </p>
 
       {isEditing && connectorId && (
         <div className="mt-4 rounded-lg border border-border p-4">
           <div className="mb-3 flex items-center justify-between">
-            <h4 className="text-sm font-medium">Linked Mailboxes</h4>
+            <h4 className="text-sm font-medium">{t("Linked Mailboxes")}</h4>
             <button
               type="button"
               onClick={fetchAccounts}
               disabled={loadingAccounts}
               className="text-muted-foreground hover:text-foreground disabled:opacity-50"
-              title="Refresh accounts"
+              title={t("Refresh accounts")}
             >
               <RefreshCw className={`h-4 w-4 ${loadingAccounts ? "animate-spin" : ""}`} />
             </button>
@@ -131,11 +133,11 @@ export default function OutlookConnectorForm({ form, onChange, isEditing, connec
           {loadingAccounts && accounts.length === 0 ? (
             <div className="flex items-center gap-2 py-3 text-sm text-muted-foreground">
               <Loader2 className="h-4 w-4 animate-spin" />
-              Loading accounts...
+              {t("Loading accounts...")}
             </div>
           ) : accounts.length === 0 ? (
             <p className="py-3 text-sm text-muted-foreground">
-              No mailboxes linked yet. Use the OAuth flow to link one.
+              {t("No mailboxes linked yet. Use the OAuth flow to link one.")}
             </p>
           ) : (
             <ul className="space-y-2">
@@ -155,7 +157,7 @@ export default function OutlookConnectorForm({ form, onChange, isEditing, connec
                     onClick={() => handleRemoveAccount(acct.email)}
                     disabled={removingEmail === acct.email}
                     className="ml-2 shrink-0 text-muted-foreground hover:text-destructive disabled:opacity-50"
-                    title={`Remove ${acct.email}`}
+                    title={t("Remove {{email}}", { email: acct.email })}
                   >
                     {removingEmail === acct.email ? (
                       <Loader2 className="h-4 w-4 animate-spin" />

@@ -1,4 +1,5 @@
 import { useContext, useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import ForwardedIconComponent from "@/components/common/genericIconComponent";
 import { Button } from "@/components/ui/button";
 
@@ -34,6 +35,7 @@ const KnowledgeBaseDrawer = ({
   onClose,
   knowledgeBase,
 }: KnowledgeBaseDrawerProps) => {
+  const { t } = useTranslation();
   const { userData, role } = useContext(AuthContext);
   const setErrorData = useAlertStore((state) => state.setErrorData);
 
@@ -57,8 +59,8 @@ const KnowledgeBaseDrawer = ({
       onError: (error: any) => {
         setSelectedVisibility(knowledgeBase?.visibility || "PRIVATE");
         setErrorData({
-          title: "Failed to update visibility",
-          list: [error?.response?.data?.detail || "Unexpected error"],
+          title: t("Failed to update visibility"),
+          list: [error?.response?.data?.detail || t("Unexpected error")],
         });
       },
     },
@@ -85,30 +87,30 @@ const KnowledgeBaseDrawer = ({
       <div className="flex-1 overflow-y-auto pt-3">
         <div className="flex flex-col gap-4">
           <div className="space-y-2 px-4">
-            <label className="text-sm font-medium">Visibility</label>
+            <label className="text-sm font-medium">{t("Visibility")}</label>
             {canEditVisibility ? (
               <Select
                 value={selectedVisibility}
                 onValueChange={handleVisibilityChange}
               >
                 <SelectTrigger className="w-full">
-                  <SelectValue placeholder="Select visibility" />
+                  <SelectValue placeholder={t("Select visibility")} />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="PRIVATE">
-                    Private - Only you
+                    {t("Private - Only you")}
                   </SelectItem>
                   <SelectItem value="DEPARTMENT">
-                    Department - Your departments
+                    {t("Department - Your departments")}
                   </SelectItem>
                   <SelectItem value="ORGANIZATION">
-                    Organization - Everyone in org
+                    {t("Organization - Everyone in org")}
                   </SelectItem>
                 </SelectContent>
               </Select>
             ) : (
               <div className="text-sm text-muted-foreground">
-                {VISIBILITY_LABELS[selectedVisibility] || selectedVisibility}
+                {t(VISIBILITY_LABELS[selectedVisibility] || selectedVisibility)}
               </div>
             )}
           </div>
