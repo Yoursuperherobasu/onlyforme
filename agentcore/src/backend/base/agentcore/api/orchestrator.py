@@ -261,12 +261,9 @@ async def _orch_call_run_api(
     For streaming, SSE token/add_message events are forwarded to event_manager;
     the function waits for the 'end' event to obtain the final text.
     """
-    from agentcore.services.deps import get_settings_service
-    settings = get_settings_service().settings
     base_url = (
-        _request_base_url.get()
-        or os.environ.get("LOCALHOST_BACKEND_URL")
-        or f"http://{settings.host}:{settings.port}"
+        os.environ.get("ORCHESTRATOR_BASE_URL")
+        or _request_base_url.get()
     )
     logger.info(f"[ORCH] base_url resolved to: {base_url}")
     secret = os.environ.get("AGENTCORE_INTERNAL_SECRET", "")
@@ -704,7 +701,7 @@ async def orch_chat(
 
         # -- 4. Run the agent via /run API -----------------------------------
         logger.info(f"[ORCH] Agent={deployment.agent_name} | session={body.session_id} | input_value={body.input_value!r}")
-        _env_str = "prod" if isinstance(deployment, AgentDeploymentProd) else "uat"
+        _env_str = "2" if isinstance(deployment, AgentDeploymentProd) else "1"
         _version_str = f"v{deployment.version_number}"
         agent_text, _was_hitl, agent_content_blocks = await _orch_call_run_api(
             agent_id=str(agent_id),
@@ -843,7 +840,7 @@ async def orch_chat_stream(
     async def _run_and_persist():
         """Background coroutine: run the agent via /run API, persist reply, close the queue."""
         try:
-            _env_str = "prod" if dep_is_prod else "uat"
+            _env_str = "2" if dep_is_prod else "1"
             _version_str = f"v{deployment.version_number}"
             agent_text, was_interrupted, agent_content_blocks = await _orch_call_run_api(
                 agent_id=agent_id_str,
