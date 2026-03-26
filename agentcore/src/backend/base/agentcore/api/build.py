@@ -625,6 +625,7 @@ async def generate_agent_events(
         from agentcore.observability.metrics_registry import record_agent_run
         record_agent_run(agent_name or "unknown", "error", (time.perf_counter() - _run_start) * 1000)
         logger.error(f"Error in LangGraph execution: {e}")
+        await graph.end_all_traces(error=e)
         error_message = ErrorMessage(
             agent_id=agent_id,
             exception=e,
