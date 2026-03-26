@@ -32,8 +32,7 @@ export const ProtectedRoute = ({ children }) => {
   
   const testMockAutoLogin = sessionStorage.getItem("testMockAutoLogin");
 
-  const shouldRedirect =
-    !isAuthenticated
+  const shouldRedirect = !isAuthenticated;
 
   useEffect(() => {
     if (!isAuthenticated) return;
