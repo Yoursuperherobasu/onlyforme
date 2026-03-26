@@ -148,18 +148,11 @@ async def _build_agent_visibility_statement(session: AsyncSession, current_user:
     if role == "super_admin":
         org_ids, _ = await _get_scope_memberships(session, current_user.id)
         if org_ids:
-            org_user_subquery = (
-                select(UserOrganizationMembership.user_id).where(
-                    UserOrganizationMembership.org_id.in_(list(org_ids)),
-                    UserOrganizationMembership.status.in_(["accepted", "active"]),
-                )
-            )
             return select(Agent).where(
                 active_condition,
                 or_(
                     own_condition,
                     Agent.org_id.in_(list(org_ids)),
-                    Agent.user_id.in_(org_user_subquery),
                 )
             )
         return select(Agent).where(active_condition, own_condition)
@@ -167,18 +160,11 @@ async def _build_agent_visibility_statement(session: AsyncSession, current_user:
     if role == "department_admin":
         _, dept_ids = await _get_scope_memberships(session, current_user.id)
         if dept_ids:
-            dept_user_subquery = (
-                select(UserDepartmentMembership.user_id).where(
-                    UserDepartmentMembership.department_id.in_(list(dept_ids)),
-                    UserDepartmentMembership.status == "active",
-                )
-            )
             return select(Agent).where(
                 active_condition,
                 or_(
                     own_condition,
                     Agent.dept_id.in_(list(dept_ids)),
-                    Agent.user_id.in_(dept_user_subquery),
                 )
             )
         return select(Agent).where(active_condition, own_condition)
@@ -226,35 +212,11 @@ async def _can_access_agent(session: AsyncSession, current_user: CurrentActiveUs
         org_ids, _ = await _get_scope_memberships(session, current_user.id)
         if agent.org_id and agent.org_id in org_ids:
             return True
-        if agent.user_id and org_ids:
-            owner_membership = (
-                await session.exec(
-                    select(UserOrganizationMembership.id).where(
-                        UserOrganizationMembership.user_id == agent.user_id,
-                        UserOrganizationMembership.org_id.in_(list(org_ids)),
-                        UserOrganizationMembership.status.in_(["accepted", "active"]),
-                    )
-                )
-            ).first()
-            if owner_membership:
-                return True
 
     if role == "department_admin":
         _, dept_ids = await _get_scope_memberships(session, current_user.id)
         if agent.dept_id and agent.dept_id in dept_ids:
             return True
-        if agent.user_id and dept_ids:
-            owner_membership = (
-                await session.exec(
-                    select(UserDepartmentMembership.id).where(
-                        UserDepartmentMembership.user_id == agent.user_id,
-                        UserDepartmentMembership.department_id.in_(list(dept_ids)),
-                        UserDepartmentMembership.status == "active",
-                    )
-                )
-            ).first()
-            if owner_membership:
-                return True
 
     return False
 
@@ -699,6 +661,12 @@ async def update_agent(
         for key, value in update_data.items():
             setattr(db_agent, key, value)
 
+        if db_agent.project_id:
+            selected_project = await session.get(Folder, db_agent.project_id)
+            if selected_project:
+                db_agent.org_id = selected_project.org_id or db_agent.org_id
+                db_agent.dept_id = selected_project.dept_id or db_agent.dept_id
+
         await _verify_fs_path(db_agent.fs_path)
 
         db_agent.updated_at = datetime.now(timezone.utc)
@@ -793,20 +761,11 @@ async def create_agents(
     """Create multiple new agents."""
     db_agents = []
     for agent in agent_list.agents:
-        agent.user_id = current_user.id
-        resolved_org_id, resolved_dept_id = await _resolve_tenant_scope_for_user(
+        db_agent = await _new_agent(
             session=session,
+            agent=agent,
             user_id=current_user.id,
-            requested_org_id=getattr(agent, "org_id", None),
-            requested_dept_id=getattr(agent, "dept_id", None),
         )
-        agent.org_id = resolved_org_id
-        agent.dept_id = resolved_dept_id
-        db_agent = Agent.model_validate(agent, from_attributes=True)
-        # Strip sensitive values (API keys, secrets) from agent data before saving to DB
-        if db_agent.data:
-            db_agent.data = strip_sensitive_values_from_agent_data(db_agent.data)
-        session.add(db_agent)
         db_agents.append(db_agent)
     await session.commit()
     for db_agent in db_agents:

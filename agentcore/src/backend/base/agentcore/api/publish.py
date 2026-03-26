@@ -510,18 +510,6 @@ async def _resolve_publish_scope(
                 session.add(agent)
 
         resolved_department_id = requested_department_id or agent.dept_id
-        if not resolved_department_id and resolved_org_id:
-            # For org-wide admins without department memberships, use a deterministic
-            # fallback department from the agent's organization.
-            fallback_department = (
-                await session.exec(
-                    select(Department)
-                    .where(Department.org_id == resolved_org_id)
-                    .order_by(col(Department.id))
-                )
-            ).first()
-            if fallback_department:
-                resolved_department_id = fallback_department.id
 
         if not resolved_department_id:
             if allow_departmentless_private_publish and resolved_org_id:
