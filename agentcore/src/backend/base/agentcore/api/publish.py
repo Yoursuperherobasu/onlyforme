@@ -2707,25 +2707,8 @@ async def publish_agent(
                     f"Approval sent to dept admin {resolved_department_admin_id} [dept={resolved_department_id}]"
                 )
 
-                # ─── Create agent bundle rows from snapshot ──
-                try:
-                    bundles = await _extract_and_create_bundles(
-                        session,
-                        snapshot=snapshot,
-                        agent_id=agent_id,
-                        org_id=agent_org_id,
-                        dept_id=resolved_department_id,
-                        deployment_id=new_record.id,
-                        deployment_env=DeploymentEnvEnum.PROD,
-                        created_by=current_user.id,
-                    )
-                    if bundles:
-                        await session.commit()
-                        logger.info(f"Created {len(bundles)} bundle(s) for PROD pending-approval deploy {new_record.id}")
-                    else:
-                        logger.info(f"No bundles extracted from snapshot for PROD pending-approval deploy {new_record.id}")
-                except Exception as bundle_err:
-                    logger.warning(f"Bundle extraction failed for PROD deploy of {agent_id}: {bundle_err}", exc_info=True)
+                # NOTE: Bundle creation is deferred until admin approval.
+                # See approvals.py approve_agent() for bundle creation on approval.
 
                 return PublishActionResponse(
                     success=True,
