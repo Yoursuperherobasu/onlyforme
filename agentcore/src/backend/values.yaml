@@ -1,6 +1,0 @@
-agents:
-- agent_id: 2003f443-6503-4960-89f8-e9cbe709a313
-  agent_name: A2A Agent (1)
-  version_number: v1
-  environment: uat
-  deployment_id: faa5693a-975d-4306-a5d7-d20054429480
