@@ -508,6 +508,26 @@ async def _get_single_release_package_count(session: DbSession, release_id: UUID
     return int(count or 0)
 
 
+async def _get_next_release(
+    *,
+    session: DbSession,
+    release: ProductRelease,
+) -> ProductRelease | None:
+    return (
+        await session.exec(
+            select(ProductRelease)
+            .where(
+                (ProductRelease.start_date > release.start_date)
+                | (
+                    (ProductRelease.start_date == release.start_date)
+                    & (ProductRelease.created_at > release.created_at)
+                )
+            )
+            .order_by(ProductRelease.start_date.asc(), ProductRelease.created_at.asc())
+        )
+    ).first()
+
+
 async def _create_release(
     *,
     session: DbSession,
@@ -886,41 +906,139 @@ async def get_release_package_comparison(
         )
     ).all()
 
-    current_package_filter = () if normalized_service == "all" else (Package.service_name == normalized_service,)
-    current_packages = (
+    comparison_rows: list[dict[str, Any]] = []
+
+    if release.end_date == ACTIVE_END_DATE:
+        current_package_filter = () if normalized_service == "all" else (Package.service_name == normalized_service,)
+        current_packages = (
+            await session.exec(
+                select(Package)
+                .where(Package.end_date == ACTIVE_END_DATE, *current_package_filter)
+                .order_by(Package.service_name.asc(), Package.package_type.asc(), Package.name.asc())
+            )
+        ).all()
+
+        snapshot_by_service: dict[str, list[ReleasePackageSnapshot]] = defaultdict(list)
+        current_by_service: dict[str, list[Package]] = defaultdict(list)
+        for row in snapshots:
+            snapshot_by_service[row.service_name].append(row)
+        for row in current_packages:
+            current_by_service[row.service_name].append(row)
+
+        all_services = sorted(set(snapshot_by_service.keys()) | set(current_by_service.keys()))
+
+        for service_name in all_services:
+            service_snapshots = snapshot_by_service.get(service_name, [])
+            service_current = current_by_service.get(service_name, [])
+
+            snapshot_managed = [row for row in service_snapshots if row.package_type == "managed"]
+            snapshot_transitive = [row for row in service_snapshots if row.package_type == "transitive"]
+            current_managed = [row for row in service_current if row.package_type == "managed"]
+            current_transitive = [row for row in service_current if row.package_type == "transitive"]
+
+            reachable_snapshot_transitives = _compute_reachable_transitives_from_snapshot(
+                managed_rows=snapshot_managed,
+                transitive_rows=snapshot_transitive,
+            )
+            reachable_current_transitives = _compute_reachable_transitives_from_packages(
+                managed_rows=current_managed,
+                transitive_rows=current_transitive,
+            )
+
+            filtered_snapshots = [
+                row
+                for row in service_snapshots
+                if row.package_type != "transitive" or _normalize_pkg(row.name) in reachable_snapshot_transitives
+            ]
+            filtered_current = [
+                row
+                for row in service_current
+                if row.package_type != "transitive" or _normalize_pkg(row.name) in reachable_current_transitives
+            ]
+
+            snapshot_lookup = {
+                (row.package_type, _normalize_pkg(row.name)): row
+                for row in filtered_snapshots
+            }
+            current_lookup = {
+                (row.package_type, _normalize_pkg(row.name)): row
+                for row in filtered_current
+            }
+
+            comparison_keys = sorted(
+                set(snapshot_lookup.keys()) | set(current_lookup.keys()),
+                key=lambda item: (item[0], item[1]),
+            )
+
+            for package_type, normalized_name in comparison_keys:
+                released_row = snapshot_lookup.get((package_type, normalized_name))
+                current_row = current_lookup.get((package_type, normalized_name))
+                display_name = (
+                    released_row.name
+                    if released_row is not None
+                    else (current_row.name if current_row is not None else normalized_name)
+                )
+
+                comparison_rows.append(
+                    {
+                        "release_id": str(release_id),
+                        "service_name": service_name,
+                        "package_type": package_type,
+                        "name": display_name,
+                        "released_version": released_row.version if released_row is not None else None,
+                        "released_version_spec": released_row.version_spec if released_row is not None else None,
+                        "current_version": current_row.version if current_row is not None else None,
+                        "current_version_spec": current_row.version_spec if current_row is not None else None,
+                        "status": _compare_package_versions(
+                            released_row.version if released_row is not None else None,
+                            current_row.version if current_row is not None else None,
+                        ),
+                    }
+                )
+        return comparison_rows
+
+    next_release = await _get_next_release(session=session, release=release)
+    if next_release is None:
+        return []
+
+    next_release_filter = () if normalized_service == "all" else (ReleasePackageSnapshot.service_name == normalized_service,)
+    next_snapshots = (
         await session.exec(
-            select(Package)
-            .where(Package.end_date == ACTIVE_END_DATE, *current_package_filter)
-            .order_by(Package.service_name.asc(), Package.package_type.asc(), Package.name.asc())
+            select(ReleasePackageSnapshot)
+            .where(ReleasePackageSnapshot.release_id == next_release.id, *next_release_filter)
+            .order_by(
+                ReleasePackageSnapshot.service_name.asc(),
+                ReleasePackageSnapshot.package_type.asc(),
+                ReleasePackageSnapshot.name.asc(),
+            )
         )
     ).all()
 
     snapshot_by_service: dict[str, list[ReleasePackageSnapshot]] = defaultdict(list)
-    current_by_service: dict[str, list[Package]] = defaultdict(list)
+    next_by_service: dict[str, list[ReleasePackageSnapshot]] = defaultdict(list)
     for row in snapshots:
         snapshot_by_service[row.service_name].append(row)
-    for row in current_packages:
-        current_by_service[row.service_name].append(row)
+    for row in next_snapshots:
+        next_by_service[row.service_name].append(row)
 
-    all_services = sorted(set(snapshot_by_service.keys()) | set(current_by_service.keys()))
-    comparison_rows: list[dict[str, Any]] = []
+    all_services = sorted(set(snapshot_by_service.keys()) | set(next_by_service.keys()))
 
     for service_name in all_services:
         service_snapshots = snapshot_by_service.get(service_name, [])
-        service_current = current_by_service.get(service_name, [])
+        service_next = next_by_service.get(service_name, [])
 
         snapshot_managed = [row for row in service_snapshots if row.package_type == "managed"]
         snapshot_transitive = [row for row in service_snapshots if row.package_type == "transitive"]
-        current_managed = [row for row in service_current if row.package_type == "managed"]
-        current_transitive = [row for row in service_current if row.package_type == "transitive"]
+        next_managed = [row for row in service_next if row.package_type == "managed"]
+        next_transitive = [row for row in service_next if row.package_type == "transitive"]
 
         reachable_snapshot_transitives = _compute_reachable_transitives_from_snapshot(
             managed_rows=snapshot_managed,
             transitive_rows=snapshot_transitive,
         )
-        reachable_current_transitives = _compute_reachable_transitives_from_packages(
-            managed_rows=current_managed,
-            transitive_rows=current_transitive,
+        reachable_next_transitives = _compute_reachable_transitives_from_snapshot(
+            managed_rows=next_managed,
+            transitive_rows=next_transitive,
         )
 
         filtered_snapshots = [
@@ -928,33 +1046,33 @@ async def get_release_package_comparison(
             for row in service_snapshots
             if row.package_type != "transitive" or _normalize_pkg(row.name) in reachable_snapshot_transitives
         ]
-        filtered_current = [
+        filtered_next = [
             row
-            for row in service_current
-            if row.package_type != "transitive" or _normalize_pkg(row.name) in reachable_current_transitives
+            for row in service_next
+            if row.package_type != "transitive" or _normalize_pkg(row.name) in reachable_next_transitives
         ]
 
         snapshot_lookup = {
             (row.package_type, _normalize_pkg(row.name)): row
             for row in filtered_snapshots
         }
-        current_lookup = {
+        next_lookup = {
             (row.package_type, _normalize_pkg(row.name)): row
-            for row in filtered_current
+            for row in filtered_next
         }
 
         comparison_keys = sorted(
-            set(snapshot_lookup.keys()) | set(current_lookup.keys()),
+            set(snapshot_lookup.keys()) | set(next_lookup.keys()),
             key=lambda item: (item[0], item[1]),
         )
 
         for package_type, normalized_name in comparison_keys:
             released_row = snapshot_lookup.get((package_type, normalized_name))
-            current_row = current_lookup.get((package_type, normalized_name))
+            next_row = next_lookup.get((package_type, normalized_name))
             display_name = (
                 released_row.name
                 if released_row is not None
-                else (current_row.name if current_row is not None else normalized_name)
+                else (next_row.name if next_row is not None else normalized_name)
             )
 
             comparison_rows.append(
@@ -965,11 +1083,11 @@ async def get_release_package_comparison(
                     "name": display_name,
                     "released_version": released_row.version if released_row is not None else None,
                     "released_version_spec": released_row.version_spec if released_row is not None else None,
-                    "current_version": current_row.version if current_row is not None else None,
-                    "current_version_spec": current_row.version_spec if current_row is not None else None,
+                    "current_version": next_row.version if next_row is not None else None,
+                    "current_version_spec": next_row.version_spec if next_row is not None else None,
                     "status": _compare_package_versions(
                         released_row.version if released_row is not None else None,
-                        current_row.version if current_row is not None else None,
+                        next_row.version if next_row is not None else None,
                     ),
                 }
             )

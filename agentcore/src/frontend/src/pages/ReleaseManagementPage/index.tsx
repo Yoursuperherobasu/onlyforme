@@ -77,25 +77,34 @@ function comparisonStatusClass(status: string) {
   return "border-violet-500/50 text-violet-600";
 }
 
-function ReleaseLibrariesTab({ releaseId, regionCode }: { releaseId: string; regionCode?: string | null }) {
+function ReleaseLibrariesTab({
+  releaseId,
+  regionCode,
+}: {
+  releaseId: string;
+  regionCode?: string | null;
+}) {
   const { t } = useTranslation();
   const [selectedService, setSelectedService] = useState("all");
   const [activeTab, setActiveTab] = useState<PackageViewTab>("managed");
   const [searchQuery, setSearchQuery] = useState("");
   const [showChangedOnly, setShowChangedOnly] = useState(false);
-  const { data, isLoading } = useGetReleasePackageComparison({ releaseId, service: selectedService, regionCode });
+  const { data: comparisonData, isLoading } = useGetReleasePackageComparison(
+    { releaseId, service: selectedService, regionCode },
+  );
 
   const normalizedData = useMemo(
     () =>
-      (data ?? []).map((row) => ({
+      (comparisonData ?? []).map((row) => ({
         ...row,
         service_name: row.service_name || "unknown",
         released_version: row.released_version || "",
         released_version_spec: row.released_version_spec || "",
         current_version: row.current_version || "",
         current_version_spec: row.current_version_spec || "",
+        status: row.status || "unchanged",
       })),
-    [data],
+    [comparisonData],
   );
 
   const managedPackages = normalizedData.filter((row) => row.package_type === "managed");
@@ -114,7 +123,9 @@ function ReleaseLibrariesTab({ releaseId, regionCode }: { releaseId: string; reg
       row.name.toLowerCase().includes(q) ||
       row.service_name.toLowerCase().includes(q) ||
       row.released_version.toLowerCase().includes(q) ||
+      row.released_version_spec.toLowerCase().includes(q) ||
       row.current_version.toLowerCase().includes(q) ||
+      row.current_version_spec.toLowerCase().includes(q) ||
       row.status.toLowerCase().includes(q)
       );
     const matchesDelta = showChangedOnly ? row.status !== "unchanged" : true;
