@@ -317,10 +317,6 @@ class Settings(BaseSettings):
     Resolved from Key Vault secret 'agentcore-backend-service-api-key'. When set, incoming requests
     with a matching x-api-key header are authenticated as a service caller without requiring JWT."""
 
-    package_inventory_api_key: str = ""
-    """API key for authenticating CI/CD package inventory snapshot ingestion requests
-    (sent as x-api-key header to /api/package-inventory/snapshots)."""
-
     # Model Microservice
     model_service_url: str = ""
     """Base URL of the Model microservice (e.g. http://localhost:8001).

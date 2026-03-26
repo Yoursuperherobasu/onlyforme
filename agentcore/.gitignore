@@ -210,3 +210,4 @@ member_servers.json
 src/backend/knowledge_base_storage/
 pii_masking_templates/
 agents.yaml
+devops

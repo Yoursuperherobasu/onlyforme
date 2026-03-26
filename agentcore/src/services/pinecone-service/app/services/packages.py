@@ -1,23 +1,23 @@
 from __future__ import annotations
 
+import logging
 import os
 import re
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
-from uuid import UUID
 
 import toml
-from loguru import logger
-from sqlmodel import select, text
+from sqlalchemy import text
+from sqlmodel import select
 
-from agentcore.services.database.models.package.model import Package
-from agentcore.services.database.models.product_release.model import ProductRelease
-from agentcore.services.deps import session_scope
+from app.database import session_scope
+from app.models.package_inventory import Package, ProductRelease
 
+logger = logging.getLogger(__name__)
 ACTIVE_END_DATE = date(9999, 12, 31)
-_PROJECT_ROOT = Path(__file__).resolve().parents[3]
-_BACKEND_SERVICE_NAME = "backend"
+SERVICE_NAME = "pinecone-service"
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
 def _normalize(name: str) -> str:
@@ -26,7 +26,7 @@ def _normalize(name: str) -> str:
 
 def _parse_pyproject(pyproject_path: Path) -> list[dict[str, str]]:
     if not pyproject_path.exists():
-        logger.warning("pyproject.toml not found at {}", pyproject_path)
+        logger.warning("pyproject.toml not found at %s", pyproject_path)
         return []
 
     data = toml.loads(pyproject_path.read_text(encoding="utf-8"))
@@ -48,7 +48,7 @@ def _parse_pyproject(pyproject_path: Path) -> list[dict[str, str]]:
 
 def _parse_uv_lock(uv_lock_path: Path) -> list[dict[str, Any]]:
     if not uv_lock_path.exists():
-        logger.warning("uv.lock not found at {}", uv_lock_path)
+        logger.warning("uv.lock not found at %s", uv_lock_path)
         return []
 
     data = toml.loads(uv_lock_path.read_text(encoding="utf-8"))
@@ -56,24 +56,24 @@ def _parse_uv_lock(uv_lock_path: Path) -> list[dict[str, Any]]:
     return packages if isinstance(packages, list) else []
 
 
-async def _resolve_active_release_id() -> UUID | None:
+async def _resolve_active_release_id():
     try:
         async with session_scope() as session:
             release_check = (
-                await session.exec(text("SELECT to_regclass('public.product_release') IS NOT NULL"))
+                await session.execute(text("SELECT to_regclass('public.product_release') IS NOT NULL"))
             ).first()
             release_table_exists = bool(release_check[0]) if release_check else False
             if not release_table_exists:
                 return None
 
             active_release = (
-                await session.exec(
+                await session.execute(
                     select(ProductRelease).where(ProductRelease.end_date == ACTIVE_END_DATE)
                 )
-            ).first()
+            ).scalars().first()
             return active_release.id if active_release else None
     except Exception as exc:  # pragma: no cover
-        logger.debug("Could not resolve active release for package sync: {}", exc)
+        logger.debug("Could not resolve active release for package sync: %s", exc)
         return None
 
 
@@ -87,19 +87,19 @@ def build_runtime_metadata() -> dict[str, str | None]:
 
 async def sync_packages_to_db() -> None:
     async with session_scope() as session:
-        package_check = (await session.exec(text("SELECT to_regclass('public.package') IS NOT NULL"))).first()
+        package_check = (await session.execute(text("SELECT to_regclass('public.package') IS NOT NULL"))).first()
         package_table_exists = bool(package_check[0]) if package_check else False
         if not package_table_exists:
-            logger.warning("Package table missing; skipping backend package sync")
+            logger.warning("Package table missing; skipping pinecone-service package sync")
             return
 
-    pyproject_path = _PROJECT_ROOT / "pyproject.toml"
-    uv_lock_path = _PROJECT_ROOT / "uv.lock"
+    pyproject_path = PROJECT_ROOT / "pyproject.toml"
+    uv_lock_path = PROJECT_ROOT / "uv.lock"
     declared = _parse_pyproject(pyproject_path)
     lock_pkgs = _parse_uv_lock(uv_lock_path)
 
     if not lock_pkgs:
-        logger.warning("No packages found in {}; skipping backend package sync", uv_lock_path)
+        logger.warning("No packages found in %s; skipping pinecone-service package sync", uv_lock_path)
         return
 
     metadata = build_runtime_metadata()
@@ -134,7 +134,7 @@ async def sync_packages_to_db() -> None:
         rows.append(
             {
                 "name": dep["name"],
-                "service_name": _BACKEND_SERVICE_NAME,
+                "service_name": SERVICE_NAME,
                 "version": str(lock_entry.get("version", "unknown")),
                 "version_spec": dep["version_spec"],
                 "package_type": "managed",
@@ -163,7 +163,7 @@ async def sync_packages_to_db() -> None:
         rows.append(
             {
                 "name": pkg_name,
-                "service_name": _BACKEND_SERVICE_NAME,
+                "service_name": SERVICE_NAME,
                 "version": str(pkg.get("version", "unknown")),
                 "version_spec": None,
                 "package_type": "transitive",
@@ -182,13 +182,13 @@ async def sync_packages_to_db() -> None:
 
     async with session_scope() as session:
         current_rows = (
-            await session.exec(
+            await session.execute(
                 select(Package).where(
-                    Package.service_name == _BACKEND_SERVICE_NAME,
+                    Package.service_name == SERVICE_NAME,
                     Package.end_date == ACTIVE_END_DATE,
                 )
             )
-        ).all()
+        ).scalars().all()
         current_map = {
             (_normalize(row.name), row.package_type): row
             for row in current_rows
@@ -279,9 +279,9 @@ async def sync_packages_to_db() -> None:
             existing.synced_at = now
 
     logger.info(
-        "Synced {} packages for {} ({} managed, {} transitive)",
+        "Synced %s packages for %s (%s managed, %s transitive)",
         len(rows),
-        _BACKEND_SERVICE_NAME,
+        SERVICE_NAME,
         sum(1 for row in rows if row["package_type"] == "managed"),
         sum(1 for row in rows if row["package_type"] == "transitive"),
     )
