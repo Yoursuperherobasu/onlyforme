@@ -106,7 +106,7 @@ const AgentToolbar = memo(function AgentToolbar({ readOnly = false }: { readOnly
             readOnly && "pointer-events-none opacity-60",
           )}
         >
-          <div className="flex items-center gap-2">
+          <div className="flex min-w-0 items-center gap-1.5 xl:gap-2">
             <div className="flex items-center gap-1 rounded-md border bg-muted/30 p-0.5">
               <ShadTooltip content="Undo">
                 <Button
@@ -154,20 +154,22 @@ const AgentToolbar = memo(function AgentToolbar({ readOnly = false }: { readOnly
               </ShadTooltip>
             </div>
 
-            <div className="h-5 w-px bg-border" />
+            <div className="hidden h-5 w-px bg-border lg:block" />
 
             <Button
               variant="outline"
               size="sm"
+              className="gap-1.5 px-2 lg:px-3"
               onClick={() => setOpenTemplatesModal(true)}
               data-testid="navbar-templates-button"
             >
               <IconComponent name="LayoutPanelTop" className="h-4 w-4" />
-              Templates
+              <span className="hidden xl:inline">Templates</span>
             </Button>
             <Button
               variant="outline"
               size="sm"
+              className="gap-1.5 px-2 lg:px-3"
               disabled={!customComponent}
               onClick={() => {
                 if (customComponent) {
@@ -177,10 +179,10 @@ const AgentToolbar = memo(function AgentToolbar({ readOnly = false }: { readOnly
               data-testid="navbar-custom-code-button"
             >
               <IconComponent name="Plus" className="h-4 w-4" />
-              Create Custom
+              <span className="hidden xl:inline">Create Custom</span>
             </Button>
 
-            <div className="h-5 w-px bg-border" />
+            <div className="hidden h-5 w-px bg-border lg:block" />
 
             <ShadTooltip
               content={
@@ -193,6 +195,7 @@ const AgentToolbar = memo(function AgentToolbar({ readOnly = false }: { readOnly
                 <Button
                   variant="outline"
                   size="sm"
+                  className="gap-1.5 px-2 lg:px-3"
                   disabled={!changesNotSaved || isBuilding || saveLoading}
                   onClick={handleSave}
                   data-testid="navbar-save-button"
@@ -201,11 +204,15 @@ const AgentToolbar = memo(function AgentToolbar({ readOnly = false }: { readOnly
                     name={saveLoading ? "Loader2" : "Save"}
                     className={cn("h-4 w-4", saveLoading && "animate-spin")}
                   />
-                  Save
+                  <span className="hidden xl:inline">Save</span>
                 </Button>
               </div>
             </ShadTooltip>
-            <span className="text-xs text-muted-foreground" data-testid="navbar-autosave-status">
+            <span
+              className="min-w-0 max-w-[110px] truncate whitespace-nowrap text-xs text-muted-foreground sm:max-w-[160px] md:max-w-[220px]"
+              data-testid="navbar-autosave-status"
+              title={autoSaveStatus}
+            >
               {autoSaveStatus}
             </span>
           </div>

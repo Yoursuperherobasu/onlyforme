@@ -24,8 +24,8 @@ const AgentToolbarOptions = ({
   const hasIO = useAgentStore((state) => state.hasIO);
 
   return (
-    <div className="flex items-center gap-1.5">
-      <div className="flex h-full w-auto gap-1.5 rounded-sm transition-all">
+    <div className="flex items-center gap-1 xl:gap-1.5">
+      <div className="flex h-full w-auto gap-1 xl:gap-1.5 rounded-sm transition-all">
         <PlaygroundButton
           hasIO={hasIO}
           open={open}
@@ -35,13 +35,13 @@ const AgentToolbarOptions = ({
         
       </div>
       {!readOnly && (
-        <div className="flex h-full w-auto gap-1.5 rounded-sm transition-all">
+        <div className="flex h-full w-auto gap-1 xl:gap-1.5 rounded-sm transition-all">
           <PublishStatusBadge />
           <PublishVersionDropdown />
           <PublishButton />
         </div>
       )}
-      <div className="flex h-full w-full gap-1.5 rounded-sm transition-all">
+      <div className="flex h-full w-full gap-1 xl:gap-1.5 rounded-sm transition-all">
         <TeamsButton />
       </div>
       {/* <PublishDropdown

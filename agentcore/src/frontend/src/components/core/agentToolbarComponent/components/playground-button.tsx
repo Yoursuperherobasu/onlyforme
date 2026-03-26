@@ -20,7 +20,7 @@ const PlayIcon = () => (
 );
 
 const ButtonLabel = () => (
-  <span className="hidden md:block">{PLAYGROUND_BUTTON_NAME}</span>
+  <span className="hidden xl:block">{PLAYGROUND_BUTTON_NAME}</span>
 );
 
 const ActiveButton = () => (

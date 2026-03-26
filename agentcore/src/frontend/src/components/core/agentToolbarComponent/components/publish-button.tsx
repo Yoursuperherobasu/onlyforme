@@ -56,7 +56,7 @@ const PublishIcon = () => (
 );
 
 const ButtonLabel = () => (
-  <span className="hidden md:block">{PUBLISH_BUTTON_NAME}</span>
+  <span className="hidden xl:block">{PUBLISH_BUTTON_NAME}</span>
 );
 
 const ActiveButton = ({ onClick }: { onClick: () => void }) => (

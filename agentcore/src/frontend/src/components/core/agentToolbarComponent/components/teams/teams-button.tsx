@@ -26,7 +26,7 @@ const TeamsButton = () => {
         <div className="pointer-events-none">
           <div className="playground-btn-agent-toolbar cursor-not-allowed text-muted-foreground duration-150">
             <TeamsIcon />
-            <span className="hidden md:block">Teams</span>
+            <span className="hidden xl:block">Teams</span>
           </div>
         </div>
       </ShadTooltip>
@@ -39,7 +39,7 @@ const TeamsButton = () => {
         <div className="pointer-events-none">
           <div className="playground-btn-agent-toolbar cursor-not-allowed text-muted-foreground duration-150">
             <TeamsIcon />
-            <span className="hidden md:block">Teams</span>
+            <span className="hidden xl:block">Teams</span>
           </div>
         </div>
       </ShadTooltip>
@@ -55,7 +55,7 @@ const TeamsButton = () => {
           onClick={() => setOpen(true)}
         >
           <TeamsIcon />
-          <span className="hidden md:block">Teams</span>
+          <span className="hidden xl:block">Teams</span>
         </div>
       </ShadTooltip>
       <TeamsPublishModal open={open} setOpen={setOpen} />

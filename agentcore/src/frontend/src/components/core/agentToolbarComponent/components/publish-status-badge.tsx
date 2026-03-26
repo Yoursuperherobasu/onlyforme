@@ -43,7 +43,7 @@ export default function PublishStatusBadge() {
           className="flex items-center gap-1 border-amber-500 bg-amber-50 text-amber-700 hover:bg-amber-100 dark:bg-amber-950 dark:text-amber-300"
         >
           <IconComponent name="Clock3" className="h-3 w-3" />
-          <span className="text-xs">Awaiting Approval</span>
+          <span className="hidden text-xs xl:inline">Awaiting Approval</span>
         </Badge>
       </ShadTooltipComponent>
     );
@@ -57,7 +57,7 @@ export default function PublishStatusBadge() {
           className="flex items-center gap-1 border-red-500 bg-red-50 text-red-700 hover:bg-red-100 dark:bg-red-950 dark:text-red-300"
         >
           <IconComponent name="XCircle" className="h-3 w-3" />
-          <span className="text-xs">Rejected</span>
+          <span className="hidden text-xs xl:inline">Rejected</span>
         </Badge>
       </ShadTooltipComponent>
     );
@@ -71,7 +71,7 @@ export default function PublishStatusBadge() {
           className="flex items-center gap-1 border-green-500 bg-green-50 text-green-700 hover:bg-green-100 dark:bg-green-950 dark:text-green-300"
         >
           <IconComponent name="CheckCircle2" className="h-3 w-3" />
-          <span className="text-xs">Approved</span>
+          <span className="hidden text-xs xl:inline">Approved</span>
         </Badge>
       </ShadTooltipComponent>
     );
@@ -79,4 +79,3 @@ export default function PublishStatusBadge() {
 
   return null;
 }
-

@@ -33,9 +33,6 @@ const VersionSavePrompt = (): JSX.Element | null => {
   const setSuccessData = useAlertStore((state) => state.setSuccessData);
   const versionSavePrompt = useAgentsManagerStore((state) => state.versionSavePrompt);
   const clearVersionSavePrompt = useAgentsManagerStore((state) => state.clearVersionSavePrompt);
-  const setAutoSaveDisabledForAgent = useAgentsManagerStore(
-    (state) => state.setAutoSaveDisabledForAgent,
-  );
   const setActivePublishedVersion = useAgentStore(
     (state) => state.setActivePublishedVersion,
   );
@@ -127,13 +124,6 @@ const VersionSavePrompt = (): JSX.Element | null => {
     }
   };
 
-  const handleDisableAutoSave = () => {
-    if (agentId) {
-      setAutoSaveDisabledForAgent(agentId, true);
-    }
-    clearVersionSavePrompt();
-  };
-
   const isAutoPrompt = versionSavePrompt.source === "auto";
   const currentVersionLabel = versionSavePrompt.version.versionNumber;
 
@@ -148,15 +138,11 @@ const VersionSavePrompt = (): JSX.Element | null => {
           </DialogDescription>
         </DialogHeader>
         <DialogFooter className="gap-2 sm:gap-0">
-          {isAutoPrompt ? (
-            <Button variant="outline" onClick={handleDisableAutoSave} disabled={isSubmitting}>
-              Stop auto-save for this agent
-            </Button>
-          ) : (
+          {!isAutoPrompt ? (
             <Button variant="outline" onClick={handleClose} disabled={isSubmitting}>
               Cancel
             </Button>
-          )}
+          ) : null}
           <Button onClick={handleCreateVersion} disabled={isSubmitting}>
             Create {nextVersionLabel}
           </Button>
