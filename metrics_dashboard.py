@@ -188,7 +188,7 @@ KPI_PRESETS = [
         "section": "Infrastructure",
         "query": (
             "100 * avg(rate(container_cpu_usage_seconds_total"
-            '{namespace!="kube-system", container!="POD", container!=""}[5m]))'
+            '{container!="POD", container!=""}[5m]))'
         ),
         "unit": "%",
         "thresholds": {"green": 70, "yellow": 85},
@@ -199,7 +199,7 @@ KPI_PRESETS = [
         "section": "Infrastructure",
         "query": (
             "100 * avg(container_memory_working_set_bytes"
-            '{namespace!="kube-system", container!="POD", container!=""}'
+            '{container!="POD", container!=""}'
             " / on(node) group_left() machine_memory_bytes)"
         ),
         "unit": "%",
@@ -283,14 +283,14 @@ CHART_PRESETS = [
                 "label": "CPU %",
                 "query": (
                     "100 * avg(rate(container_cpu_usage_seconds_total"
-                    '{namespace!="kube-system", container!="POD", container!=""}[5m]))'
+                    '{container!="POD", container!=""}[5m]))'
                 ),
             },
             {
                 "label": "Memory %",
                 "query": (
                     "100 * avg(container_memory_working_set_bytes"
-                    '{namespace!="kube-system", container!="POD", container!=""}'
+                    '{container!="POD", container!=""}'
                     " / on(node) group_left() machine_memory_bytes)"
                 ),
             },
