@@ -417,26 +417,6 @@ class LangGraphVertex:
                 )
                 continue
 
-            # Skip if already resolved by _resolve_vertex_dependencies in nodes.py
-            # Exception: list fields (e.g. "tools") must keep processing to collect all connected sources.
-            current_value = resolved_params.get(field_name)
-            if current_value is not None and not isinstance(current_value, str) and not isinstance(current_value, list):
-                # Already populated with real data (not a string reference or accumulating list),
-                # skip to avoid duplication.
-                logger.debug(
-                    f"[_resolve_params] {self.id}.{field_name}: "
-                    f"already resolved (type={type(current_value).__name__}), skipping"
-                )
-                continue
-
-            logger.debug(
-                f"[_resolve_params] {self.id}.{field_name} ← "
-                f"{source_id}.{source_output} (type={type(result_value).__name__})"
-            )
-
-            # Check if this is a list parameter (like tools) - need to append/extend
-            current_value = resolved_params.get(field_name)
-
             # Check if input definition expects a list
             is_list_input = False
             for input_def in self.template.get('inputs', []) if isinstance(self.template, dict) else []:
@@ -449,6 +429,23 @@ class LangGraphVertex:
                 field_def = self.template.get(field_name, {})
                 if isinstance(field_def, dict):
                     is_list_input = field_def.get('list', False) or field_def.get('is_list', False)
+
+            # Skip if already resolved by _resolve_vertex_dependencies in nodes.py
+            # Exception: list fields (e.g. "tools") must keep processing to collect all connected sources.
+            current_value = resolved_params.get(field_name)
+            if current_value is not None and not isinstance(current_value, str) and not isinstance(current_value, list) and not is_list_input:
+                # Already populated with real data (not a string reference or accumulating list),
+                # skip to avoid duplication.
+                logger.debug(
+                    f"[_resolve_params] {self.id}.{field_name}: "
+                    f"already resolved (type={type(current_value).__name__}), skipping"
+                )
+                continue
+
+            logger.debug(
+                f"[_resolve_params] {self.id}.{field_name} ← "
+                f"{source_id}.{source_output} (type={type(result_value).__name__})"
+            )
 
             if isinstance(current_value, list):
                 # Append to existing list
@@ -466,10 +463,12 @@ class LangGraphVertex:
                 # Current value is a string reference or other non-list value
                 # Replace with proper value, wrapping in list if field expects a list
                 if is_list_input:
+                    # Accumulate: keep existing value and add new one
+                    existing = [current_value] if not isinstance(current_value, list) else current_value
                     if isinstance(result_value, list):
-                        resolved_params[field_name] = result_value
+                        resolved_params[field_name] = existing + result_value
                     else:
-                        resolved_params[field_name] = [result_value]
+                        resolved_params[field_name] = existing + [result_value]
                 else:
                     resolved_params[field_name] = result_value
 
