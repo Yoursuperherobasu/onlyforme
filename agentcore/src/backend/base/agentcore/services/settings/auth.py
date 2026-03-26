@@ -31,9 +31,9 @@ class AuthSettings(BaseSettings):
     AZURE_CLIENT_ID: str =str(os.getenv("AZURE_CLIENT_ID"))
     PLATFORM_ROOT_EMAIL: str | None = None
     NEW_USER_IS_ACTIVE: bool = True
-    REFRESH_SAME_SITE: Literal["lax", "strict", "none"] = "none"
+    REFRESH_SAME_SITE: Literal["lax", "strict", "none"] = "lax"
     """The SameSite attribute of the refresh token cookie."""
-    REFRESH_SECURE: bool = True
+    REFRESH_SECURE: bool = False
     """The Secure attribute of the refresh token cookie."""
     REFRESH_HTTPONLY: bool = True
     """The HttpOnly attribute of the refresh token cookie."""

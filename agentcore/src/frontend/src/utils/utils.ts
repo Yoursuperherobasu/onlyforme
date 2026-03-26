@@ -1019,18 +1019,24 @@ export const setAuthCookie = (
   tokenName: string,
   value: string,
 ) => {
+  const isHttps =
+    typeof window !== "undefined" && window.location.protocol === "https:";
+
   cookies.set(tokenName, value, {
     path: "/",
-    secure: true,
-    sameSite: "strict",
+    secure: isHttps,
+    sameSite: "lax",
   });
 };
 
 export const removeAuthCookie = (cookies: Cookies, tokenName: string) => {
+  const isHttps =
+    typeof window !== "undefined" && window.location.protocol === "https:";
+
   cookies.remove(tokenName, {
     path: "/",
-    secure: true,
-    sameSite: "strict",
+    secure: isHttps,
+    sameSite: "lax",
   });
 };
 
