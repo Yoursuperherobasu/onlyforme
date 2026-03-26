@@ -274,14 +274,16 @@ async def _orch_call_run_api(
         f"{base_url}/api/run/{agent_id}"
         f"?env={env}&version={version}&stream={str(stream).lower()}"
     )
+    logger.info(f"[ORCH] calling run API: {url} | stream={stream}")
     body: dict = {"input_value": input_value, "session_id": session_id}
     if files:
         body["files"] = files
     headers = {"X-Internal-Secret": secret, "Content-Type": "application/json"}
 
     if not stream:
-        async with httpx.AsyncClient(timeout=300) as client:
+        async with httpx.AsyncClient(timeout=300, verify=False) as client:
             resp = await client.post(url, json=body, headers=headers)
+            logger.info(f"[ORCH] run API response: status={resp.status_code}")
             resp.raise_for_status()
         payload = resp.json()
         text = _extract_text(payload)
@@ -290,13 +292,15 @@ async def _orch_call_run_api(
             for o in (payload.get("outputs") or [])
             if isinstance(o, dict)
         )
+        logger.info(f"[ORCH] run API completed | interrupted={interrupted} | response_length={len(text)}")
         return text, interrupted, []
 
     # --- Streaming: forward SSE events to event_manager, collect final text ---
     final_text = ""
     was_interrupted = False
-    async with httpx.AsyncClient(timeout=300) as client:
+    async with httpx.AsyncClient(timeout=300, verify=False) as client:
         async with client.stream("POST", url, json=body, headers=headers) as resp:
+            logger.info(f"[ORCH] stream started: status={resp.status_code}")
             resp.raise_for_status()
             async for line in resp.aiter_lines():
                 line = line.strip()
@@ -317,6 +321,7 @@ async def _orch_call_run_api(
                     final_text = _extract_text(result)
                     if isinstance(result, dict) and result.get("interrupted"):
                         was_interrupted = True
+                    logger.info(f"[ORCH] stream ended | interrupted={was_interrupted} | response_length={len(final_text)}")
                 elif etype == "error":
                     raise ValueError(edata.get("error", "Stream error from /run"))
 
