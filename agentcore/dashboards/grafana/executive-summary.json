@@ -80,6 +80,7 @@
       "datasource": { "type": "prometheus", "uid": "$datasource" },
       "fieldConfig": {
         "defaults": {
+          "noValue": "0",
           "thresholds": { "steps": [{ "color": "red", "value": null }] },
           "unit": "short"
         },
@@ -92,7 +93,7 @@
       "type": "stat",
       "targets": [
         {
-          "expr": "sum(agentcore_errors_total)",
+          "expr": "sum(agentcore_errors_total) or vector(0)",
           "legendFormat": "Errors"
         }
       ]
@@ -126,7 +127,7 @@
       "type": "timeseries",
       "targets": [
         {
-          "expr": "100 * sum(rate(agentcore_errors_total[5m])) / clamp_min(sum(rate(http_server_requests_total[5m])), 0.001)",
+          "expr": "100 * (sum(rate(agentcore_errors_total[5m])) or vector(0)) / clamp_min(sum(rate(http_server_requests_total[5m])), 0.001)",
           "legendFormat": "Error %"
         }
       ]

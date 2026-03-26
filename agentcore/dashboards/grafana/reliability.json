@@ -54,7 +54,7 @@
       "type": "stat",
       "targets": [
         {
-          "expr": "agentcore_active_sessions",
+          "expr": "sum(agentcore_active_sessions)",
           "legendFormat": "Sessions"
         }
       ]

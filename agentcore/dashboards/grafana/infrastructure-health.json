@@ -44,6 +44,7 @@
               { "color": "red", "value": 0.05 }
             ]
           },
+          "noValue": "0",
           "unit": "percentunit"
         },
         "overrides": []
@@ -105,7 +106,7 @@
       "type": "stat",
       "targets": [
         {
-          "expr": "agentcore_active_sessions",
+          "expr": "sum(agentcore_active_sessions)",
           "legendFormat": "Sessions"
         }
       ]
