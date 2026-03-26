@@ -378,6 +378,12 @@ async def generate_agent_events(
     if not inputs:
         inputs = InputValueRequest(session=str(agent_id))
 
+    # Resolve agent_name early so metrics at lines 620/633 always have a real name
+    if not agent_name:
+        async with session_scope() as _name_session:
+            _name_result = await _name_session.exec(select(Agent.name).where(Agent.id == agent_id))
+            agent_name = _name_result.first()
+
     async def build_graph_and_get_order() -> tuple[list[str], list[str], LangGraphAdapter]:
         start_time = time.perf_counter()
         components_count = 0
@@ -619,6 +625,7 @@ async def generate_agent_events(
         from agentcore.observability.metrics_registry import record_agent_run
         record_agent_run(agent_name or "unknown", "error", (time.perf_counter() - _run_start) * 1000)
         logger.error(f"Error in LangGraph execution: {e}")
+        await graph.end_all_traces(error=e)
         error_message = ErrorMessage(
             agent_id=agent_id,
             exception=e,

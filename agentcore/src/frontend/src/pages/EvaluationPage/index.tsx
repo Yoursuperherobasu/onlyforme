@@ -1488,31 +1488,31 @@ export default function EvaluationPage() {
     return (
       <div className="bg-card rounded-lg border border-border shadow-sm overflow-hidden">
         <div className="p-4 border-b border-border flex justify-between items-center bg-muted/50">
-          <h3 className="font-medium">Recent Scores</h3>
+          <h3 className="font-medium">{t("Recent Scores")}</h3>
           <div className="flex items-center gap-2">
             <Button size="sm" variant="outline" onClick={() => fetchData()}>
-              Refresh
+              {t("Refresh")}
             </Button>
             <Button
               size="sm"
               onClick={() => setIsScoreDialogOpen(true)}
               className="flex items-center gap-2"
             >
-              <Plus className="h-4 w-4" /> Add Score
+              <Plus className="h-4 w-4" /> {t("Add Score")}
             </Button>
           </div>
         </div>
         <div className="p-4 border-b border-border bg-card">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
             <Input
-              placeholder="Filter by Trace ID"
+              placeholder={t("Filter by Trace ID")}
               value={scoreFilters.trace_id}
               onChange={(e) =>
                 setScoreFilters({ ...scoreFilters, trace_id: e.target.value })
               }
             />
             <Input
-              placeholder="Filter by Metric Name"
+              placeholder={t("Filter by Metric Name")}
               value={scoreFilters.name}
               onChange={(e) =>
                 setScoreFilters({ ...scoreFilters, name: e.target.value })
@@ -1520,7 +1520,7 @@ export default function EvaluationPage() {
             />
             <div className="flex gap-2">
               <Button size="sm" onClick={() => fetchData()} className="flex-1">
-                Apply Filters
+                {t("Apply Filters")}
               </Button>
               <Button
                 size="sm"
@@ -1531,7 +1531,7 @@ export default function EvaluationPage() {
                   fetchData(cleared);
                 }}
               >
-                Clear
+                {t("Clear")}
               </Button>
             </div>
           </div>
@@ -1540,13 +1540,13 @@ export default function EvaluationPage() {
           <table className="w-full text-sm text-left">
             <thead className="text-xs text-foreground uppercase bg-muted">
               <tr>
-                <th className="px-6 py-3">Timestamp</th>
-                <th className="px-6 py-3">Trace ID</th>
-                <th className="px-6 py-3">Agent Name</th>
-                <th className="px-6 py-3">Metric</th>
-                <th className="px-6 py-3">Evaluation Score</th>
-                <th className="px-6 py-3">Source</th>
-                <th className="px-6 py-3">Comment</th>
+                <th className="px-6 py-3">{t("Timestamp")}</th>
+                <th className="px-6 py-3">{t("Trace ID")}</th>
+                <th className="px-6 py-3">{t("Agent Name")}</th>
+                <th className="px-6 py-3">{t("Metric")}</th>
+                <th className="px-6 py-3">{t("Evaluation Score")}</th>
+                <th className="px-6 py-3">{t("Source")}</th>
+                <th className="px-6 py-3">{t("Comment")}</th>
               </tr>
             </thead>
             <tbody>
@@ -1611,7 +1611,7 @@ export default function EvaluationPage() {
                     colSpan={7}
                     className="px-6 py-8 text-center text-muted-foreground"
                   >
-                    No evaluation scores found.
+                    {t("No evaluation scores found.")}
                   </td>
                 </tr>
               )}
@@ -1648,7 +1648,7 @@ export default function EvaluationPage() {
       <div className="flex flex-col gap-6">
         <div className="rounded-lg border border-border bg-card p-4">
           <div className="flex items-center justify-between mb-4">
-            <h3 className="font-medium">Dataset Management</h3>
+            <h3 className="font-medium">{t("Dataset Management")}</h3>
             <div className="flex items-center gap-2">
                 {selectedDatasetName && canManageSelectedDataset ? (
                   <Button
@@ -1656,7 +1656,7 @@ export default function EvaluationPage() {
                     variant="outline"
                     onClick={handleDeleteDataset}
                   >
-                    Delete Dataset
+                    {t("Delete Dataset")}
                   </Button>
                 ) : null}
               <Button
@@ -1665,7 +1665,7 @@ export default function EvaluationPage() {
                 onClick={() => fetchDatasets(true)}
                 disabled={datasetsLoading}
               >
-                {datasetsLoading ? "Refreshing..." : "Refresh"}
+                {datasetsLoading ? t("Refreshing...") : t("Refresh")}
               </Button>
               <Button
                 size="sm"
@@ -1678,13 +1678,13 @@ export default function EvaluationPage() {
                 }}
                 disabled={!selectedDatasetName}
               >
-                Clear Selection
+                {t("Clear Selection")}
               </Button>
             </div>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
             <div className="space-y-2">
-              <label className="text-sm font-medium">Select Dataset</label>
+              <label className="text-sm font-medium">{t("Select Dataset")}</label>
               <Select
                 value={selectedDatasetName || "__none__"}
                 onValueChange={(value) => {
@@ -1698,10 +1698,10 @@ export default function EvaluationPage() {
                 }}
               >
                 <SelectTrigger>
-                  <SelectValue placeholder="Choose dataset" />
+                  <SelectValue placeholder={t("Choose dataset")} />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="__none__">None (unselected)</SelectItem>
+                  <SelectItem value="__none__">{t("None (unselected)")}</SelectItem>
                   {datasets.map((dataset) => (
                     <SelectItem key={dataset.id || dataset.name} value={dataset.name}>
                       {dataset.name}
@@ -1711,9 +1711,9 @@ export default function EvaluationPage() {
               </Select>
             </div>
             <div className="space-y-2">
-              <label className="text-sm font-medium">New Dataset Name</label>
+              <label className="text-sm font-medium">{t("New Dataset Name")}</label>
               <Input
-                placeholder="e.g. support-faq-v1"
+                placeholder={t("e.g. support-faq-v1")}
                 value={datasetForm.name}
                 onChange={(e) =>
                   setDatasetForm({ ...datasetForm, name: e.target.value })
@@ -1721,9 +1721,9 @@ export default function EvaluationPage() {
               />
             </div>
             <div className="space-y-2">
-              <label className="text-sm font-medium">Description</label>
+              <label className="text-sm font-medium">{t("Description")}</label>
               <Input
-                placeholder="Optional description"
+                placeholder={t("Optional description")}
                 value={datasetForm.description}
                 onChange={(e) =>
                   setDatasetForm({
@@ -1734,7 +1734,7 @@ export default function EvaluationPage() {
               />
             </div>
             <div className="space-y-2">
-              <label className="text-sm font-medium">Visibility Scope</label>
+              <label className="text-sm font-medium">{t("Visibility Scope")}</label>
               <select
                 value={datasetVisibilityScope}
                 onChange={(e) =>
@@ -1744,14 +1744,14 @@ export default function EvaluationPage() {
                 }
                 className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
               >
-                <option value="private">Private</option>
-                <option value="department">Department</option>
-                <option value="organization">Organization</option>
+                <option value="private">{t("Private")}</option>
+                <option value="department">{t("Department")}</option>
+                <option value="organization">{t("Organization")}</option>
               </select>
             </div>
             {datasetVisibilityScope === "organization" && (
                 <div className="space-y-2">
-                  <label className="text-sm font-medium">Organization</label>
+                  <label className="text-sm font-medium">{t("Organization")}</label>
                   <select
                     value={datasetForm.org_id}
                     onChange={(e) =>
@@ -1760,7 +1760,7 @@ export default function EvaluationPage() {
                     disabled={isMembershipLockedRole}
                     className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm disabled:opacity-80"
                   >
-                    <option value="">Select organization...</option>
+                    <option value="">{t("Select organization...")}</option>
                     {visibilityOptions.organizations.map((org) => (
                       <option key={org.id} value={org.id}>{org.name}</option>
                     ))}
@@ -1771,7 +1771,7 @@ export default function EvaluationPage() {
                 <>
                   {canMultiDept && (
                     <div className="space-y-2">
-                      <label className="text-sm font-medium">Organization</label>
+                      <label className="text-sm font-medium">{t("Organization")}</label>
                       <select
                         value={datasetForm.org_id}
                         onChange={(e) =>
@@ -1779,7 +1779,7 @@ export default function EvaluationPage() {
                         }
                         className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
                       >
-                        <option value="">Select organization...</option>
+                        <option value="">{t("Select organization...")}</option>
                         {visibilityOptions.organizations.map((org) => (
                           <option key={org.id} value={org.id}>{org.name}</option>
                         ))}
@@ -1787,7 +1787,9 @@ export default function EvaluationPage() {
                     </div>
                   )}
                   <div className="space-y-2">
-                    <label className="text-sm font-medium">Department{canMultiDept ? "s" : ""}</label>
+                    <label className="text-sm font-medium">
+                      {canMultiDept ? t("Departments") : t("Department")}
+                    </label>
                     {canMultiDept ? (
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
@@ -1835,14 +1837,14 @@ export default function EvaluationPage() {
           </div>
           <div className="mt-4">
             <Button size="sm" onClick={handleCreateDataset}>
-              <Plus className="h-4 w-4 mr-1" /> Create Dataset
+              <Plus className="h-4 w-4 mr-1" /> {t("Create Dataset")}
             </Button>
           </div>
         </div>
 
         <div className="rounded-lg border border-border bg-card overflow-hidden">
           <div className="p-4 border-b border-border flex items-center justify-between">
-            <h3 className="font-medium">Dataset List</h3>
+            <h3 className="font-medium">{t("Dataset List")}</h3>
             <span className="text-xs text-muted-foreground">
               {datasets.length} dataset{datasets.length === 1 ? "" : "s"}
             </span>
@@ -1851,14 +1853,14 @@ export default function EvaluationPage() {
             <table className="w-full text-sm text-left">
               <thead className="text-xs text-foreground uppercase bg-muted">
                 <tr>
-                  <th className="px-4 py-3">Name</th>
-                  <th className="px-4 py-3">Description</th>
-                  <th className="px-4 py-3">Visibility</th>
-                  {isDepartmentAdmin && <th className="px-4 py-3">Created By</th>}
-                  {isSuperAdmin && <th className="px-4 py-3">Department Scope</th>}
-                  <th className="px-4 py-3">Items</th>
-                  <th className="px-4 py-3">Updated</th>
-                  <th className="px-4 py-3 text-center">Actions</th>
+                  <th className="px-4 py-3">{t("Name")}</th>
+                  <th className="px-4 py-3">{t("Description")}</th>
+                  <th className="px-4 py-3">{t("Visibility")}</th>
+                  {isDepartmentAdmin && <th className="px-4 py-3">{t("Created By")}</th>}
+                  {isSuperAdmin && <th className="px-4 py-3">{t("Department Scope")}</th>}
+                  <th className="px-4 py-3">{t("Items")}</th>
+                  <th className="px-4 py-3">{t("Updated")}</th>
+                  <th className="px-4 py-3 text-center">{t("Actions")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -1961,7 +1963,7 @@ export default function EvaluationPage() {
 
         <div className="rounded-lg border border-border bg-card overflow-hidden">
           <div className="p-4 border-b border-border flex items-center justify-between">
-            <h3 className="font-medium">Run Experiment</h3>
+            <h3 className="font-medium">{t("Run Experiment")}</h3>
             <Button
               size="sm"
               variant="outline"
@@ -1973,9 +1975,9 @@ export default function EvaluationPage() {
           </div>
           <div className="p-4 border-b border-border grid grid-cols-1 md:grid-cols-3 gap-3">
             <div className="space-y-2">
-              <label className="text-sm font-medium">Experiment Name</label>
+              <label className="text-sm font-medium">{t("Experiment Name")}</label>
               <Input
-                placeholder="e.g. Agent v2 Regression"
+                placeholder={t("e.g. Agent v2 Regression")}
                 value={datasetExperimentForm.experiment_name}
                 onChange={(e) =>
                   setDatasetExperimentForm({
@@ -1986,7 +1988,7 @@ export default function EvaluationPage() {
               />
             </div>
             <div className="space-y-2">
-              <label className="text-sm font-medium">Agent</label>
+              <label className="text-sm font-medium">{t("Agent")}</label>
               <Select
                 value={datasetExperimentForm.agent_id || "__none__"}
                 onValueChange={(value) => {
@@ -2007,7 +2009,7 @@ export default function EvaluationPage() {
                 }}
               >
                 <SelectTrigger>
-                  <SelectValue placeholder="Choose agent (optional)" />
+                  <SelectValue placeholder={t("Choose agent (optional)")} />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="__none__">
@@ -2038,7 +2040,7 @@ export default function EvaluationPage() {
                   }}
                 >
                   <SelectTrigger>
-                    <SelectValue placeholder="Select from registry" />
+                    <SelectValue placeholder={t("Select from registry")} />
                   </SelectTrigger>
                   <SelectContent>
                     {registryModels.map((m) => (
@@ -2050,13 +2052,13 @@ export default function EvaluationPage() {
                 </Select>
                 {registryModels.length === 0 && (
                   <p className="text-xs text-amber-600">
-                    No models available. Add models in the Model Registry first.
+                    {t("No models available. Add models in the Model Registry first.")}
                   </p>
                 )}
               </div>
             ) : null}
             <div className="space-y-2">
-              <label className="text-sm font-medium">Use Saved Evaluator</label>
+              <label className="text-sm font-medium">{t("Use Saved Evaluator")}</label>
               <Select
                 value={datasetExperimentForm.evaluator_config_id || "__none__"}
                 onValueChange={(value) =>
@@ -2067,10 +2069,10 @@ export default function EvaluationPage() {
                 }
               >
                 <SelectTrigger>
-                  <SelectValue placeholder="Optional evaluator" />
+                  <SelectValue placeholder={t("Optional evaluator")} />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="__none__">None</SelectItem>
+                  <SelectItem value="__none__">{t("None")}</SelectItem>
                   {savedEvaluators.map((ev) => (
                     <SelectItem key={ev.id} value={ev.id}>
                       {ev.name}
@@ -2081,7 +2083,7 @@ export default function EvaluationPage() {
             </div>
             <div className="space-y-2">
               <label className="text-sm font-medium">
-                Evaluator Template (Preset)
+                {t("Evaluator Template (Preset)")}
               </label>
               <Select
                 value={datasetExperimentForm.preset_id || "__none__"}
@@ -2117,29 +2119,28 @@ export default function EvaluationPage() {
                 }}
               >
                 <SelectTrigger>
-                  <SelectValue placeholder="Choose preset template" />
+                  <SelectValue placeholder={t("Choose preset template")} />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="__none__">None</SelectItem>
+                  <SelectItem value="__none__">{t("None")}</SelectItem>
                   {presets.map((preset) => (
                     <SelectItem key={preset.id} value={preset.id}>
                       {preset.name}
                     </SelectItem>
                   ))}
-                  <SelectItem value="__custom__">+ Custom Preset</SelectItem>
+                  <SelectItem value="__custom__">{t("+ Custom Preset")}</SelectItem>
                 </SelectContent>
               </Select>
               {selectedDatasetPreset?.requires_ground_truth ? (
                 <p className="text-xs text-amber-600">
-                  This preset requires ground truth in dataset item expected
-                  outputs.
+                  {t("This preset requires ground truth in dataset item expected outputs.")}
                 </p>
               ) : null}
             </div>
             <div className="space-y-2">
-              <label className="text-sm font-medium">Evaluator Name</label>
+              <label className="text-sm font-medium">{t("Evaluator Name")}</label>
               <Input
-                placeholder="e.g. correctness"
+                placeholder={t("e.g. correctness")}
                 value={datasetExperimentForm.evaluator_name}
                 onChange={(e) =>
                   setDatasetExperimentForm({
@@ -2151,7 +2152,7 @@ export default function EvaluationPage() {
             </div>
             <div className="space-y-2">
               <label className="text-sm font-medium">
-                Judge Model (Optional)
+                {t("Judge Model (Optional)")}
               </label>
               <Select
                 value={datasetExperimentForm.judge_model_registry_id || ""}
@@ -2165,7 +2166,7 @@ export default function EvaluationPage() {
                 }}
               >
                 <SelectTrigger>
-                  <SelectValue placeholder="Select from registry" />
+                  <SelectValue placeholder={t("Select from registry")} />
                 </SelectTrigger>
                 <SelectContent>
                   {registryModels.map((m) => (
@@ -2178,11 +2179,11 @@ export default function EvaluationPage() {
             </div>
             <div className="space-y-2 md:col-span-2">
               <label className="text-sm font-medium">
-                Evaluation Criteria Prompt
+                {t("Evaluation Criteria Prompt")}
               </label>
               <textarea
                 className="flex min-h-[88px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                placeholder="Prompt used by the evaluator"
+                placeholder={t("Prompt used by the evaluator")}
                 value={datasetExperimentForm.criteria}
                 onChange={(e) =>
                   setDatasetExperimentForm({
@@ -2192,17 +2193,17 @@ export default function EvaluationPage() {
                 }
               />
               <p className="text-xs text-muted-foreground">
-                Keep placeholders in prompt: <code>{"{{query}}"}</code>,{" "}
+                {t("Keep placeholders in prompt:")} <code>{"{{query}}"}</code>,{" "}
                 <code>{"{{generation}}"}</code>,{" "}
                 <code>{"{{ground_truth}}"}</code>.
               </p>
             </div>
             <div className="space-y-2 md:col-span-3">
               <label className="text-sm font-medium">
-                Description (Optional)
+                {t("Description (Optional)")}
               </label>
               <Input
-                placeholder="Experiment notes"
+                placeholder={t("Experiment notes")}
                 value={datasetExperimentForm.description}
                 onChange={(e) =>
                   setDatasetExperimentForm({
@@ -2218,16 +2219,16 @@ export default function EvaluationPage() {
                 onClick={handleRunDatasetExperiment}
                 disabled={!selectedDatasetName}
               >
-                <Play className="h-4 w-4 mr-1" /> Run Experiment
+                <Play className="h-4 w-4 mr-1" /> {t("Run Experiment")}
               </Button>
             </div>
           </div>
           {datasetExperimentJob && (
             <div className="p-4 border-b border-border text-sm">
-              <span className="font-medium">Latest Job:</span>{" "}
+              <span className="font-medium">{t("Latest Job:")}</span>{" "}
               <span className="font-mono">{datasetExperimentJob.job_id}</span>{" "}
               <span className="ml-2">
-                Status: {datasetExperimentJob.status}
+                {t("Status")}: {datasetExperimentJob.status}
               </span>
               {datasetExperimentJob.status === "queued" ||
               datasetExperimentJob.status === "running" ? (
@@ -2236,14 +2237,17 @@ export default function EvaluationPage() {
                     <div className="h-full w-1/3 bg-[#da2128] animate-pulse" />
                   </div>
                   <div className="mt-1 text-xs text-muted-foreground">
-                    Experiment "{datasetExperimentJob.experiment_name}" is
-                    running in background.
+                    {t('Experiment "{{name}}" is running in background.', {
+                      name: datasetExperimentJob.experiment_name,
+                    })}
                   </div>
                 </div>
               ) : null}
               {datasetExperimentJob.status === "completed" ? (
                 <div className="mt-2 text-xs text-green-700 dark:text-green-400">
-                  Experiment "{datasetExperimentJob.experiment_name}" completed.
+                  {t('Experiment "{{name}}" completed.', {
+                    name: datasetExperimentJob.experiment_name,
+                  })}
                 </div>
               ) : null}
               {datasetExperimentJob.error ? (
@@ -2257,11 +2261,11 @@ export default function EvaluationPage() {
             <table className="w-full text-sm text-left">
               <thead className="text-xs text-foreground uppercase bg-muted">
                 <tr>
-                  <th className="px-4 py-3">Timestamp</th>
-                  <th className="px-4 py-3">Run ID</th>
-                  <th className="px-4 py-3">Run Name</th>
-                  <th className="px-4 py-3">Description</th>
-                  <th className="px-4 py-3">Action</th>
+                  <th className="px-4 py-3">{t("Timestamp")}</th>
+                  <th className="px-4 py-3">{t("Run ID")}</th>
+                  <th className="px-4 py-3">{t("Run Name")}</th>
+                  <th className="px-4 py-3">{t("Description")}</th>
+                  <th className="px-4 py-3">{t("Action")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -2278,7 +2282,7 @@ export default function EvaluationPage() {
                     </td>
                     <td
                       className="px-4 py-3 font-mono text-xs text-blue-600 dark:text-blue-400"
-                      title="Click to view run details"
+                      title={t("Click to view run details")}
                     >
                       {run.id}
                     </td>
@@ -2299,7 +2303,7 @@ export default function EvaluationPage() {
                             handleOpenRunDetail(run);
                           }}
                         >
-                          View
+                          {t("View")}
                         </Button>
                           {canManageSelectedDataset && (
                             <Button
@@ -2310,7 +2314,7 @@ export default function EvaluationPage() {
                                 handleDeleteDatasetRun(run);
                               }}
                             >
-                              Delete
+                              {t("Delete")}
                             </Button>
                           )}
                       </div>
@@ -2323,7 +2327,7 @@ export default function EvaluationPage() {
                       colSpan={5}
                       className="px-4 py-6 text-center text-muted-foreground"
                     >
-                      No experiment runs found.
+                      {t("No experiment runs found.")}
                     </td>
                   </tr>
                 )}
@@ -2339,9 +2343,9 @@ export default function EvaluationPage() {
     <div className="flex h-full w-full flex-col overflow-hidden bg-background">
       <div className="flex flex-none items-center justify-between border-b px-6 py-4">
         <div className="flex flex-col gap-1">
-          <h2 className="text-2xl font-semibold tracking-tight">Evaluation</h2>
+          <h2 className="text-2xl font-semibold tracking-tight">{t("Evaluation")}</h2>
           <p className="text-sm text-muted-foreground">
-            Monitor quality metrics, run LLM judges, and review traces.
+            {t("Monitor quality metrics, run LLM judges, and review traces.")}
           </p>
         </div>
         {/* Environment Toggle */}
@@ -2373,7 +2377,7 @@ export default function EvaluationPage() {
               }`}
               onClick={() => setActiveTab("judges")}
             >
-              LLM Judges
+              {t("LLM Judges")}
             </button>
             <button
               className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
@@ -2383,7 +2387,7 @@ export default function EvaluationPage() {
               }`}
               onClick={() => setActiveTab("datasets")}
             >
-              Datasets
+              {t("Datasets")}
             </button>
             <button
               className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
@@ -2393,7 +2397,7 @@ export default function EvaluationPage() {
               }`}
               onClick={() => setActiveTab("scores")}
             >
-              Scores
+              {t("Scores")}
             </button>
           </div>
 
@@ -2407,7 +2411,7 @@ export default function EvaluationPage() {
                       className="animate-spin rounded-full h-8 w-8 border-2 border-border"
                       style={{ borderTopColor: "#da2128" }}
                     />
-                    <p className="text-sm text-muted-foreground">Loading scores…</p>
+                    <p className="text-sm text-muted-foreground">{t("Loading scores...")}</p>
                   </div>
                 ) : renderScoresList()
               )}
@@ -2415,22 +2419,19 @@ export default function EvaluationPage() {
                   <div className="flex flex-col gap-6">
                     <div className="p-8 text-center bg-card rounded-lg border border-border">
                       <h3 className="text-lg font-medium mb-2">
-                        LLM Judges Configuration
+                        {t("LLM Judges Configuration")}
                       </h3>
                       <p className="text-muted-foreground mb-6">
-                        Configure automated evaluators to grade your traces
-                        based on custom criteria.
+                        {t("Configure automated evaluators to grade your traces based on custom criteria.")}
                       </p>
                       {status && !status.langfuse_available && (
                         <p className="text-sm text-red-600 dark:text-red-400 mb-4">
-                          Langfuse is not configured. Please set LANGFUSE_*
-                          environment variables.
+                          {t("Langfuse is not configured. Please set LANGFUSE_* environment variables.")}
                         </p>
                       )}
                       {status && !status.llm_judge_available && (
                         <p className="text-sm text-amber-600 dark:text-amber-400 mb-4">
-                          LLM Judge is unavailable. Please install LiteLLM in
-                          the backend.
+                          {t("LLM Judge is unavailable. Please install LiteLLM in the backend.")}
                         </p>
                       )}
                       <button
@@ -2442,14 +2443,14 @@ export default function EvaluationPage() {
                         className="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700 transition-colors flex items-center gap-2 mx-auto"
                       >
                         <Play className="h-4 w-4" />
-                        Create New Judge
+                        {t("Create New Judge")}
                       </button>
                     </div>
 
                     {/* Saved Evaluators List */}
                     <div className="bg-card rounded-lg border border-border shadow-sm overflow-hidden">
                       <div className="p-4 border-b border-border flex justify-between items-center bg-muted/50">
-                        <h3 className="font-medium">Saved Evaluators</h3>
+                        <h3 className="font-medium">{t("Saved Evaluators")}</h3>
                         <div className="flex items-center gap-2">
                           <Button
                             size="sm"
@@ -2472,23 +2473,23 @@ export default function EvaluationPage() {
                               } catch {}
                             }}
                           >
-                            Refresh
+                            {t("Refresh")}
                           </Button>
                         </div>
                       </div>
                       <div className="overflow-x-auto p-4">
                         {savedEvaluators.length === 0 ? (
                           <div className="text-sm text-muted-foreground">
-                            No saved evaluators.
+                            {t("No saved evaluators.")}
                           </div>
                         ) : (
                           <table className="w-full text-sm text-left">
                             <thead className="text-xs text-foreground uppercase bg-muted">
                               <tr>
-                                <th className="px-4 py-2">Name</th>
-                                <th className="px-4 py-2">Model</th>
-                                <th className="px-4 py-2">Criteria</th>
-                                <th className="px-4 py-2">Action</th>
+                                <th className="px-4 py-2">{t("Name")}</th>
+                                <th className="px-4 py-2">{t("Model")}</th>
+                                <th className="px-4 py-2">{t("Criteria")}</th>
+                                <th className="px-4 py-2">{t("Action")}</th>
                               </tr>
                             </thead>
                             <tbody>
@@ -2566,15 +2567,15 @@ export default function EvaluationPage() {
       <Dialog open={isJudgeDialogOpen} onOpenChange={(open) => { setIsJudgeDialogOpen(open); if (!open) resetForms(); }}>
         <DialogContent className="max-w-2xl w-full max-h-[85vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>Run LLM Judge</DialogTitle>
+            <DialogTitle>{t("Run LLM Judge")}</DialogTitle>
             <DialogDescription>
-              Evaluate a specific trace using an LLM based on your criteria.
+              {t("Evaluate a specific trace using an LLM based on your criteria.")}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
             <div className="space-y-2">
               <p className="text-sm text-muted-foreground">
-                Choose where the evaluator should run.
+                {t("Choose where the evaluator should run.")}
               </p>
             </div>
             <div className="space-y-2">
@@ -2583,7 +2584,7 @@ export default function EvaluationPage() {
                   checked={runOnNew}
                   onCheckedChange={(checked) => setRunOnNew(checked === true)}
                 />
-                <span className="text-sm">Run on New Traces</span>
+                <span className="text-sm">{t("Run on New Traces")}</span>
               </label>
               <label className="flex items-center gap-2">
                 <Checkbox
@@ -2592,13 +2593,13 @@ export default function EvaluationPage() {
                     setRunOnExisting(checked === true)
                   }
                 />
-                <span className="text-sm">Run on Existing Traces</span>
+                <span className="text-sm">{t("Run on Existing Traces")}</span>
               </label>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <div className="space-y-2">
-                <label className="text-sm font-medium">Use a Preset</label>
+                <label className="text-sm font-medium">{t("Use a Preset")}</label>
                 <Select
                   value={judgeForm.preset_id}
                   onValueChange={(val) => {
@@ -2624,7 +2625,7 @@ export default function EvaluationPage() {
                   }}
                 >
                   <SelectTrigger>
-                    <SelectValue placeholder="Choose a preset" />
+                    <SelectValue placeholder={t("Choose a preset")} />
                   </SelectTrigger>
                   <SelectContent>
                     {presets.map((p) => (
@@ -2632,18 +2633,18 @@ export default function EvaluationPage() {
                         {p.name}
                       </SelectItem>
                     ))}
-                    <SelectItem value="__custom__">+ Custom Preset</SelectItem>
+                    <SelectItem value="__custom__">{t("+ Custom Preset")}</SelectItem>
                   </SelectContent>
                 </Select>
                 {selectedPreset?.requires_ground_truth && (
                   <p className="text-xs text-amber-600">
-                    This preset requires ground truth.
+                    {t("This preset requires ground truth.")}
                   </p>
                 )}
               </div>
 
               <div className="space-y-2">
-                <label className="text-sm font-medium">Agents</label>
+                <label className="text-sm font-medium">{t("Agents")}</label>
                 <div className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm max-h-44 overflow-y-auto">
                   {agentList && agentList.length > 0 ? (
                     agentList.map((f: any) => {
@@ -2686,18 +2687,18 @@ export default function EvaluationPage() {
                     })
                   ) : (
                     <div className="text-sm text-muted-foreground py-2">
-                      No agents available
+                      {t("No agents available")}
                     </div>
                   )}
                 </div>
                 <p className="text-xs text-muted-foreground">
-                  Select one or more agents (agents) to target.
+                  {t("Select one or more agents (agents) to target.")}
                 </p>
               </div>
             </div>
 
             <div className="space-y-2">
-              <label className="text-sm font-medium">Judge Model</label>
+              <label className="text-sm font-medium">{t("Judge Model")}</label>
               <Select
                 value={judgeForm.model_registry_id || ""}
                 onValueChange={(val) => {
@@ -2710,7 +2711,7 @@ export default function EvaluationPage() {
                 }}
               >
                 <SelectTrigger>
-                  <SelectValue placeholder="Select a model from registry" />
+                  <SelectValue placeholder={t("Select a model from registry")} />
                 </SelectTrigger>
                 <SelectContent>
                   {registryModels.map((m) => (
@@ -2722,19 +2723,19 @@ export default function EvaluationPage() {
               </Select>
               {registryModels.length === 0 && (
                 <p className="text-xs text-amber-600">
-                  No models available. Add models in the Model Registry first.
+                  {t("No models available. Add models in the Model Registry first.")}
                 </p>
               )}
               <p className="text-xs text-muted-foreground">
-                Model and API key are resolved from the registry.
+                {t("Model and API key are resolved from the registry.")}
               </p>
             </div>
 
             {judgeForm.preset_id === "__custom__" && (
               <div className="space-y-2">
-                <label className="text-sm font-medium">Evaluator Name</label>
+                <label className="text-sm font-medium">{t("Evaluator Name")}</label>
                 <Input
-                  placeholder="e.g. My Custom Evaluator"
+                  placeholder={t("e.g. My Custom Evaluator")}
                   value={judgeForm.name}
                   onChange={(e) =>
                     setJudgeForm({ ...judgeForm, name: e.target.value })
@@ -2744,10 +2745,10 @@ export default function EvaluationPage() {
             )}
 
             <div className="space-y-2">
-              <label className="text-sm font-medium">Evaluation Criteria</label>
+              <label className="text-sm font-medium">{t("Evaluation Criteria")}</label>
               <textarea
                 className="flex min-h-[80px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
-                placeholder="e.g. Is the answer helpful and accurate?"
+                placeholder={t("e.g. Is the answer helpful and accurate?")}
                 value={judgeForm.criteria}
                 onChange={(e) =>
                   setJudgeForm({ ...judgeForm, criteria: e.target.value })
@@ -2757,10 +2758,10 @@ export default function EvaluationPage() {
 
             {requiresGroundTruth && (
               <div className="space-y-2">
-                <label className="text-sm font-medium">Ground Truth</label>
+                <label className="text-sm font-medium">{t("Ground Truth")}</label>
                 <textarea
                   className="flex min-h-[80px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-                  placeholder="Provide expected answer/output used as reference for evaluation."
+                  placeholder={t("Provide expected answer/output used as reference for evaluation.")}
                   value={groundTruth}
                   onChange={(e) => setGroundTruth(e.target.value)}
                 />
@@ -2769,7 +2770,7 @@ export default function EvaluationPage() {
 
             <div className="flex gap-2">
               <Button variant="outline" onClick={handleSaveEvaluator}>
-                Save Evaluator
+                {t("Save Evaluator")}
               </Button>
             </div>
           </div>
@@ -2781,10 +2782,10 @@ export default function EvaluationPage() {
                 setIsJudgeDialogOpen(false);
               }}
             >
-              Cancel
+              {t("Cancel")}
             </Button>
             <Button onClick={handleRunJudge} disabled={isSubmitting}>
-              {isSubmitting ? "Starting..." : "Run Evaluation"}
+              {isSubmitting ? t("Starting...") : t("Run Evaluation")}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -2934,7 +2935,7 @@ export default function EvaluationPage() {
                       {t("Source Trace ID (Optional)")}
                     </label>
                     <Input
-                      placeholder="Trace ID reference"
+                      placeholder={t("Trace ID reference")}
                       value={datasetItemForm.source_trace_id}
                       onChange={(e) =>
                         setDatasetItemForm({
@@ -2960,14 +2961,14 @@ export default function EvaluationPage() {
                   <table className="w-full text-sm text-left">
                     <thead className="text-xs text-foreground uppercase bg-muted">
                       <tr>
-                        <th className="px-4 py-3">Timestamp</th>
-                        <th className="px-4 py-3">Item ID</th>
-                        <th className="px-4 py-3">Trace ID</th>
-                        <th className="px-4 py-3">Input</th>
-                        <th className="px-4 py-3">Expected Output</th>
-                        <th className="px-4 py-3">Metadata</th>
-                        <th className="px-4 py-3">Status</th>
-                        <th className="px-4 py-3">Action</th>
+                        <th className="px-4 py-3">{t("Timestamp")}</th>
+                        <th className="px-4 py-3">{t("Item ID")}</th>
+                        <th className="px-4 py-3">{t("Trace ID")}</th>
+                        <th className="px-4 py-3">{t("Input")}</th>
+                        <th className="px-4 py-3">{t("Expected Output")}</th>
+                        <th className="px-4 py-3">{t("Metadata")}</th>
+                        <th className="px-4 py-3">{t("Status")}</th>
+                        <th className="px-4 py-3">{t("Action")}</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -3062,9 +3063,9 @@ export default function EvaluationPage() {
       >
         <DialogContent className="max-w-5xl w-full">
           <DialogHeader>
-            <DialogTitle>Dataset Run Details</DialogTitle>
+            <DialogTitle>{t("Dataset Run Details")}</DialogTitle>
             <DialogDescription>
-              Inspect traces and scores generated for this experiment run.
+              {t("Inspect traces and scores generated for this experiment run.")}
             </DialogDescription>
           </DialogHeader>
           {runDetailLoading ? (
@@ -3073,23 +3074,23 @@ export default function EvaluationPage() {
                 className="animate-spin rounded-full h-8 w-8 border-2 border-border"
                 style={{ borderTopColor: "#da2128" }}
               />
-              <p className="text-sm text-muted-foreground">Loading run details…</p>
+              <p className="text-sm text-muted-foreground">{t("Loading run details...")}</p>
             </div>
           ) : selectedRunDetail ? (
             <div className="space-y-4 py-2">
               <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
                 <div className="rounded border p-3">
-                  <div className="text-xs text-muted-foreground">Run ID</div>
+                  <div className="text-xs text-muted-foreground">{t("Run ID")}</div>
                   <div className="font-mono break-all">
                     {selectedRunDetail.run.id}
                   </div>
                 </div>
                 <div className="rounded border p-3">
-                  <div className="text-xs text-muted-foreground">Run Name</div>
+                  <div className="text-xs text-muted-foreground">{t("Run Name")}</div>
                   <div>{selectedRunDetail.run.name}</div>
                 </div>
                 <div className="rounded border p-3">
-                  <div className="text-xs text-muted-foreground">Items</div>
+                  <div className="text-xs text-muted-foreground">{t("Items")}</div>
                   <div>{selectedRunDetail.item_count}</div>
                 </div>
               </div>
@@ -3098,12 +3099,12 @@ export default function EvaluationPage() {
                 <table className="w-full text-sm text-left">
                   <thead className="text-xs text-foreground uppercase bg-muted">
                     <tr>
-                      <th className="px-4 py-3">Run Item ID</th>
-                      <th className="px-4 py-3">Trace ID</th>
-                      <th className="px-4 py-3">Trace Name</th>
-                      <th className="px-4 py-3">Input</th>
-                      <th className="px-4 py-3">Output</th>
-                      <th className="px-4 py-3">Scores</th>
+                      <th className="px-4 py-3">{t("Run Item ID")}</th>
+                      <th className="px-4 py-3">{t("Trace ID")}</th>
+                      <th className="px-4 py-3">{t("Trace Name")}</th>
+                      <th className="px-4 py-3">{t("Input")}</th>
+                      <th className="px-4 py-3">{t("Output")}</th>
+                      <th className="px-4 py-3">{t("Scores")}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -3150,13 +3151,13 @@ export default function EvaluationPage() {
                               ))}
                               {item.scores.length > 4 ? (
                                 <div className="text-xs text-muted-foreground">
-                                  +{item.scores.length - 4} more
+                                  {t("+{{count}} more", { count: item.scores.length - 4 })}
                                 </div>
                               ) : null}
                             </div>
                           ) : (
                             <span className="text-xs text-muted-foreground">
-                              No scores
+                              {t("No scores")}
                             </span>
                           )}
                         </td>
@@ -3168,7 +3169,7 @@ export default function EvaluationPage() {
                           colSpan={6}
                           className="px-4 py-6 text-center text-muted-foreground"
                         >
-                          No run items found.
+                          {t("No run items found.")}
                         </td>
                       </tr>
                     )}
@@ -3178,12 +3179,12 @@ export default function EvaluationPage() {
             </div>
           ) : (
             <div className="py-8 text-center text-sm text-muted-foreground">
-              No run details available.
+              {t("No run details available.")}
             </div>
           )}
           <DialogFooter>
             <Button variant="outline" onClick={() => setIsRunDetailOpen(false)}>
-              Close
+              {t("Close")}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -3193,14 +3194,14 @@ export default function EvaluationPage() {
       <Dialog open={isScoreDialogOpen} onOpenChange={(open) => { setIsScoreDialogOpen(open); if (!open) resetForms(); }}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Add Manual Score</DialogTitle>
-            <DialogDescription>Manually evaluate a trace.</DialogDescription>
+            <DialogTitle>{t("Add Manual Score")}</DialogTitle>
+            <DialogDescription>{t("Manually evaluate a trace.")}</DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
             <div className="space-y-2">
-              <label className="text-sm font-medium">Trace ID</label>
+              <label className="text-sm font-medium">{t("Trace ID")}</label>
               <Input
-                placeholder="Trace ID"
+                placeholder={t("Trace ID")}
                 value={scoreForm.trace_id}
                 onChange={(e) =>
                   setScoreForm({ ...scoreForm, trace_id: e.target.value })
@@ -3208,9 +3209,9 @@ export default function EvaluationPage() {
               />
             </div>
             <div className="space-y-2">
-              <label className="text-sm font-medium">Metric Name</label>
+              <label className="text-sm font-medium">{t("Metric Name")}</label>
               <Input
-                placeholder="e.g. Accuracy, User Satisfaction"
+                placeholder={t("e.g. Accuracy, User Satisfaction")}
                 value={scoreForm.name}
                 onChange={(e) =>
                   setScoreForm({ ...scoreForm, name: e.target.value })
@@ -3218,7 +3219,7 @@ export default function EvaluationPage() {
               />
             </div>
             <div className="space-y-2">
-              <label className="text-sm font-medium">Score (0.0 - 1.0)</label>
+              <label className="text-sm font-medium">{t("Score (0.0 - 1.0)")}</label>
               <Input
                 type="number"
                 min="0"
@@ -3231,9 +3232,9 @@ export default function EvaluationPage() {
               />
             </div>
             <div className="space-y-2">
-              <label className="text-sm font-medium">Comment (Optional)</label>
+              <label className="text-sm font-medium">{t("Comment (Optional)")}</label>
               <Input
-                placeholder="Reasoning..."
+                placeholder={t("Reasoning...")}
                 value={scoreForm.comment}
                 onChange={(e) =>
                   setScoreForm({ ...scoreForm, comment: e.target.value })
@@ -3246,10 +3247,10 @@ export default function EvaluationPage() {
               variant="outline"
               onClick={() => setIsScoreDialogOpen(false)}
             >
-              Cancel
+              {t("Cancel")}
             </Button>
             <Button onClick={handleCreateScore} disabled={isSubmitting}>
-              {isSubmitting ? "Saving..." : "Save Score"}
+              {isSubmitting ? t("Saving...") : t("Save Score")}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -3259,14 +3260,14 @@ export default function EvaluationPage() {
       <Dialog open={!!editingDataset} onOpenChange={(open) => { if (!open) setEditingDataset(null); }}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Edit Dataset: {editingDataset?.name}</DialogTitle>
-            <DialogDescription>Update dataset description and visibility scope.</DialogDescription>
+            <DialogTitle>{t("Edit Dataset: {{name}}", { name: editingDataset?.name ?? "" })}</DialogTitle>
+            <DialogDescription>{t("Update dataset description and visibility scope.")}</DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
             <div className="space-y-2">
-              <label className="text-sm font-medium">Description</label>
+              <label className="text-sm font-medium">{t("Description")}</label>
               <Input
-                placeholder="Dataset description"
+                placeholder={t("Dataset description")}
                 value={datasetEditForm.description}
                 onChange={(e) => setDatasetEditForm({ ...datasetEditForm, description: e.target.value })}
               />
@@ -3274,7 +3275,7 @@ export default function EvaluationPage() {
 
             {/* Visibility Scope — same as LLM Judge */}
             <div className="space-y-2">
-              <label className="text-sm font-medium">Visibility Scope</label>
+              <label className="text-sm font-medium">{t("Visibility Scope")}</label>
               <select
                 value={datasetEditForm.visibility === "public" ? (datasetEditForm.public_scope || "department") : "private"}
                 onChange={(e) => {
@@ -3289,16 +3290,16 @@ export default function EvaluationPage() {
                 }}
                 className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
               >
-                <option value="private">Private</option>
-                <option value="department">Department</option>
-                <option value="organization">Organization</option>
+                <option value="private">{t("Private")}</option>
+                <option value="department">{t("Department")}</option>
+                <option value="organization">{t("Organization")}</option>
               </select>
             </div>
 
             {/* Organization — shown for org scope */}
             {datasetEditForm.visibility === "public" && datasetEditForm.public_scope === "organization" && (
               <div className="space-y-2">
-                <label className="text-sm font-medium">Organization</label>
+                <label className="text-sm font-medium">{t("Organization")}</label>
                 <select
                   value={datasetEditForm.org_id}
                   onChange={(e) => setDatasetEditForm({ ...datasetEditForm, org_id: e.target.value })}
@@ -3317,7 +3318,7 @@ export default function EvaluationPage() {
               <>
                 {canMultiDept && (
                   <div className="space-y-2">
-                    <label className="text-sm font-medium">Organization</label>
+                    <label className="text-sm font-medium">{t("Organization")}</label>
                     <select
                       value={datasetEditForm.org_id}
                       onChange={(e) => setDatasetEditForm({ ...datasetEditForm, org_id: e.target.value, public_dept_ids: [] })}
@@ -3330,7 +3331,9 @@ export default function EvaluationPage() {
                   </div>
                 )}
                 <div className="space-y-2">
-                  <label className="text-sm font-medium">Department{canMultiDept ? "s" : ""}</label>
+                  <label className="text-sm font-medium">
+                    {canMultiDept ? t("Departments") : t("Department")}
+                  </label>
                   {canMultiDept ? (
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
@@ -3381,7 +3384,7 @@ export default function EvaluationPage() {
             )}
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setEditingDataset(null)}>Cancel</Button>
+            <Button variant="outline" onClick={() => setEditingDataset(null)}>{t("Cancel")}</Button>
             <Button
               onClick={async () => {
                 if (!editingDataset) return;

@@ -91,7 +91,7 @@
       "type": "stat",
       "targets": [
         {
-          "expr": "sum(rate(agentcore_llm_call_duration_ms_milliseconds_sum[5m])) / clamp_min(sum(rate(agentcore_llm_call_duration_ms_milliseconds_count[5m])), 0.001)",
+          "expr": "sum(agentcore_llm_call_duration_ms_milliseconds_sum) / clamp_min(sum(agentcore_llm_call_duration_ms_milliseconds_count), 1)",
           "legendFormat": "Avg"
         }
       ]
@@ -227,7 +227,7 @@
   "time": { "from": "now-24h", "to": "now" },
   "timepicker": {},
   "timezone": "",
-  "title": "AgentCore - LLM Cost & Efficiency",
+  "title": "AgentCore - LLM Efficiency",
   "uid": "agentcore-llm-cost-efficiency",
   "version": 1
 }

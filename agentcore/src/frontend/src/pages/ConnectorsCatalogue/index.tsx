@@ -20,6 +20,7 @@ import {
   ChevronDown,
 } from "lucide-react";
 import { useContext, useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { useSearchParams } from "react-router-dom";
 import OutlookConnectorForm from "./components/OutlookConnectorForm";
 import { ENABLE_OUTLOOK_CONNECTOR } from "@/customization/feature-flags";
@@ -125,6 +126,7 @@ const BLANK_FORM = {
 type FormState = typeof BLANK_FORM;
 
 export default function ConnectorsCatalogueView(): JSX.Element {
+  const { t } = useTranslation();
   const [filter, setFilter] = useState<ProviderFilter>("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [showModal, setShowModal] = useState(false);
@@ -161,15 +163,17 @@ export default function ConnectorsCatalogueView(): JSX.Element {
 
     if (success === "outlook_account_linked") {
       const email = searchParams.get("email") || "";
-      const message = `Outlook mailbox linked successfully${email ? `: ${email}` : ""}`;
+      const message = email
+        ? t("Outlook mailbox linked successfully: {{email}}", { email })
+        : t("Outlook mailbox linked successfully");
       setTestResult({ success: true, message });
       setSuccessData({ title: message });
       void refetch();
     } else if (errorParam) {
       const detail = searchParams.get("detail") || errorParam;
-      const message = `Outlook OAuth failed: ${detail}`;
+      const message = t("Outlook OAuth failed: {{detail}}", { detail });
       setTestResult({ success: false, message });
-      setErrorData({ title: "Mailbox linking failed", list: [detail] });
+      setErrorData({ title: t("Mailbox linking failed"), list: [detail] });
     }
 
     if (success || errorParam) {
@@ -296,14 +300,14 @@ export default function ConnectorsCatalogueView(): JSX.Element {
   }, [form.visibility, form.public_scope]);
   const selectedDeptLabel = useMemo(() => {
     const selectedIds = canMultiDept ? form.public_dept_ids : form.dept_id ? [form.dept_id] : [];
-    if (selectedIds.length === 0) return "Select departments";
+    if (selectedIds.length === 0) return t("Select departments");
     const names = departmentsForSelectedOrg
       .filter((dept) => selectedIds.includes(dept.id))
       .map((dept) => dept.name);
-    if (names.length === 0) return "Select departments";
+    if (names.length === 0) return t("Select departments");
     if (names.length <= 2) return names.join(", ");
     return `${names.slice(0, 2).join(", ")} +${names.length - 2}`;
-  }, [canMultiDept, departmentsForSelectedOrg, form.dept_id, form.public_dept_ids]);
+  }, [canMultiDept, departmentsForSelectedOrg, form.dept_id, form.public_dept_ids, t]);
   const getVisibilityBadgeClass = (c: ConnectorInfo) => {
     if (c.visibility === "private") {
       return "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200";
@@ -318,7 +322,7 @@ export default function ConnectorsCatalogueView(): JSX.Element {
       visibilityOptions.departments.map((dept) => [dept.id, dept.name]),
     );
     if (connector.visibility === "public" && connector.public_scope === "organization") {
-      return "All departments";
+      return t("All departments");
     }
     const deptIds =
       connector.visibility === "public" && connector.public_scope === "department"
@@ -683,8 +687,8 @@ export default function ConnectorsCatalogueView(): JSX.Element {
   const handleSave = async () => {
     if (connectorNameAvailability.isNameTaken) {
       setErrorData({
-        title: "Name already in use",
-        list: ["Choose a different connector name for this scope."],
+        title: t("Name already in use"),
+        list: [t("Choose a different connector name for this scope.")],
       });
       return;
     }
@@ -700,28 +704,32 @@ export default function ConnectorsCatalogueView(): JSX.Element {
           setTestPayloadKey(currentTestKey);
           autoTestRan = true;
         }
+        if (!result) {
+          setErrorData({ title: t("Connection failed"), list: [t("Connection test did not return a result.")] });
+          return;
+        }
         if (!result.success) {
-          setErrorData({ title: "Connection failed", list: [result.message] });
+          setErrorData({ title: t("Connection failed"), list: [result.message] });
           return;
         }
         if (autoTestRan) {
-          setSuccessData({ title: result.message || "Connection verified." });
+          setSuccessData({ title: result.message || t("Connection verified.") });
         }
       }
       if (editingConnector) {
         await updateMutation.mutateAsync({ id: editingConnector.id, payload });
-        setSuccessData({ title: `Connector "${payload.name}" updated.` });
+        setSuccessData({ title: t('Connector "{{name}}" updated.', { name: payload.name }) });
       } else {
         await createMutation.mutateAsync(payload as any);
-        setSuccessData({ title: `Connector "${payload.name}" created.` });
+        setSuccessData({ title: t('Connector "{{name}}" created.', { name: payload.name }) });
       }
       await refetch();
       setShowModal(false);
       resetForm();
     } catch (err: any) {
       setErrorData({
-        title: editingConnector ? "Failed to update connector" : "Failed to create connector",
-        list: [getErrorMessage(err, "Save request failed")],
+        title: editingConnector ? t("Failed to update connector") : t("Failed to create connector"),
+        list: [getErrorMessage(err, t("Save request failed"))],
       });
     }
   };
@@ -729,15 +737,15 @@ export default function ConnectorsCatalogueView(): JSX.Element {
   const handleDelete = async (id: string) => {
     try {
       const connectorName =
-        connectors?.find((connector) => connector.id === id)?.name || "Connector";
+        connectors?.find((connector) => connector.id === id)?.name || t("Connector");
       await deleteMutation.mutateAsync(id);
       await refetch();
       setDeleteConfirm(null);
-      setSuccessData({ title: `${connectorName} deleted.` });
+      setSuccessData({ title: t("{{name}} deleted.", { name: connectorName }) });
     } catch (err: any) {
       setErrorData({
-        title: "Failed to delete connector",
-        list: [getErrorMessage(err, "Delete request failed")],
+        title: t("Failed to delete connector"),
+        list: [getErrorMessage(err, t("Delete request failed"))],
       });
     }
   };
@@ -748,14 +756,14 @@ export default function ConnectorsCatalogueView(): JSX.Element {
       setTestResult(result);
       await refetch();
       if (result.success) {
-        setSuccessData({ title: result.message || "Connection verified." });
+        setSuccessData({ title: result.message || t("Connection verified.") });
       } else {
-        setErrorData({ title: "Connection failed", list: [result.message] });
+        setErrorData({ title: t("Connection failed"), list: [result.message] });
       }
     } catch (err: any) {
-      const detail = getErrorMessage(err, "Test request failed");
+      const detail = getErrorMessage(err, t("Test request failed"));
       setTestResult({ success: false, message: detail });
-      setErrorData({ title: "Connection test failed", list: [detail] });
+      setErrorData({ title: t("Connection test failed"), list: [detail] });
     }
   };
 
@@ -819,15 +827,15 @@ export default function ConnectorsCatalogueView(): JSX.Element {
       setTestResult(result);
       setTestPayloadKey(JSON.stringify(payload));
       if (result.success) {
-        setSuccessData({ title: result.message || "Connection verified." });
+        setSuccessData({ title: result.message || t("Connection verified.") });
       } else {
-        setErrorData({ title: "Connection failed", list: [result.message] });
+        setErrorData({ title: t("Connection failed"), list: [result.message] });
       }
     } catch (err: any) {
-      const detail = getErrorMessage(err, "Test request failed");
+      const detail = getErrorMessage(err, t("Test request failed"));
       setTestResult({ success: false, message: detail });
       setTestPayloadKey(null);
-      setErrorData({ title: "Connection test failed", list: [detail] });
+      setErrorData({ title: t("Connection test failed"), list: [detail] });
     }
   };
 
@@ -835,20 +843,22 @@ export default function ConnectorsCatalogueView(): JSX.Element {
     try {
       if (connector.status === "connected") {
         await disconnectMutation.mutateAsync(connector.id);
-        setSuccessData({ title: `Connector "${connector.name}" disconnected.` });
+        setSuccessData({ title: t('Connector "{{name}}" disconnected.', { name: connector.name }) });
       } else {
         const result = await testMutation.mutateAsync(connector.id);
         if (result.success) {
-          setSuccessData({ title: result.message || `Connector "${connector.name}" connected.` });
+          setSuccessData({
+            title: result.message || t('Connector "{{name}}" connected.', { name: connector.name }),
+          });
         } else {
-          setErrorData({ title: "Connection failed", list: [result.message] });
+          setErrorData({ title: t("Connection failed"), list: [result.message] });
         }
       }
       await refetch();
     } catch (err: any) {
       setErrorData({
-        title: "Connector action failed",
-        list: [getErrorMessage(err, "Unable to update connector status")],
+        title: t("Connector action failed"),
+        list: [getErrorMessage(err, t("Unable to update connector status"))],
       });
     }
   };
@@ -863,11 +873,11 @@ export default function ConnectorsCatalogueView(): JSX.Element {
         window.location.href = authorize_url;
         return;
       }
-      throw new Error("OAuth authorization URL was not returned.");
+      throw new Error(t("OAuth authorization URL was not returned."));
     } catch (err: any) {
-      const detail = getErrorMessage(err, "Failed to start OAuth flow");
+      const detail = getErrorMessage(err, t("Failed to start OAuth flow"));
       setTestResult({ success: false, message: detail });
-      setErrorData({ title: "Mailbox linking failed", list: [detail] });
+      setErrorData({ title: t("Mailbox linking failed"), list: [detail] });
       setLinkingMailbox(false);
     }
   };
@@ -946,14 +956,14 @@ export default function ConnectorsCatalogueView(): JSX.Element {
   };
 
   const getConnectorVisibilityLabel = (c: ConnectorInfo): string => {
-    if (c.visibility === "private") return "Private";
+    if (c.visibility === "private") return t("Private");
     if (c.public_scope === "organization") {
-      return "Organization";
+      return t("Organization");
     }
     if (c.public_scope === "department") {
-      return "Department";
+      return t("Department");
     }
-    return "Private";
+    return t("Private");
   };
 
   const FILTER_TABS: ProviderFilter[] = ["all", "postgresql", "oracle", "sqlserver", "mysql", "azure_blob", "sharepoint", ...(ENABLE_OUTLOOK_CONNECTOR ? ["outlook" as const] : [])];
@@ -962,7 +972,7 @@ export default function ConnectorsCatalogueView(): JSX.Element {
   if (!canViewConnectorPage) {
     return (
       <div className="flex h-full w-full items-center justify-center text-sm text-muted-foreground">
-        You do not have permission to access the Connectors page.
+        {t("You do not have permission to access the Connectors page.")}
       </div>
     );
   }
@@ -973,17 +983,17 @@ export default function ConnectorsCatalogueView(): JSX.Element {
       <div className="flex flex-shrink-0 flex-col gap-3 border-b px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-6 md:px-8 md:py-4">
         <div>
           <div className="mb-1 flex items-center gap-3">
-            <h1 className="text-lg font-semibold md:text-xl">Connectors</h1>
+            <h1 className="text-lg font-semibold md:text-xl">{t("Connectors")}</h1>
           </div>
           <p className="text-sm text-muted-foreground">
-            Configure data source connections for agents
+            {t("Configure data source connections for agents")}
           </p>
         </div>
         <div className="flex items-center gap-3">
           <div className="relative">
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <input
-              placeholder="Search connectors..."
+              placeholder={t("Search connectors...")}
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="w-full rounded-lg border border-border bg-card py-2.5 pl-10 pr-4 text-sm text-foreground placeholder:text-muted-foreground focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring sm:w-64"
@@ -995,7 +1005,7 @@ export default function ConnectorsCatalogueView(): JSX.Element {
               className="inline-flex items-center gap-2 rounded-lg  px-4 py-2.5 text-sm font-medium !bg-[var(--button-primary)] hover:!bg-[var(--button-primary-hover)] disabled:!bg-[var(--button-primary-disabled)] text-primary-foreground"
             >
               <Plus className="h-4 w-4" />
-              Add Connector
+              {t("Add Connector")}
             </button>
           )}
         </div>
@@ -1013,7 +1023,7 @@ export default function ConnectorsCatalogueView(): JSX.Element {
                 : "bg-muted text-muted-foreground hover:bg-muted/80"
             }`}
           >
-            {f === "all" ? "All" : PROVIDER_LABELS[f] || f}
+            {f === "all" ? t("All") : t(PROVIDER_LABELS[f] || f)}
           </button>
         ))}
       </div>
@@ -1028,7 +1038,7 @@ export default function ConnectorsCatalogueView(): JSX.Element {
           <>
             {!!error && (
               <div className="mb-4 rounded-md border border-destructive/20 bg-destructive/5 px-4 py-3 text-sm text-destructive">
-                Failed to load connectors.
+                {t("Failed to load connectors.")}
               </div>
             )}
             <div className="overflow-x-auto rounded-lg border border-border bg-card">
@@ -1036,17 +1046,17 @@ export default function ConnectorsCatalogueView(): JSX.Element {
                 <thead className="bg-muted/50">
                   <tr className="border-b border-border">
                     {[
-                      "Connector Name",
-                      "Provider",
-                      ...(isDepartmentAdmin ? ["Created By"] : []),
-                      ...(isSuperAdmin ? ["Department Scope"] : []),
-                      "Host / Container / Site",
-                      "Database",
-                      "Schema",
-                      ...(canSeeVisibilityColumn ? ["Visibility"] : []),
-                      "Status",
-                      "Tables",
-                      ...(canAddConnector ? ["Actions"] : []),
+                      t("Connector Name"),
+                      t("Provider"),
+                      ...(isDepartmentAdmin ? [t("Created By")] : []),
+                      ...(isSuperAdmin ? [t("Department Scope")] : []),
+                      t("Host / Container / Site"),
+                      t("Database"),
+                      t("Schema"),
+                      ...(canSeeVisibilityColumn ? [t("Visibility")] : []),
+                      t("Status"),
+                      t("Tables"),
+                      ...(canAddConnector ? [t("Actions")] : []),
                     ].map((h) => (
                       <th
                         key={h}
@@ -1090,13 +1100,13 @@ export default function ConnectorsCatalogueView(): JSX.Element {
                       >
                         <div className="flex flex-col items-center gap-3">
                           <Cable className="h-10 w-10 text-muted-foreground/50" />
-                          <p>No connectors found</p>
+                          <p>{t("No connectors found")}</p>
                           {canAddConnector && (
                             <button
                               onClick={openAddModal}
                               className="text-primary hover:underline text-sm"
                             >
-                              Add your first connector
+                              {t("Add your first connector")}
                             </button>
                           )}
                         </div>
@@ -1130,7 +1140,7 @@ export default function ConnectorsCatalogueView(): JSX.Element {
                             ) : (
                               <Database className="h-3 w-3" />
                             )}
-                            {PROVIDER_LABELS[c.provider] || c.provider}
+                            {t(PROVIDER_LABELS[c.provider] || c.provider)}
                           </span>
                         </td>
                         {isDepartmentAdmin && (
@@ -1214,7 +1224,7 @@ export default function ConnectorsCatalogueView(): JSX.Element {
                                     ? "text-green-500 hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-900/20"
                                     : "text-muted-foreground hover:bg-green-50 hover:text-green-500 dark:hover:bg-green-900/20"
                                 }`}
-                                title={c.status === "connected" ? "Disconnect" : "Connect"}
+                                title={c.status === "connected" ? t("Disconnect") : t("Connect")}
                               >
                                 {testMutation.isPending || disconnectMutation.isPending ? (
                                   <Loader2 className="h-4 w-4 animate-spin" />
@@ -1228,7 +1238,7 @@ export default function ConnectorsCatalogueView(): JSX.Element {
                                 onClick={() => handleTestConnection(c.id)}
                                 disabled={testMutation.isPending}
                                 className="rounded p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
-                                title="Test Connection"
+                                title={t("Test Connection")}
                               >
                                 <Zap className="h-4 w-4" />
                               </button>
@@ -1237,7 +1247,7 @@ export default function ConnectorsCatalogueView(): JSX.Element {
                                   onClick={() => handleLinkMailbox(c.id)}
                                   disabled={linkingMailbox}
                                   className="rounded p-1.5 text-muted-foreground hover:bg-sky-50 hover:text-sky-600 dark:hover:bg-sky-900/20 transition-colors"
-                                  title="Link Mailbox (OAuth)"
+                                  title={t("Link Mailbox (OAuth)")}
                                 >
                                   {linkingMailbox ? (
                                     <Loader2 className="h-4 w-4 animate-spin" />
@@ -1250,7 +1260,7 @@ export default function ConnectorsCatalogueView(): JSX.Element {
                                 <button
                                   onClick={() => openEditModal(c)}
                                   className="rounded p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
-                                  title="Edit"
+                                  title={t("Edit")}
                                 >
                                   <Pencil className="h-4 w-4" />
                                 </button>
@@ -1259,7 +1269,7 @@ export default function ConnectorsCatalogueView(): JSX.Element {
                                 <button
                                   onClick={() => setDeleteConfirm(c.id)}
                                   className="rounded p-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors"
-                                  title="Delete"
+                                  title={t("Delete")}
                                 >
                                   <Trash2 className="h-4 w-4" />
                                 </button>
@@ -1274,8 +1284,10 @@ export default function ConnectorsCatalogueView(): JSX.Element {
               </table>
             </div>
             <div className="mt-6 text-center text-sm text-muted-foreground">
-              Showing {filteredConnectors.length} of {displayConnectors.length}{" "}
-              connectors
+              {t("Showing {{shown}} of {{total}} connectors", {
+                shown: filteredConnectors.length,
+                total: displayConnectors.length,
+              })}
             </div>
           </>
         )}
@@ -1287,7 +1299,7 @@ export default function ConnectorsCatalogueView(): JSX.Element {
           <div className="w-full max-w-lg rounded-xl border bg-card p-6 shadow-xl">
             <div className="mb-6 flex items-center justify-between">
               <h2 className="text-lg font-semibold">
-                {editingConnector ? "Edit Connector" : "Add Connector"}
+                {editingConnector ? t("Edit Connector") : t("Add Connector")}
               </h2>
               <button
                 onClick={() => {
@@ -1303,45 +1315,45 @@ export default function ConnectorsCatalogueView(): JSX.Element {
             <div className="space-y-4 max-h-[60vh] overflow-y-auto pr-2">
               {/* Name */}
               <div>
-                <label className="mb-1.5 block text-sm font-medium">Name</label>
+                <label className="mb-1.5 block text-sm font-medium">{t("Name")}</label>
                 <input
                   value={form.name}
                   onChange={(e) => setForm({ ...form, name: e.target.value })}
                   className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring"
-                  placeholder="e.g., Manufacturing DB"
+                  placeholder={t("e.g., Manufacturing DB")}
                 />
                 {form.name.trim().length > 0 &&
                   !connectorNameAvailability.isFetching &&
                   connectorNameAvailability.isNameTaken && (
                     <p className="mt-1 text-xs font-medium text-red-500">
                       {connectorNameAvailability.reason ??
-                        "This name is already taken in the selected scope."}
+                        t("This name is already taken in the selected scope.")}
                     </p>
                   )}
               </div>
 
               {/* Description */}
               <div>
-                <label className="mb-1.5 block text-sm font-medium">Description</label>
+                <label className="mb-1.5 block text-sm font-medium">{t("Description")}</label>
                 <input
                   value={form.description}
                   onChange={(e) => setForm({ ...form, description: e.target.value })}
                   className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring"
-                  placeholder="Optional description"
+                  placeholder={t("Optional description")}
                 />
               </div>
 
               <div className="rounded-lg border border-border p-4">
                 <div className="mb-4">
-                  <label className="mb-1.5 block text-sm font-medium">Tenancy</label>
+                  <label className="mb-1.5 block text-sm font-medium">{t("Tenancy")}</label>
                   <p className="text-xs text-muted-foreground">
-                    Connectors use direct tenancy only. No approval flow applies here.
+                    {t("Connectors use direct tenancy only. No approval flow applies here.")}
                   </p>
                 </div>
 
                 <div className="space-y-4">
                   <div>
-                    <label className="mb-1.5 block text-sm font-medium">Visibility Scope</label>
+                    <label className="mb-1.5 block text-sm font-medium">{t("Visibility Scope")}</label>
                     <select
                       value={visibilityScope}
                       onChange={(e) =>
@@ -1349,22 +1361,22 @@ export default function ConnectorsCatalogueView(): JSX.Element {
                       }
                       className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring"
                     >
-                      <option value="private">Private</option>
-                      <option value="department">Department</option>
-                      <option value="organization">Organization</option>
+                      <option value="private">{t("Private")}</option>
+                      <option value="department">{t("Department")}</option>
+                      <option value="organization">{t("Organization")}</option>
                     </select>
                   </div>
 
                   {visibilityScope === "organization" && (
                     <div>
-                      <label className="mb-1.5 block text-sm font-medium">Organization</label>
+                      <label className="mb-1.5 block text-sm font-medium">{t("Organization")}</label>
                       <select
                         value={form.org_id}
                         onChange={(e) => setForm({ ...form, org_id: e.target.value })}
                         disabled={role === "developer" || role === "department_admin"}
                         className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring disabled:opacity-80"
                       >
-                        <option value="">Select organization</option>
+                        <option value="">{t("Select organization")}</option>
                         {visibilityOptions.organizations.map((org) => (
                           <option key={org.id} value={org.id}>
                             {org.name}
@@ -1378,7 +1390,7 @@ export default function ConnectorsCatalogueView(): JSX.Element {
                     <>
                       {canMultiDept && (
                         <div>
-                          <label className="mb-1.5 block text-sm font-medium">Organization</label>
+                          <label className="mb-1.5 block text-sm font-medium">{t("Organization")}</label>
                           <select
                             value={form.org_id}
                             onChange={(e) =>
@@ -1386,7 +1398,7 @@ export default function ConnectorsCatalogueView(): JSX.Element {
                             }
                             className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring"
                           >
-                            <option value="">Select organization</option>
+                            <option value="">{t("Select organization")}</option>
                             {visibilityOptions.organizations.map((org) => (
                               <option key={org.id} value={org.id}>
                                 {org.name}
@@ -1398,7 +1410,7 @@ export default function ConnectorsCatalogueView(): JSX.Element {
 
                       <div>
                         <label className="mb-1.5 block text-sm font-medium">
-                          Department{canMultiDept ? "s" : ""}
+                          {canMultiDept ? t("Departments") : t("Department")}
                         </label>
                         {canMultiDept ? (
                           <DropdownMenu>
@@ -1438,7 +1450,7 @@ export default function ConnectorsCatalogueView(): JSX.Element {
                             disabled
                             className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm opacity-80"
                           >
-                            <option value="">Select department</option>
+                            <option value="">{t("Select department")}</option>
                             {visibilityOptions.departments.map((dept) => (
                               <option key={dept.id} value={dept.id}>
                                 {dept.name}
@@ -1454,25 +1466,25 @@ export default function ConnectorsCatalogueView(): JSX.Element {
 
               {/* Provider */}
               <div>
-                <label className="mb-1.5 block text-sm font-medium">Provider</label>
+                <label className="mb-1.5 block text-sm font-medium">{t("Provider")}</label>
                 <select
                   value={form.provider}
                   onChange={(e) => handleProviderChange(e.target.value)}
                   disabled={!!editingConnector}
                   className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring disabled:opacity-50"
                 >
-                  <optgroup label="Databases">
+                  <optgroup label={t("Databases")}>
                     <option value="postgresql">PostgreSQL</option>
                     <option value="oracle">Oracle</option>
                     <option value="sqlserver">SQL Server</option>
                     <option value="mysql">MySQL</option>
                   </optgroup>
-                  <optgroup label="Cloud Storage">
+                  <optgroup label={t("Cloud Storage")}>
                     <option value="azure_blob">Azure Blob Storage</option>
                     <option value="sharepoint">SharePoint</option>
                   </optgroup>
                   {ENABLE_OUTLOOK_CONNECTOR && (
-                  <optgroup label="Email">
+                  <optgroup label={t("Email")}>
                     <option value="outlook">Microsoft Outlook</option>
                   </optgroup>
                   )}
@@ -1484,7 +1496,7 @@ export default function ConnectorsCatalogueView(): JSX.Element {
                 <>
                   <div className="grid grid-cols-3 gap-3">
                     <div className="col-span-2">
-                      <label className="mb-1.5 block text-sm font-medium">Host</label>
+                      <label className="mb-1.5 block text-sm font-medium">{t("Host")}</label>
                       <input
                         value={form.host}
                         onChange={(e) => setForm({ ...form, host: e.target.value })}
@@ -1493,7 +1505,7 @@ export default function ConnectorsCatalogueView(): JSX.Element {
                       />
                     </div>
                     <div>
-                      <label className="mb-1.5 block text-sm font-medium">Port</label>
+                      <label className="mb-1.5 block text-sm font-medium">{t("Port")}</label>
                       <input
                         type="number"
                         value={form.port}
@@ -1507,7 +1519,7 @@ export default function ConnectorsCatalogueView(): JSX.Element {
 
                   <div className="grid grid-cols-2 gap-3">
                     <div>
-                      <label className="mb-1.5 block text-sm font-medium">Database Name</label>
+                      <label className="mb-1.5 block text-sm font-medium">{t("Database Name")}</label>
                       <input
                         value={form.database_name}
                         onChange={(e) => setForm({ ...form, database_name: e.target.value })}
@@ -1516,7 +1528,7 @@ export default function ConnectorsCatalogueView(): JSX.Element {
                       />
                     </div>
                     <div>
-                      <label className="mb-1.5 block text-sm font-medium">Schema</label>
+                      <label className="mb-1.5 block text-sm font-medium">{t("Schema")}</label>
                       <input
                         value={form.schema_name}
                         onChange={(e) => setForm({ ...form, schema_name: e.target.value })}
@@ -1528,7 +1540,7 @@ export default function ConnectorsCatalogueView(): JSX.Element {
 
                   <div className="grid grid-cols-2 gap-3">
                     <div>
-                      <label className="mb-1.5 block text-sm font-medium">Username</label>
+                      <label className="mb-1.5 block text-sm font-medium">{t("Username")}</label>
                       <input
                         value={form.username}
                         onChange={(e) => setForm({ ...form, username: e.target.value })}
@@ -1537,14 +1549,14 @@ export default function ConnectorsCatalogueView(): JSX.Element {
                       />
                     </div>
                     <div>
-                      <label className="mb-1.5 block text-sm font-medium">Password</label>
+                      <label className="mb-1.5 block text-sm font-medium">{t("Password")}</label>
                       <div className="relative">
                         <input
                           type={showPassword ? "text" : "password"}
                           value={form.password}
                           onChange={(e) => setForm({ ...form, password: e.target.value })}
                           className="w-full rounded-lg border border-border bg-background px-3 py-2 pr-10 text-sm focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring"
-                          placeholder={editingConnector ? "(unchanged)" : "password"}
+                          placeholder={editingConnector ? t("(unchanged)") : t("password")}
                         />
                         <button
                           type="button"
@@ -1564,7 +1576,7 @@ export default function ConnectorsCatalogueView(): JSX.Element {
                       onChange={(e) => setForm({ ...form, ssl_enabled: e.target.checked })}
                       className="rounded border-border"
                     />
-                    Enable SSL/TLS
+                    {t("Enable SSL/TLS")}
                   </label>
                 </>
               )}
@@ -1574,9 +1586,9 @@ export default function ConnectorsCatalogueView(): JSX.Element {
                 <>
                   <div>
                     <label className="mb-1.5 block text-sm font-medium">
-                      Connection String{" "}
+                      {t("Connection String")}{" "}
                       {editingConnector && (
-                        <span className="text-xs text-muted-foreground">(leave blank to keep current)</span>
+                        <span className="text-xs text-muted-foreground">{t("(leave blank to keep current)")}</span>
                       )}
                     </label>
                     <div className="relative">
@@ -1600,7 +1612,7 @@ export default function ConnectorsCatalogueView(): JSX.Element {
                   </div>
                   <div className="grid grid-cols-2 gap-3">
                     <div>
-                      <label className="mb-1.5 block text-sm font-medium">Container Name</label>
+                      <label className="mb-1.5 block text-sm font-medium">{t("Container Name")}</label>
                       <input
                         value={form.azure_container_name}
                         onChange={(e) =>
@@ -1612,8 +1624,8 @@ export default function ConnectorsCatalogueView(): JSX.Element {
                     </div>
                     <div>
                       <label className="mb-1.5 block text-sm font-medium">
-                        Blob Prefix{" "}
-                        <span className="text-xs text-muted-foreground">(optional)</span>
+                        {t("Blob Prefix")}{" "}
+                        <span className="text-xs text-muted-foreground">{t("(optional)")}</span>
                       </label>
                       <input
                         value={form.azure_blob_prefix}
@@ -1632,7 +1644,7 @@ export default function ConnectorsCatalogueView(): JSX.Element {
               {form.provider === "sharepoint" && (
                 <>
                   <div>
-                    <label className="mb-1.5 block text-sm font-medium">SharePoint Site URL</label>
+                    <label className="mb-1.5 block text-sm font-medium">{t("SharePoint Site URL")}</label>
                     <input
                       value={form.sharepoint_site_url}
                       onChange={(e) =>
@@ -1644,7 +1656,7 @@ export default function ConnectorsCatalogueView(): JSX.Element {
                   </div>
                   <div className="grid grid-cols-2 gap-3">
                     <div>
-                      <label className="mb-1.5 block text-sm font-medium">Document Library</label>
+                      <label className="mb-1.5 block text-sm font-medium">{t("Document Library")}</label>
                       <input
                         value={form.sharepoint_library}
                         onChange={(e) =>
@@ -1656,8 +1668,8 @@ export default function ConnectorsCatalogueView(): JSX.Element {
                     </div>
                     <div>
                       <label className="mb-1.5 block text-sm font-medium">
-                        Folder Path{" "}
-                        <span className="text-xs text-muted-foreground">(optional)</span>
+                        {t("Folder Path")}{" "}
+                        <span className="text-xs text-muted-foreground">{t("(optional)")}</span>
                       </label>
                       <input
                         value={form.sharepoint_folder}
@@ -1671,7 +1683,7 @@ export default function ConnectorsCatalogueView(): JSX.Element {
                   </div>
                   <div className="grid grid-cols-2 gap-3">
                     <div>
-                      <label className="mb-1.5 block text-sm font-medium">Client ID</label>
+                      <label className="mb-1.5 block text-sm font-medium">{t("Client ID")}</label>
                       <input
                         value={form.sharepoint_client_id}
                         onChange={(e) =>
@@ -1683,9 +1695,9 @@ export default function ConnectorsCatalogueView(): JSX.Element {
                     </div>
                     <div>
                       <label className="mb-1.5 block text-sm font-medium">
-                        Client Secret{" "}
+                        {t("Client Secret")}{" "}
                         {editingConnector && (
-                          <span className="text-xs text-muted-foreground">(leave blank to keep current)</span>
+                          <span className="text-xs text-muted-foreground">{t("(leave blank to keep current)")}</span>
                         )}
                       </label>
                       <div className="relative">
@@ -1696,7 +1708,7 @@ export default function ConnectorsCatalogueView(): JSX.Element {
                             setForm({ ...form, sharepoint_client_secret: e.target.value })
                           }
                           className="w-full rounded-lg border border-border bg-background px-3 py-2 pr-10 text-sm focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring"
-                          placeholder={editingConnector ? "(unchanged)" : "client-secret"}
+                          placeholder={editingConnector ? t("(unchanged)") : t("client-secret")}
                         />
                         <button
                           type="button"
@@ -1709,7 +1721,7 @@ export default function ConnectorsCatalogueView(): JSX.Element {
                     </div>
                   </div>
                   <div>
-                    <label className="mb-1.5 block text-sm font-medium">Tenant ID</label>
+                    <label className="mb-1.5 block text-sm font-medium">{t("Tenant ID")}</label>
                     <input
                       value={form.sharepoint_tenant_id}
                       onChange={(e) =>
@@ -1761,7 +1773,7 @@ export default function ConnectorsCatalogueView(): JSX.Element {
                 {(testDraftMutation.isPending || testMutation.isPending) && (
                   <Loader2 className="h-4 w-4 animate-spin" />
                 )}
-                Test Connection
+                {t("Test Connection")}
               </button>
               <button
                 onClick={() => {
@@ -1770,7 +1782,7 @@ export default function ConnectorsCatalogueView(): JSX.Element {
                 }}
                 className="rounded-lg border border-border px-4 py-2 text-sm hover:bg-muted transition-colors"
               >
-                Cancel
+                {t("Cancel")}
               </button>
               <button
                 onClick={handleSave}
@@ -1780,7 +1792,7 @@ export default function ConnectorsCatalogueView(): JSX.Element {
                 {(createMutation.isPending || updateMutation.isPending) && (
                   <Loader2 className="h-4 w-4 animate-spin" />
                 )}
-                {editingConnector ? "Update" : "Create"}
+                {editingConnector ? t("Update") : t("Create")}
               </button>
             </div>
           </div>
@@ -1791,16 +1803,16 @@ export default function ConnectorsCatalogueView(): JSX.Element {
       {deleteConfirm && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
           <div className="w-full max-w-sm rounded-xl border bg-card p-6 shadow-xl">
-            <h3 className="mb-2 text-lg font-semibold">Delete Connector</h3>
+            <h3 className="mb-2 text-lg font-semibold">{t("Delete Connector")}</h3>
             <p className="mb-6 text-sm text-muted-foreground">
-              Are you sure you want to delete this connector? This action cannot be undone.
+              {t("Are you sure you want to delete this connector? This action cannot be undone.")}
             </p>
             <div className="flex justify-end gap-3">
               <button
                 onClick={() => setDeleteConfirm(null)}
                 className="rounded-lg border border-border px-4 py-2 text-sm hover:bg-muted transition-colors"
               >
-                Cancel
+                {t("Cancel")}
               </button>
               <button
                 onClick={() => handleDelete(deleteConfirm)}
@@ -1810,7 +1822,7 @@ export default function ConnectorsCatalogueView(): JSX.Element {
                 {deleteMutation.isPending && (
                   <Loader2 className="h-4 w-4 animate-spin" />
                 )}
-                Delete
+                {t("Delete")}
               </button>
             </div>
           </div>

@@ -1250,3 +1250,187 @@ async def get_root_maturity_kpis(
             DashboardKpi(id="agents_with_hitl_pct", label="% Agents with HITL", value=hitl_pct, unit="%"),
         ],
     )
+
+
+# ---------------------------------------------------------------------------
+# Observability-based KPIs (super_admin / root)
+# ---------------------------------------------------------------------------
+
+class CostTrendResponse(BaseModel):
+    range: str
+    series: list[TimeseriesPoint]
+
+
+async def _fetch_observability_traces(
+    session: DbSession,
+    current_user: CurrentActiveUser,
+    org_id: UUID | None,
+    from_days: int = 30,
+):
+    """Fetch enriched traces scoped to the user's org for dashboard KPIs."""
+    from agentcore.api.observability.scope import resolve_scope_context
+    from agentcore.api.observability.trace_store import TraceStore
+    from agentcore.api.observability.parsing import compute_date_range, clear_request_caches
+
+    clear_request_caches()
+
+    allowed_user_ids, scoped_clients, scope_key, _ = await resolve_scope_context(
+        session=session,
+        current_user=current_user,
+        org_id=org_id,
+        trace_scope="all",
+    )
+    if not scoped_clients or not allowed_user_ids:
+        return []
+
+    from_ts, to_ts = compute_date_range(None, None, None, default_days=from_days)
+
+    traces, _ = TraceStore.get_traces(
+        clients=scoped_clients,
+        allowed_user_ids=allowed_user_ids,
+        scope_key=scope_key,
+        from_timestamp=from_ts,
+        to_timestamp=to_ts,
+        fetch_all=True,
+    )
+    return traces
+
+
+@router.get("/sections/observability-health", response_model=DashboardSectionResponse, status_code=200)
+async def get_observability_health_kpis(
+    *,
+    request: Request,
+    session: DbSession,
+    current_user: CurrentActiveUser,
+    org_id: UUID | None = Query(default=None, description="Optional org filter for super admin"),
+):
+    """Platform Health KPIs: total agent runs, failed runs, failure rate."""
+    proxied = await _maybe_proxy_to_region(request, current_user, "observability-health")
+    if proxied is not None:
+        return proxied
+
+    role = str(getattr(current_user, "role", "")).lower()
+    if role not in {"super_admin", "root"}:
+        raise HTTPException(status_code=403, detail="Insufficient permissions")
+
+    if role == "super_admin":
+        org_ids = await _designated_super_admin_org_ids(session, current_user)
+        if org_id and org_id not in org_ids:
+            raise HTTPException(status_code=403, detail="org_id not in your scope")
+
+    try:
+        traces = await _fetch_observability_traces(session, current_user, org_id)
+    except Exception as e:
+        logger.warning("Failed to fetch observability traces for dashboard: %s", e)
+        traces = []
+
+    total = len(traces)
+    failed = sum(
+        1 for t in traces
+        if (getattr(t, "error_count", 0) or 0) > 0
+        or str(getattr(t, "level", "") or "").upper() == "ERROR"
+    )
+    failure_rate = round((failed / total) * 100, 2) if total > 0 else 0
+
+    return DashboardSectionResponse(
+        section="observability_health",
+        kpis=[
+            DashboardKpi(id="total_agent_runs", label="Total Runs", value=total),
+            DashboardKpi(id="failed_agent_runs", label="Total Failed Runs", value=failed),
+            DashboardKpi(id="execution_failure_rate", label="Execution Failure Rate", value=failure_rate, unit="%"),
+        ],
+    )
+
+
+@router.get("/sections/cost-financial", response_model=DashboardSectionResponse, status_code=200)
+async def get_cost_financial_kpis(
+    *,
+    request: Request,
+    session: DbSession,
+    current_user: CurrentActiveUser,
+    org_id: UUID | None = Query(default=None, description="Optional org filter for super admin"),
+):
+    """Cost KPIs: average cost per agent run."""
+    proxied = await _maybe_proxy_to_region(request, current_user, "cost-financial")
+    if proxied is not None:
+        return proxied
+
+    role = str(getattr(current_user, "role", "")).lower()
+    if role not in {"super_admin", "root"}:
+        raise HTTPException(status_code=403, detail="Insufficient permissions")
+
+    if role == "super_admin":
+        org_ids = await _designated_super_admin_org_ids(session, current_user)
+        if org_id and org_id not in org_ids:
+            raise HTTPException(status_code=403, detail="org_id not in your scope")
+
+    try:
+        traces = await _fetch_observability_traces(session, current_user, org_id)
+    except Exception as e:
+        logger.warning("Failed to fetch observability traces for cost dashboard: %s", e)
+        traces = []
+
+    total = len(traces)
+    total_cost = sum(getattr(t, "total_cost", 0) or 0 for t in traces)
+    avg_cost = round(total_cost / total, 4) if total > 0 else 0
+
+    return DashboardSectionResponse(
+        section="cost_financial",
+        kpis=[
+            DashboardKpi(id="total_cost", label="Total Cost", value=round(total_cost, 4), unit="$"),
+            DashboardKpi(id="avg_cost_per_run", label="Avg Cost Per Run", value=avg_cost, unit="$"),
+        ],
+    )
+
+
+@router.get("/sections/cost-financial/monthly-trend", response_model=CostTrendResponse, status_code=200)
+async def get_cost_monthly_trend(
+    *,
+    request: Request,
+    session: DbSession,
+    current_user: CurrentActiveUser,
+    org_id: UUID | None = Query(default=None, description="Optional org filter for super admin"),
+    range: str = Query(default="30d", description="'30d' or '90d'"),
+    tz_offset_minutes: int | None = Query(default=None, description="Client TZ offset in minutes"),
+):
+    """Monthly cost trend: daily cost values for charting."""
+    proxied = await _maybe_proxy_to_region(request, current_user, "cost-financial/monthly-trend")
+    if proxied is not None:
+        return proxied
+
+    role = str(getattr(current_user, "role", "")).lower()
+    if role not in {"super_admin", "root"}:
+        raise HTTPException(status_code=403, detail="Insufficient permissions")
+
+    if role == "super_admin":
+        org_ids = await _designated_super_admin_org_ids(session, current_user)
+        if org_id and org_id not in org_ids:
+            raise HTTPException(status_code=403, detail="org_id not in your scope")
+
+    days = 90 if range == "90d" else 30
+    tz_off = _coerce_tz_offset_minutes(tz_offset_minutes)
+
+    try:
+        traces = await _fetch_observability_traces(session, current_user, org_id, from_days=days)
+    except Exception as e:
+        logger.warning("Failed to fetch observability traces for cost trend: %s", e)
+        traces = []
+
+    daily_cost: dict[str, float] = {}
+    for t in traces:
+        ts = getattr(t, "timestamp", None)
+        if not ts:
+            continue
+        if tz_off is not None:
+            local_ts = ts + timedelta(minutes=tz_off)
+            date_str = local_ts.strftime("%Y-%m-%d")
+        else:
+            date_str = ts.strftime("%Y-%m-%d")
+        daily_cost[date_str] = daily_cost.get(date_str, 0) + (getattr(t, "total_cost", 0) or 0)
+
+    series = [
+        TimeseriesPoint(date=d, value=round(v, 4))
+        for d, v in sorted(daily_cost.items())
+    ]
+
+    return CostTrendResponse(range=range, series=series)

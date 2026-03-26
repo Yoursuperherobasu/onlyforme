@@ -121,15 +121,21 @@ export function AuthProvider({ children }): React.ReactElement {
           fetchApiData();
         },
         onError: async (error) => {
-          clearLocalAuthState();
-          useAuthStore.getState().setUserData(null);
-
           const status = (error as AxiosError)?.response?.status;
           const isTransportFailure =
             !(error as AxiosError)?.response &&
             Boolean((error as AxiosError)?.message);
 
-          if (status === 401 || status === 403 || isTransportFailure) {
+          if (isTransportFailure) {
+            // Keep the current auth state during transient wake-up / network /
+            // certificate failures so the user is not forced out unnecessarily.
+            return;
+          }
+
+          clearLocalAuthState();
+          useAuthStore.getState().setUserData(null);
+
+          if (status === 401 || status === 403) {
             try {
               await mutateLogoutAsync(undefined);
             } catch {
