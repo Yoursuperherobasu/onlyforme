@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import time
 import uuid
 from typing import TYPE_CHECKING, Any
@@ -11,6 +12,7 @@ from aio_pika.abc import AbstractIncomingMessage
 from loguru import logger
 
 from agentcore.services.base import Service
+from agentcore.services.job_queue.service import JobQueueNotFoundError
 from agentcore.services.rabbitmq.config import RabbitMQConfig
 
 if TYPE_CHECKING:
@@ -40,7 +42,8 @@ class RabbitMQService(Service):
     def __init__(self) -> None:
         self.config = RabbitMQConfig()
         self._connection: AbstractRobustConnection | None = None
-        self._channel: Channel | None = None
+        self._channel: Channel | None = None        # Separate channel used only for publishing (AMQP best practice)
+        self._publish_channel: Channel | None = None
         self._queues: dict[str, Queue] = {}
         self._consumer_tags: list[str] = []
         self._started = False
@@ -79,30 +82,48 @@ class RabbitMQService(Service):
             self._connection = await aio_pika.connect_robust(
                 self.config.url,
                 client_properties={"connection_name": "agentcore"},
+                heartbeat=30,  # Send heartbeats every 30s to prevent CloudAMQP idle timeout
             )
             logger.info("RabbitMQ connection established")
 
+            # Consumer channel — QoS applies to consumers on this channel
             self._channel = await self._connection.channel()
             await self._channel.set_qos(prefetch_count=self.config.prefetch_count)
 
-            # All queues with their consumer handlers
+            # Separate publisher channel — no QoS, no consumers
+            self._publish_channel = await self._connection.channel()
+
+            # Orchestrator queue is only consumed by the main backend.
+            # AKS pods (AGENTCORE_IS_POD=true) must not subscribe to it — the
+            # job_id is registered in the main backend's memory, so a pod picking
+            # up the message would find nothing and discard it as stale.
+            is_agent_pod = bool(os.environ.get("AGENTCORE_IS_POD"))
+
             queue_consumers = [
                 (self.config.build_queue, self._on_build_message),
                 (self.config.run_queue, self._on_run_message),
                 (self.config.schedule_queue, self._on_schedule_message),
                 (self.config.trigger_queue, self._on_trigger_message),
-                (self.config.orchestrator_queue, self._on_orchestrator_message),
             ]
+            if not is_agent_pod:
+                queue_consumers.append((self.config.orchestrator_queue, self._on_orchestrator_message))
+            else:
+                logger.info("Running as published agent pod — skipping orchestrator queue consumer")
 
             for queue_name, handler in queue_consumers:
+                # Delete and redeclare — purge() only removes READY messages but
+                # leaves unacked messages from old connections alive until their
+                # heartbeat expires (up to 150s). Those re-queue AFTER purge and
+                # block the prefetch. Deleting + redeclaring gives a truly clean
+                # slate; when old connections close, re-queued messages arrive at
+                # the new queue and the handlers discard them as stale instantly.
+                try:
+                    await self._channel.queue_delete(queue_name)
+                    logger.info(f"Deleted existing queue {queue_name} for clean startup")
+                except Exception:
+                    pass
                 q = await self._channel.declare_queue(queue_name, durable=True)
-
-                # Purge old messages — they reference job_ids from a previous
-                # server session whose in-memory queues no longer exist.
-                purge_result = await q.purge()
-                msg_count = getattr(purge_result, "message_count", purge_result)
-                if msg_count:
-                    logger.info(f"Purged {msg_count} stale messages from {queue_name}")
+                logger.info(f"Declared fresh queue {queue_name}")
 
                 self._queues[queue_name] = q
                 tag = await q.consume(handler)
@@ -138,6 +159,8 @@ class RabbitMQService(Service):
                 pass
 
         try:
+            if self._publish_channel and not self._publish_channel.is_closed:
+                await self._publish_channel.close()
             if self._channel and not self._channel.is_closed:
                 await self._channel.close()
             if self._connection and not self._connection.is_closed:
@@ -177,8 +200,9 @@ class RabbitMQService(Service):
         return await self._publish(self.config.orchestrator_queue, job_data)
 
     async def _publish(self, queue_name: str, job_data: dict[str, Any]) -> str:
-        if not self._channel or self._channel.is_closed:
-            msg = "RabbitMQ channel is not available"
+        pub_ch = self._publish_channel or self._channel
+        if not pub_ch or pub_ch.is_closed:
+            msg = "RabbitMQ publish channel is not available"
             raise RuntimeError(msg)
 
         message_id = job_data.get("job_id", str(uuid.uuid4()))
@@ -191,7 +215,7 @@ class RabbitMQService(Service):
             delivery_mode=aio_pika.DeliveryMode.PERSISTENT,
         )
 
-        await self._channel.default_exchange.publish(message, routing_key=queue_name)
+        await pub_ch.default_exchange.publish(message, routing_key=queue_name)
 
         short_name = queue_name.split(".")[-1]
         self._stats[f"{short_name}_published"] = self._stats.get(f"{short_name}_published", 0) + 1
@@ -227,9 +251,11 @@ class RabbitMQService(Service):
         job_id = None
         start_time = time.time()
         try:
-            async with message.process():
+            # ignore_processed=True: handlers that call message.ack() manually
+            # won't trigger a double-ack error when process().__aexit__ runs.
+            async with message.process(ignore_processed=True):
                 job_id = await handler(message, start_time)
-            logger.debug(f"[RabbitMQ] Message acked for {queue_name} job {job_id}")
+            logger.debug(f"[RabbitMQ] Message processed for {queue_name} job {job_id}")
         except asyncio.CancelledError:
             self._track(queue_name, "failed")
             logger.warning(
@@ -255,10 +281,21 @@ class RabbitMQService(Service):
         logger.info(f"[RabbitMQ] Processing build job: {job_id}")
 
         queue_service = get_queue_service()
-        _, event_manager, _, _ = queue_service.get_queue_data(job_id)
+
+        # Stale message guard: job_id only exists in memory for this server session.
+        # If it's missing, this message is from a previous session that crashed while
+        # the job was UNACKED. Discard it immediately so the prefetch slot is freed.
+        try:
+            _, event_manager, _, _ = queue_service.get_queue_data(job_id)
+        except JobQueueNotFoundError:
+            logger.warning(f"[RabbitMQ] Stale build job {job_id} — discarding (not in current session)")
+            await message.nack(requeue=False)
+            return job_id
 
         await self._execute_build_job(job_data, event_manager, queue_service)
 
+        # Keep message UNACKED until job completes — true RabbitMQ delivery guarantee.
+        # Prefetch slot is held for the duration so rate-limiting (prefetch_count) works.
         _, _, task, _ = queue_service.get_queue_data(job_id)
         if task and not task.done():
             await task
@@ -278,7 +315,13 @@ class RabbitMQService(Service):
         logger.info(f"[RabbitMQ] Processing run job: {job_id}")
 
         queue_service = get_queue_service()
-        _, event_manager, _, _ = queue_service.get_queue_data(job_id)
+
+        try:
+            _, event_manager, _, _ = queue_service.get_queue_data(job_id)
+        except JobQueueNotFoundError:
+            logger.warning(f"[RabbitMQ] Stale run job {job_id} — discarding (not in current session)")
+            await message.nack(requeue=False)
+            return job_id
 
         await self._execute_run_job(job_data, event_manager, queue_service)
 
@@ -350,7 +393,13 @@ class RabbitMQService(Service):
         logger.info(f"[RabbitMQ] Processing orchestrator job: {job_id}")
 
         queue_service = get_queue_service()
-        _, event_manager, _, _ = queue_service.get_queue_data(job_id)
+
+        try:
+            _, event_manager, _, _ = queue_service.get_queue_data(job_id)
+        except JobQueueNotFoundError:
+            logger.warning(f"[RabbitMQ] Stale orchestrator job {job_id} — discarding (not in current session)")
+            await message.nack(requeue=False)
+            return job_id
 
         await self._execute_orchestrator_job(job_data, event_manager)
 
@@ -481,37 +530,74 @@ class RabbitMQService(Service):
                 event_manager.queue.put_nowait((None, None, time.time()))
 
     async def _execute_orchestrator_job(self, job_data: dict[str, Any], event_manager: Any) -> None:
-        from agentcore.api.orchestrator import _run_agent_from_snapshot
-        from agentcore.processing.process import run_graph_internal
+        # Get queue FIRST so the finally sentinel always works, even if imports fail
+        queue = event_manager.queue
+        job_id = job_data.get("job_id", "unknown")
 
-        job_id = job_data["job_id"]
+        try:
+            from datetime import datetime, timezone
 
-        agent_text, _result_sid, was_interrupted, agent_content_blocks = await _run_agent_from_snapshot(
-            agent_id=job_data["agent_id"],
-            agent_name=job_data["agent_name"],
-            snapshot=job_data["snapshot"],
-            input_value=job_data["input_value"],
-            session_id=job_data["session_id"],
-            user_id=job_data["user_id"],
-            files=job_data.get("files"),
-            stream=True,
-            event_manager=event_manager,
-            deployment_id=job_data.get("deployment_id"),
-            org_id=job_data.get("org_id"),
-            dept_id=job_data.get("dept_id"),
-            is_prod_deployment=job_data.get("is_prod_deployment", False),
-            project_id=job_data.get("project_id"),
-            project_name=job_data.get("project_name"),
-        )
+            from agentcore.api.orchestrator import (
+                _orch_call_run_api,
+                _serialize_content_blocks,
+                orch_add_message,
+            )
+            from agentcore.services.database.models.orch_conversation.model import OrchConversationTable
+            from agentcore.services.deps import session_scope
 
-        if was_interrupted:
+            agent_id = uuid.UUID(job_data["agent_id"])
+            agent_name = job_data["agent_name"]
+            session_id = job_data["session_id"]
+            user_id = uuid.UUID(job_data["user_id"])
+            deployment_id = uuid.UUID(job_data["deployment_id"])
+
+            agent_text, was_interrupted, agent_content_blocks = await _orch_call_run_api(
+                agent_id=job_data["agent_id"],
+                env=job_data.get("env", "uat"),
+                version=job_data.get("version", "v1"),
+                input_value=job_data["input_value"],
+                session_id=session_id,
+                files=job_data.get("files"),
+                stream=True,
+                event_manager=event_manager,
+            )
+
+            if was_interrupted:
+                event_manager.on_end(data={})
+                return
+
+            if not agent_text or not agent_text.strip():
+                agent_text = "Agent did not produce a response."
+
+            serialized_blocks = _serialize_content_blocks(agent_content_blocks)
+
+            reply_ts = datetime.now(timezone.utc).replace(tzinfo=None)
+            async with session_scope() as db:
+                agent_msg = OrchConversationTable(
+                    id=uuid.uuid4(),
+                    sender="agent",
+                    sender_name=agent_name,
+                    session_id=session_id,
+                    text=agent_text,
+                    agent_id=agent_id,
+                    user_id=user_id,
+                    deployment_id=deployment_id,
+                    timestamp=reply_ts,
+                    files=[],
+                    properties={},
+                    category="message",
+                    content_blocks=serialized_blocks,
+                )
+                await orch_add_message(agent_msg, db)
+
+            event_manager.on_end(data={
+                "agent_text": agent_text,
+                "message_id": str(agent_msg.id),
+                "content_blocks": serialized_blocks,
+            })
+        except Exception as exc:
+            logger.exception(f"[RabbitMQ] Orchestrator job {job_id} error: {exc}")
+            event_manager.on_error(data={"text": str(exc)})
             event_manager.on_end(data={})
-            await event_manager.queue.put((None, None, time.time()))
-            return
-
-        if not agent_text or not agent_text.strip():
-            agent_text = "Agent did not produce a response."
-
-        event_manager.on_end(data={"agent_text": agent_text})
-        # Sentinel to signal the streaming response consumer to stop
-        await event_manager.queue.put((None, None, time.time()))
+        finally:
+            queue.put_nowait((None, None, None))

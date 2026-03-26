@@ -5,13 +5,16 @@ import asyncio
 import json as _json
 import json
 import os
+from contextvars import ContextVar
 from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID, uuid4
 
+_request_base_url: ContextVar[str | None] = ContextVar("_request_base_url", default=None)
+
 import httpx
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, HTTPException, Query, Request, status
 
 from loguru import logger
 from pydantic import BaseModel
@@ -258,22 +261,26 @@ async def _orch_call_run_api(
     For streaming, SSE token/add_message events are forwarded to event_manager;
     the function waits for the 'end' event to obtain the final text.
     """
-    from agentcore.services.deps import get_settings_service
-    settings = get_settings_service().settings
-    base_url = f"http://{settings.host}:{settings.port}"
+    base_url = (
+        os.environ.get("ORCHESTRATOR_BASE_URL")
+        or _request_base_url.get()
+    )
+    logger.info(f"[ORCH] base_url resolved to: {base_url}")
     secret = os.environ.get("AGENTCORE_INTERNAL_SECRET", "")
     url = (
         f"{base_url}/api/run/{agent_id}"
         f"?env={env}&version={version}&stream={str(stream).lower()}"
     )
+    logger.info(f"[ORCH] calling run API: {url} | stream={stream}")
     body: dict = {"input_value": input_value, "session_id": session_id}
     if files:
         body["files"] = files
     headers = {"X-Internal-Secret": secret, "Content-Type": "application/json"}
 
     if not stream:
-        async with httpx.AsyncClient(timeout=300) as client:
+        async with httpx.AsyncClient(timeout=300, verify=False) as client:
             resp = await client.post(url, json=body, headers=headers)
+            logger.info(f"[ORCH] run API response: status={resp.status_code}")
             resp.raise_for_status()
         payload = resp.json()
         text = _extract_text(payload)
@@ -282,13 +289,15 @@ async def _orch_call_run_api(
             for o in (payload.get("outputs") or [])
             if isinstance(o, dict)
         )
+        logger.info(f"[ORCH] run API completed | interrupted={interrupted} | response_length={len(text)}")
         return text, interrupted, []
 
     # --- Streaming: forward SSE events to event_manager, collect final text ---
     final_text = ""
     was_interrupted = False
-    async with httpx.AsyncClient(timeout=300) as client:
+    async with httpx.AsyncClient(timeout=300, verify=False) as client:
         async with client.stream("POST", url, json=body, headers=headers) as resp:
+            logger.info(f"[ORCH] stream started: status={resp.status_code}")
             resp.raise_for_status()
             async for line in resp.aiter_lines():
                 line = line.strip()
@@ -309,6 +318,7 @@ async def _orch_call_run_api(
                     final_text = _extract_text(result)
                     if isinstance(result, dict) and result.get("interrupted"):
                         was_interrupted = True
+                    logger.info(f"[ORCH] stream ended | interrupted={was_interrupted} | response_length={len(final_text)}")
                 elif etype == "error":
                     raise ValueError(edata.get("error", "Stream error from /run"))
 
@@ -638,6 +648,7 @@ async def list_orch_agents(
 @router.post("/chat", response_model=OrchChatResponse, status_code=200)
 async def orch_chat(
     *,
+    request: Request,
     session: DbSession,
     current_user: CurrentActiveUser,
     body: OrchChatRequest,
@@ -650,6 +661,7 @@ async def orch_chat(
     Context reset: when the agent changes mid-session, a system message is
     inserted as a divider and the new agent starts with a fresh context.
     """
+    _request_base_url.set(str(request.base_url).rstrip("/"))
     try:
         # -- 1. Resolve agent (sticky routing) -----------------------------
         agent_id, deployment_id, deployment = await _resolve_agent(
@@ -689,7 +701,7 @@ async def orch_chat(
 
         # -- 4. Run the agent via /run API -----------------------------------
         logger.info(f"[ORCH] Agent={deployment.agent_name} | session={body.session_id} | input_value={body.input_value!r}")
-        _env_str = "prod" if isinstance(deployment, AgentDeploymentProd) else "uat"
+        _env_str = "2" if isinstance(deployment, AgentDeploymentProd) else "1"
         _version_str = f"v{deployment.version_number}"
         agent_text, _was_hitl, agent_content_blocks = await _orch_call_run_api(
             agent_id=str(agent_id),
@@ -752,6 +764,7 @@ async def orch_chat(
 @router.post("/chat/stream", status_code=200)
 async def orch_chat_stream(
     *,
+    request: Request,
     session: DbSession,
     current_user: CurrentActiveUser,
     body: OrchChatRequest,
@@ -765,6 +778,7 @@ async def orch_chat_stream(
       - ``token``        – subsequent chunks ``{chunk, id}``
       - ``end``          – signals stream is done, carries final ``{agent_text, message_id}``
     """
+    _request_base_url.set(str(request.base_url).rstrip("/"))
     # -- 1. Resolve agent (sticky routing) -------------------------------
     agent_id, deployment_id, deployment = await _resolve_agent(
         session,
@@ -826,7 +840,7 @@ async def orch_chat_stream(
     async def _run_and_persist():
         """Background coroutine: run the agent via /run API, persist reply, close the queue."""
         try:
-            _env_str = "prod" if dep_is_prod else "uat"
+            _env_str = "2" if dep_is_prod else "1"
             _version_str = f"v{deployment.version_number}"
             agent_text, was_interrupted, agent_content_blocks = await _orch_call_run_api(
                 agent_id=agent_id_str,
@@ -980,6 +994,8 @@ async def orch_chat_stream(
             "is_prod_deployment": dep_is_prod,
             "project_id": orch_project_id,
             "project_name": orch_project_name,
+            "env": "prod" if dep_is_prod else "uat",
+            "version": f"v{deployment.version_number}",
         }
         await rabbitmq_service.publish_orchestrator_job(job_data)
         logger.info(f"Orchestrator job {job_id} published to RabbitMQ")

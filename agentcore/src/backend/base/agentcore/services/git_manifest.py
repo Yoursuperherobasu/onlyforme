@@ -197,6 +197,37 @@ def _ado_put(
 
 # ── Public API ────────────────────────────────────────────────────────────────
 
+def read_manifest_from_git() -> dict:
+    """Read current manifest YAML from the configured Git repo.
+
+    Returns the parsed dict (e.g. {"agents": [...]}).
+    Returns {} if git sync is disabled or the file doesn't exist yet.
+    """
+    from agentcore.services.deps import get_settings_service
+
+    s = get_settings_service().settings
+    provider = (s.git_provider or "").strip().lower()
+    if not provider:
+        return {}
+
+    branch = s.git_branch or "main"
+    file_path = s.git_manifest_file or "agents.yaml"
+
+    if provider in ("ado", "both"):
+        if s.ado_repo_url:
+            info = _parse_repo_url(s.ado_repo_url)
+            data, _ = _ado_get(s.ado_token, info, branch, file_path)
+            return data
+
+    if provider in ("github", "both"):
+        if s.github_repo_url:
+            info = _parse_repo_url(s.github_repo_url)
+            data, _ = _gh_get(s.github_token, info, branch, file_path)
+            return data
+
+    return {}
+
+
 def push_manifest_to_git(data: dict, commit_message: str) -> None:
     """Push *data* as manifest YAML to the configured Git repo(s).
 
