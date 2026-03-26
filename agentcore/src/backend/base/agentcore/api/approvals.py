@@ -52,6 +52,7 @@ from agentcore.services.database.models.agent_api_key.model import AgentApiKey
 from agentcore.services.database.registry_service import sync_agent_registry
 from agentcore.services.approval_notifications import upsert_approval_notification
 from agentcore.services.auth.utils import generate_agent_api_key
+from agentcore.services.database.models.agent_bundle.model import DeploymentEnvEnum
 
 
 class SubmittedBy(BaseModel):
@@ -1714,6 +1715,29 @@ async def approve_agent(
         )
 
     await session.commit()
+
+    # ─── Create agent bundle rows from the frozen snapshot ──
+    try:
+        from agentcore.api.publish import _extract_and_create_bundles
+        await session.refresh(deployment)
+        if deployment.agent_snapshot:
+            bundles = await _extract_and_create_bundles(
+                session,
+                snapshot=deployment.agent_snapshot,
+                agent_id=deployment.agent_id,
+                org_id=deployment.org_id,
+                dept_id=deployment.dept_id,
+                deployment_id=deployment.id,
+                deployment_env=DeploymentEnvEnum.PROD,
+                created_by=current_user.id,
+            )
+            if bundles:
+                await session.commit()
+                logger.info(f"Created {len(bundles)} bundle(s) for approved PROD deploy {deployment.id}")
+            else:
+                logger.info(f"No bundles extracted from snapshot for approved PROD deploy {deployment.id}")
+    except Exception as bundle_err:
+        logger.warning(f"Bundle extraction failed for approved PROD deploy {deployment.id}: {bundle_err}", exc_info=True)
 
     # ─── Auto-generate API key for this approved PROD deployment ──
     generated_api_key: str | None = None
