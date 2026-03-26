@@ -858,12 +858,16 @@ export default function DashboardAdmin(): JSX.Element {
     if (!isSuperAdmin) return;
     const gv = (p: any) => { const r = p?.data?.result; const v = Array.isArray(r) && r.length > 0 ? r[0]?.value?.[1] : null; const n = v != null ? Number(v) : null; return Number.isFinite(n) ? n : null; };
     const gsv = (sp: any, label: string) => { const s = sp?.series ?? []; const e = s.find((x: any) => x?.label === label); return (e?.prometheus?.data?.result?.[0]?.values ?? []).map((v: any) => Number(v?.[1] ?? 0)).filter((v: any) => Number.isFinite(v)); };
+    const latestSeriesValue = (sp: any, label: string) => { const vals = gsv(sp, label); return vals.length ? vals[vals.length - 1] : null; };
     const now = Math.floor(Date.now() / 1000); const start = now - 86400;
-    Promise.all([api.get(`/api/metrics-dashboard/query-preset/platform_uptime`), api.get(`/api/metrics-dashboard/query-preset/api_latency_p95`), api.get(`/api/metrics-dashboard/query-preset/api_latency_p99`), api.get(`/api/metrics-dashboard/query-preset/error_rate`), api.get(`/api/metrics-dashboard/query-preset/cpu_saturation`), api.get(`/api/metrics-dashboard/query-preset/memory_saturation`), api.get(`/api/metrics-dashboard/query-preset-range/pod_scaling_activity`, { params: { start, end: now, step: "3600s" } })])
-      .then(([u, p95, p99, er, cpu, mem, sc]) => {
-        const uv = gv(u?.data?.prometheus), p95v = gv(p95?.data?.prometheus), p99v = gv(p99?.data?.prometheus), erv = gv(er?.data?.prometheus), cpuv = gv(cpu?.data?.prometheus), memv = gv(mem?.data?.prometheus);
+    Promise.all([api.get(`/api/metrics-dashboard/query-preset/platform_uptime`), api.get(`/api/metrics-dashboard/query-preset/api_latency_p95`), api.get(`/api/metrics-dashboard/query-preset/api_latency_p99`), api.get(`/api/metrics-dashboard/query-preset/error_rate`), api.get(`/api/metrics-dashboard/query-preset/cpu_saturation`), api.get(`/api/metrics-dashboard/query-preset/memory_saturation`), api.get(`/api/metrics-dashboard/query-preset-range/pod_scaling_activity`, { params: { start, end: now, step: "3600s" } }), api.get(`/api/metrics-dashboard/query-preset-range/cpu_memory_saturation`, { params: { start, end: now, step: "120s" } })])
+      .then(([u, p95, p99, er, cpu, mem, sc, cm]) => {
+        const uv = gv(u?.data?.prometheus), p95v = gv(p95?.data?.prometheus), p99v = gv(p99?.data?.prometheus), erv = gv(er?.data?.prometheus);
+        const cpuv = gv(cpu?.data?.prometheus) ?? latestSeriesValue(cm?.data, "CPU %");
+        const memv = gv(mem?.data?.prometheus) ?? latestSeriesValue(cm?.data, "Memory %");
         const dv = gsv(sc?.data, "Desired Replicas (HPA)"); let se = 0; for (let i = 1; i < dv.length; i++) if (dv[i] !== dv[i-1]) se++;
-        setPlatformKpis([{ name: "Platform Uptime %", value: uv != null ? `${uv.toFixed(2)}%` : "0%" }, { name: "API Latency P95", value: p95v != null ? `${Math.round(p95v)}ms` : "0ms" }, { name: "API Latency P99", value: p99v != null ? `${Math.round(p99v)}ms` : "0ms" }, { name: "Error Rate %", value: erv != null ? `${erv.toFixed(2)}%` : "0%" }, { name: "AKS Pod Scaling Events", value: `${se}` }, { name: "CPU/Memory Saturation %", value: cpuv != null && memv != null ? `${formatPercentMetric(cpuv)} / ${formatPercentMetric(memv)}` : "0%" }]);
+        const cpuMemValue = cpuv != null || memv != null ? `${cpuv != null ? formatPercentMetric(cpuv) : "--"} / ${memv != null ? formatPercentMetric(memv) : "--"}` : "0%";
+        setPlatformKpis([{ name: "Platform Uptime %", value: uv != null ? `${uv.toFixed(2)}%` : "0%" }, { name: "API Latency P95", value: p95v != null ? `${Math.round(p95v)}ms` : "0ms" }, { name: "API Latency P99", value: p99v != null ? `${Math.round(p99v)}ms` : "0ms" }, { name: "Error Rate %", value: erv != null ? `${erv.toFixed(2)}%` : "0%" }, { name: "AKS Pod Scaling Events", value: `${se}` }, { name: "CPU/Memory Saturation %", value: cpuMemValue }]);
       }).catch(() => setPlatformKpis(platformKpiFallback));
   }, [isSuperAdmin, refreshTick]);
   useEffect(() => {
@@ -1173,4 +1177,3 @@ export default function DashboardAdmin(): JSX.Element {
     </div>
   );
 }
-

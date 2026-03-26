@@ -53,6 +53,7 @@ from agentcore.services.database.models.agent_api_key.model import AgentApiKey
 from agentcore.services.database.registry_service import sync_agent_registry
 from agentcore.services.auth.utils import generate_agent_api_key
 from agentcore.services.approval_notifications import upsert_approval_notification
+from agentcore.services.database.models.agent_bundle.model import DeploymentEnvEnum as BundleDeploymentEnvEnum
 
 router = APIRouter(prefix="/control-panel", tags=["Control Panel"])
 
@@ -1342,6 +1343,32 @@ async def promote_uat_to_prod(
                 logger.info(f"Generated API key (prefix={kp}) for PROD promote {new_record.id}")
             except Exception as key_err:
                 logger.warning(f"API key generation failed for PROD promote {new_record.id}: {key_err}")
+
+        # ─── Create agent bundle rows from snapshot (admin only) ──
+        # For non-admin (developer), bundles are deferred until admin approval.
+        # See approvals.py approve_agent() for bundle creation on approval.
+        if is_admin:
+            try:
+                from agentcore.api.publish import _extract_and_create_bundles
+                snapshot = (uat_dep.agent_snapshot or {})
+                if snapshot:
+                    bundles = await _extract_and_create_bundles(
+                        session,
+                        snapshot=snapshot,
+                        agent_id=uat_dep.agent_id,
+                        org_id=uat_dep.org_id,
+                        dept_id=department_id,
+                        deployment_id=new_record.id,
+                        deployment_env=BundleDeploymentEnvEnum.PROD,
+                        created_by=current_user.id,
+                    )
+                    if bundles:
+                        await session.commit()
+                        logger.info(f"Created {len(bundles)} bundle(s) for PROD promote {new_record.id}")
+                    else:
+                        logger.info(f"No bundles extracted from snapshot for PROD promote {new_record.id}")
+            except Exception as bundle_err:
+                logger.warning(f"Bundle extraction failed for PROD promote {new_record.id}: {bundle_err}", exc_info=True)
 
         guardrail_promotions = []
         guardrails_ready = True

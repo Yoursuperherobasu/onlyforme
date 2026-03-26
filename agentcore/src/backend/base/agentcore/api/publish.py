@@ -1236,15 +1236,13 @@ async def _extract_and_create_bundles(
         if node_type in _NODE_TYPE_TO_BUNDLE:
             bundle_type, field_name = _NODE_TYPE_TO_BUNDLE[node_type]
             raw_value = _extract_field_value(template, field_name)
-            if not raw_value:
-                continue
             resource_name = _derive_resource_name(raw_value, node_type)
             dedup_key = (bundle_type.value, resource_name)
             if dedup_key in seen:
                 continue
             seen.add(dedup_key)
 
-            resource_config = _extract_resource_config(template, field_name, node_type)
+            resource_config = _extract_resource_config(template, field_name, node_type) if raw_value else None
 
             # NOTE: Guardrail promotion is deferred until admin approval.
             # See approvals.py approve_agent() for the actual promotion logic.
@@ -2261,12 +2259,15 @@ async def publish_agent(
         else:
             snapshot["_input_type"] = "autonomous"
 
+        # Capture org_id before any commits to avoid session expiry issues
+        agent_org_id = agent.org_id
+
         if env == "uat":
             # ─── UAT: always direct deploy ───────────────────────
             next_version = await _get_next_version_number(session, agent_id, AgentDeploymentUAT)
 
             visibility_enum = DeploymentVisibilityEnum(body.visibility.upper())
-            if agent.org_id is None:
+            if agent_org_id is None:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Organization is required for publishing.",
@@ -2332,7 +2333,7 @@ async def publish_agent(
                     session,
                     snapshot=snapshot,
                     agent_id=agent_id,
-                    org_id=agent.org_id,
+                    org_id=agent_org_id,
                     dept_id=resolved_department_id,
                     deployment_id=new_record.id,
                     deployment_env=DeploymentEnvEnum.UAT,
@@ -2523,21 +2524,32 @@ async def publish_agent(
 
                 # ─── Create agent bundle rows from snapshot ──
                 try:
+                    _snapshot_node_types = [
+                        n.get("data", {}).get("type", "?") for n in snapshot.get("nodes", [])
+                    ]
+                    logger.info(
+                        f"[BUNDLE_DEBUG] PROD admin deploy {new_record.id}: "
+                        f"snapshot has {len(snapshot.get('nodes', []))} nodes, "
+                        f"types={_snapshot_node_types}"
+                    )
                     bundles = await _extract_and_create_bundles(
                         session,
                         snapshot=snapshot,
                         agent_id=agent_id,
-                        org_id=agent.org_id,
+                        org_id=agent_org_id,
                         dept_id=resolved_department_id,
                         deployment_id=new_record.id,
                         deployment_env=DeploymentEnvEnum.PROD,
                         created_by=current_user.id,
                     )
+                    logger.info(f"[BUNDLE_DEBUG] PROD admin: _extract_and_create_bundles returned {len(bundles)} bundle(s)")
                     if bundles:
                         await session.commit()
                         logger.info(f"Created {len(bundles)} bundle(s) for PROD deploy {new_record.id}")
+                    else:
+                        logger.info(f"No bundles extracted from snapshot for PROD deploy {new_record.id}")
                 except Exception as bundle_err:
-                    logger.warning(f"Bundle extraction failed for PROD deploy of {agent_id}: {bundle_err}")
+                    logger.error(f"[BUNDLE_DEBUG] Bundle extraction FAILED for PROD deploy of {agent_id}: {bundle_err}", exc_info=True)
 
                 # ─── Sync agent registry after PROD admin publish ──
                 try:
@@ -2683,23 +2695,8 @@ async def publish_agent(
                     f"Approval sent to dept admin {resolved_department_admin_id} [dept={resolved_department_id}]"
                 )
 
-                # ─── Create agent bundle rows from snapshot ──
-                try:
-                    bundles = await _extract_and_create_bundles(
-                        session,
-                        snapshot=snapshot,
-                        agent_id=agent_id,
-                        org_id=agent.org_id,
-                        dept_id=resolved_department_id,
-                        deployment_id=new_record.id,
-                        deployment_env=DeploymentEnvEnum.PROD,
-                        created_by=current_user.id,
-                    )
-                    if bundles:
-                        await session.commit()
-                        logger.info(f"Created {len(bundles)} bundle(s) for PROD pending-approval deploy {new_record.id}")
-                except Exception as bundle_err:
-                    logger.warning(f"Bundle extraction failed for PROD deploy of {agent_id}: {bundle_err}")
+                # NOTE: Bundle creation is deferred until admin approval.
+                # See approvals.py approve_agent() for bundle creation on approval.
 
                 return PublishActionResponse(
                     success=True,
