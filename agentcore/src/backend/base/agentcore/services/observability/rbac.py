@@ -256,7 +256,7 @@ async def resolve_observability_scope(
                     role_names=SUPER_ADMIN_VISIBLE_ROLES,
                 )
 
-    elif role == "root":
+    elif role in {"root", "leader_executive"}:
         if enforce_filter_for_admin and selected_org_id is None and selected_dept_id is None:
             raise ObservabilityScopeError("org_id or dept_id is required for root observability.")
         if selected_department:
@@ -299,7 +299,7 @@ async def resolve_observability_scope(
     bindings: list[LangfuseBinding] = []
     if target_dept_ids:
         bindings.extend(await _active_department_bindings(session, target_dept_ids))
-    if role in {"root", "super_admin"} and target_org_ids and trace_scope != "dept":
+    if role in {"root", "super_admin", "leader_executive"} and target_org_ids and trace_scope != "dept":
         bindings.extend(await _active_org_admin_bindings(session, target_org_ids))
 
     return ObservabilityScopeResolution(

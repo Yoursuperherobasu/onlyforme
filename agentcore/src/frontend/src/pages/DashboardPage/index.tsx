@@ -340,7 +340,7 @@ const businessSections: SectionConfig[] = [
 ];
 
 const rootSections: SectionConfig[] = [
-  
+
   {
     id: "maturity",
     label: "AI Maturity Indicators",
@@ -353,7 +353,22 @@ const rootSections: SectionConfig[] = [
     ],
     charts: [],
   },
-  
+  {
+    id: "cost",
+    label: "ROI & Financial Health",
+    headline: "ROI & Financial Health",
+    description: "95th percentile cost per agent run over time — highlights expensive outlier runs.",
+    kpis: [],
+    charts: [
+      {
+        title: "Cost P95 Trend",
+        subtitle: "Daily P95 cost per run",
+        type: "area",
+        data: [],
+      },
+    ],
+  },
+
 ];
 
 // --- Style constants -------------------------------------------------------
@@ -544,6 +559,7 @@ function SectionCard({
   approvalRangeSelector,
   hitlRangeSelector,
   costRangeSelector,
+  costP95RangeSelector,
   defaultExpanded,
 }: {
   section: SectionConfig;
@@ -552,6 +568,7 @@ function SectionCard({
   approvalRangeSelector?: React.ReactNode;
   hitlRangeSelector?: React.ReactNode;
   costRangeSelector?: React.ReactNode;
+  costP95RangeSelector?: React.ReactNode;
   defaultExpanded: boolean;
 }) {
   const [expanded, setExpanded] = useState(defaultExpanded);
@@ -708,6 +725,7 @@ function SectionCard({
                   const isApprovalChart = section.id === "approval" && chart.title === "Pending Approvals";
                   const isHitlChart = section.id === "hitl" && (chart.title === "Invocation Rate" || chart.title === "Response Time");
                   const isCostChart = section.id === "cost" && chart.title === "Monthly Cost Trend";
+                  const isCostP95Chart = section.id === "cost" && chart.title === "Cost P95 Trend";
                   return (
                     <div
                       key={chart.title}
@@ -735,7 +753,8 @@ function SectionCard({
                           {isApprovalChart && approvalRangeSelector}
                           {isHitlChart && hitlRangeSelector}
                           {isCostChart && costRangeSelector}
-                          {!isApprovalChart && !isHitlChart && !isCostChart && (
+                          {isCostP95Chart && costP95RangeSelector}
+                          {!isApprovalChart && !isHitlChart && !isCostChart && !isCostP95Chart && (
                             <div
                               className="rounded-lg p-1.5"
                               style={{ backgroundColor: theme.accent + "1a" }}
@@ -834,6 +853,8 @@ export default function DashboardAdmin(): JSX.Element {
   const [costKpis, setCostKpis]                           = useState<SectionKpi[] | null>(null);
   const [costRange, setCostRange]                         = useState<"30d" | "90d">("30d");
   const [costTrendSeries, setCostTrendSeries]             = useState<PendingSeriesPoint[] | null>(null);
+  const [costP95Range, setCostP95Range]                   = useState<"30d" | "90d">("30d");
+  const [costP95TrendSeries, setCostP95TrendSeries]       = useState<PendingSeriesPoint[] | null>(null);
 
   // Fallbacks
   const lifecycleKpiFallback:   SectionKpi[] = [{ name: "Agents in UAT", value: "0" }, { name: "UAT to PROD Conversion Rate", value: "0%" }, { name: "Deprecated Agent Count", value: "0" }];
@@ -912,6 +933,15 @@ export default function DashboardAdmin(): JSX.Element {
   useEffect(() => { if (!isBusinessUser) return; const now = Math.floor(Date.now() / 1000); api.get(`/api/metrics-dashboard/query-preset-range/response_time_trend`, { params: { start: now - 604800, end: now, step: "3600s" } }).then((r) => setBusinessResponseTimeSeries((r?.data?.series?.[0]?.prometheus?.data?.result?.[0]?.values ?? []).map((v: any) => ({ date: new Date(Number(v?.[0] ?? 0) * 1000).toISOString().slice(0, 10), value: Number.isFinite(Number(v?.[1] ?? 0)) ? Number(v[1]) : 0 })))).catch(() => setBusinessResponseTimeSeries([])); }, [isBusinessUser, refreshTick]);
   useEffect(() => { if (!isBusinessUser) return; api.get<DashboardSectionApiResponse>("/api/dashboard/sections/business-experience").then((r) => { const next = r.data?.kpis?.map((k) => ({ name: k.label, value: k.unit ? `${k.value}${k.unit}` : `${k.value}` })) ?? []; setBusinessExperienceKpis((prev) => { const m = new Map((prev ?? businessExperienceFallback).map((k) => [k.name, k.value])); for (const k of next) m.set(k.name, k.value); return Array.from(m.entries()).map(([name, value]) => ({ name, value })); }); }).catch(() => setBusinessExperienceKpis((p) => p ?? businessExperienceFallback)); }, [isBusinessUser, refreshTick]);
   useEffect(() => { if (!isRootAdmin && !isLeaderExecutive) return; api.get<DashboardSectionApiResponse>("/api/dashboard/sections/root-maturity", regionConfig).then((r) => setRootMaturityKpis(r.data?.kpis?.map((k) => ({ name: k.label, value: k.unit ? `${k.value}${k.unit}` : `${k.value}` })) ?? rootMaturityFallback)).catch(() => setRootMaturityKpis(rootMaturityFallback)); }, [isRootAdmin, isLeaderExecutive, refreshTick, selectedRegionCode]);
+  useEffect(() => {
+    if (!isLeaderExecutive) return;
+    api.get<PendingSeriesResponse>("/api/dashboard/sections/cost-p95-trend", {
+      ...(regionConfig || {}),
+      params: { range: costP95Range, tz_offset_minutes: tzOffsetMinutes },
+    })
+      .then((r) => setCostP95TrendSeries(r.data?.series ?? []))
+      .catch(() => setCostP95TrendSeries([]));
+  }, [costP95Range, isLeaderExecutive, refreshTick, selectedRegionCode, tzOffsetMinutes]);
   useEffect(() => {
     if (!isDepartmentAdmin) return;
     api
@@ -1013,11 +1043,13 @@ export default function DashboardAdmin(): JSX.Element {
   const platCpuMemData   = useMemo(() => platformCpuMemSeries?.length ? platformCpuMemSeries : mkTsSeries(8).map((p) => ({ ...p, cpu: 0, memory: 0 })), [platformCpuMemSeries]);
   const cDays = costRange === "90d" ? 90 : 30;
   const costTrendChartData = useMemo(() => mkDateSeries(costTrendSeries, cDays), [costTrendSeries, cDays]);
+  const cP95Days = costP95Range === "90d" ? 90 : 30;
+  const costP95ChartData = useMemo(() => mkDateSeries(costP95TrendSeries, cP95Days), [costP95TrendSeries, cP95Days]);
   const devLatData       = useMemo(() => devLatencySeries ?? [], [devLatencySeries]);
 
   // -- Resolve KPIs + charts for each section ----------------------------
 
-  const sectionsToRender = isDepartmentAdmin ? departmentSections : isDeveloper ? developerSections : isBusinessUser ? businessSections : (isRootAdmin || isLeaderExecutive) ? rootSections : sections;
+  const sectionsToRender = isDepartmentAdmin ? departmentSections : isDeveloper ? developerSections : isBusinessUser ? businessSections : isLeaderExecutive ? rootSections : isRootAdmin ? rootSections.filter((s) => s.id !== "cost") : sections;
 
   const resolveSection = (section: SectionConfig): { kpis: SectionKpi[]; charts: SectionChart[] } => {
     let kpis = [...section.kpis];
@@ -1048,6 +1080,7 @@ export default function DashboardAdmin(): JSX.Element {
         if (chart.title === "CPU & Memory Saturation") return { ...chart, data: platCpuMemData };
       }
       if (section.id === "cost" && chart.title === "Monthly Cost Trend") return { ...chart, data: costTrendChartData };
+      if (section.id === "cost" && chart.title === "Cost P95 Trend") return { ...chart, data: costP95ChartData };
       if (section.id === "usage" && chart.title === "Response Time Trend") return { ...chart, data: deptRtChartData };
       if (section.id === "approval" && chart.title === "Pending Approvals") return { ...chart, data: approvalChartData };
       if (section.id === "hitl") {
@@ -1087,6 +1120,12 @@ export default function DashboardAdmin(): JSX.Element {
   const costRangeOptions = [{ value: "30d", label: "Last 30 days" }, { value: "90d", label: "Last 90 days" }];
   const costRangeSelector = (
     <Select value={costRange} onValueChange={(v) => setCostRange(v as "30d" | "90d")}>
+      <SelectTrigger className="h-7 w-[130px] text-xs"><SelectValue /></SelectTrigger>
+      <SelectContent>{costRangeOptions.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}</SelectContent>
+    </Select>
+  );
+  const costP95RangeSelector = (
+    <Select value={costP95Range} onValueChange={(v) => setCostP95Range(v as "30d" | "90d")}>
       <SelectTrigger className="h-7 w-[130px] text-xs"><SelectValue /></SelectTrigger>
       <SelectContent>{costRangeOptions.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}</SelectContent>
     </Select>
@@ -1168,6 +1207,7 @@ export default function DashboardAdmin(): JSX.Element {
                 approvalRangeSelector={section.id === "approval" ? approvalRangeSelector : undefined}
                 hitlRangeSelector={section.id === "hitl" ? hitlRangeSelector : undefined}
                 costRangeSelector={section.id === "cost" ? costRangeSelector : undefined}
+                costP95RangeSelector={section.id === "cost" ? costP95RangeSelector : undefined}
                 defaultExpanded={i === 0}
               />
             );

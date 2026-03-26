@@ -1274,11 +1274,14 @@ async def _fetch_observability_traces(
 
     clear_request_caches()
 
+    # Dashboard KPIs need cross-org access for leader_executive/root without
+    # requiring an explicit org_id filter.
     allowed_user_ids, scoped_clients, scope_key, _ = await resolve_scope_context(
         session=session,
         current_user=current_user,
         org_id=org_id,
         trace_scope="all",
+        enforce_filter_for_admin=False,
     )
     if not scoped_clients or not allowed_user_ids:
         return []
@@ -1432,5 +1435,58 @@ async def get_cost_monthly_trend(
         TimeseriesPoint(date=d, value=round(v, 4))
         for d, v in sorted(daily_cost.items())
     ]
+
+    return CostTrendResponse(range=range, series=series)
+
+
+@router.get("/sections/cost-p95-trend", response_model=CostTrendResponse, status_code=200)
+async def get_cost_p95_trend(
+    *,
+    request: Request,
+    session: DbSession,
+    current_user: CurrentActiveUser,
+    org_id: UUID | None = Query(default=None, description="Optional org filter"),
+    range: str = Query(default="30d", description="'30d' or '90d'"),
+    tz_offset_minutes: int | None = Query(default=None, description="Client TZ offset in minutes"),
+):
+    """Cost P95 trend: daily P95 cost per trace for charting (leader executive)."""
+    proxied = await _maybe_proxy_to_region(request, current_user, "cost-p95-trend")
+    if proxied is not None:
+        return proxied
+
+    role = str(getattr(current_user, "role", "")).lower()
+    if role != "leader_executive":
+        raise HTTPException(status_code=403, detail="Insufficient permissions")
+
+    days = 90 if range == "90d" else 30
+    tz_off = _coerce_tz_offset_minutes(tz_offset_minutes)
+
+    try:
+        traces = await _fetch_observability_traces(session, current_user, org_id, from_days=days)
+    except Exception as e:
+        logger.warning("Failed to fetch traces for cost P95 trend: %s", e)
+        traces = []
+
+    # Bucket costs by date
+    daily_costs: dict[str, list[float]] = {}
+    for t in traces:
+        ts = getattr(t, "timestamp", None)
+        cost = getattr(t, "total_cost", 0) or 0
+        if not ts:
+            continue
+        if tz_off is not None:
+            local_ts = ts + timedelta(minutes=tz_off)
+            date_str = local_ts.strftime("%Y-%m-%d")
+        else:
+            date_str = ts.strftime("%Y-%m-%d")
+        daily_costs.setdefault(date_str, []).append(cost)
+
+    # Compute P95 per day
+    series = []
+    for d in sorted(daily_costs):
+        costs = sorted(daily_costs[d])
+        if costs:
+            p95_idx = min(int(len(costs) * 0.95), len(costs) - 1)
+            series.append(TimeseriesPoint(date=d, value=round(costs[p95_idx], 6)))
 
     return CostTrendResponse(range=range, series=series)
