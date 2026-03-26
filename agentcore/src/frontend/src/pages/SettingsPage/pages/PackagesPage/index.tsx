@@ -138,7 +138,12 @@ function ManagedTable({
             >
               <td className="px-4 py-3 font-mono text-sm">{pkg.name}</td>
               <td className="px-4 py-3 text-sm">
-                <Badge variant="gray" size="sm">
+                <Badge
+                  variant="gray"
+                  size="sm"
+                  className="max-w-[14rem] whitespace-nowrap truncate"
+                  title={pkg.service_name}
+                >
                   {pkg.service_name}
                 </Badge>
               </td>
@@ -246,7 +251,12 @@ function TransitiveTable({
             >
               <td className="px-4 py-3 font-mono text-sm">{pkg.name}</td>
               <td className="px-4 py-3 text-sm">
-                <Badge variant="gray" size="sm">
+                <Badge
+                  variant="gray"
+                  size="sm"
+                  className="max-w-[14rem] whitespace-nowrap truncate"
+                  title={pkg.service_name}
+                >
                   {pkg.service_name}
                 </Badge>
               </td>
