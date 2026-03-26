@@ -31,6 +31,7 @@ from agentcore.services.database.models.orch_conversation.model import OrchConve
 from agentcore.services.database.models.role.model import Role
 from agentcore.services.database.models.user.model import User
 from agentcore.services.database.models.user_organization_membership.model import UserOrganizationMembership
+from agentcore.services.database.models.guardrail_catalogue.model import GuardrailCatalogue
 from agentcore.services.database.models.guardrail_execution_log.model import GuardrailExecutionLog
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
@@ -318,6 +319,7 @@ async def get_governance_guardrail_kpis(
                     DashboardKpi(id="guardrail_violation_rate", label="Guardrail Violation Rate", value=0, unit="%"),
                     DashboardKpi(id="escalation_to_human_review", label="Escalation to Human Review", value=0),
                     DashboardKpi(id="agents_without_guardrails_pct", label="% Agents Without Guardrails", value=0, unit="%"),
+                    DashboardKpi(id="policy_breach_attempts", label="Policy Breach Attempts", value=0),
                 ],
             )
         agent_scope_filters.append(Agent.org_id.in_(list(org_ids)))
@@ -365,6 +367,30 @@ async def get_governance_guardrail_kpis(
     total_violations = (await session.exec(gel_violation_stmt)).one()
     violation_rate = round((int(total_violations or 0) / int(total_executions or 1)) * 100, 2) if total_executions else 0
 
+    # Policy Breach Attempts: violations from prompt-injection / jailbreak guardrails only.
+    # Step 1: Get IDs of guardrails with matching categories
+    breach_category_stmt = select(GuardrailCatalogue.id).where(
+        GuardrailCatalogue.category.in_(["prompt-injection", "jailbreak"])
+    )
+    breach_guardrail_ids = [str(row) for row in (await session.exec(breach_category_stmt)).all()]
+
+    # Step 2: Count violations matching those guardrail IDs
+    breach_count = 0
+    if breach_guardrail_ids:
+        breach_violation_stmt = (
+            select(func.count())
+            .select_from(GuardrailExecutionLog)
+            .where(
+                GuardrailExecutionLog.is_violation.is_(True),
+                GuardrailExecutionLog.guardrail_id.in_(breach_guardrail_ids),
+            )
+        )
+        if org_ids is not None:
+            breach_violation_stmt = breach_violation_stmt.where(
+                GuardrailExecutionLog.org_id.in_(list(org_ids))
+            )
+        breach_count = (await session.exec(breach_violation_stmt)).one()
+
     return DashboardSectionResponse(
         section="governance_guardrail",
         kpis=[
@@ -384,6 +410,11 @@ async def get_governance_guardrail_kpis(
                 label="% Agents Without Guardrails",
                 value=without_pct,
                 unit="%",
+            ),
+            DashboardKpi(
+                id="policy_breach_attempts",
+                label="Policy Breach Attempts",
+                value=int(breach_count or 0),
             ),
         ],
     )
