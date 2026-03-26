@@ -1,5 +1,6 @@
 import { ChevronDown, Loader2 } from "lucide-react";
 import { useContext, useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -96,6 +97,7 @@ export default function EditGuardrailModal({
   frameworkId = "nemo",
   readOnly = false,
 }: EditGuardrailModalProps) {
+  const { t } = useTranslation();
   const isEditMode = !!guardrail;
   const { role } = useContext(AuthContext);
   const createMutation = usePostGuardrailCatalogue();
@@ -136,11 +138,11 @@ export default function EditGuardrailModal({
   );
   const selectedDeptLabel = useMemo(() => {
     const selectedIds = canMultiDept ? publicDeptIds : deptId ? [deptId] : [];
-    if (selectedIds.length === 0) return "Select departments";
+    if (selectedIds.length === 0) return t("Select departments");
     const names = departmentsForSelectedOrg
       .filter((dept) => selectedIds.includes(dept.id))
       .map((dept) => dept.name);
-    if (names.length === 0) return "Select departments";
+    if (names.length === 0) return t("Select departments");
     if (names.length <= 2) return names.join(", ");
     return `${names.slice(0, 2).join(", ")} +${names.length - 2}`;
   }, [canMultiDept, departmentsForSelectedOrg, deptId, publicDeptIds]);
@@ -427,24 +429,24 @@ export default function EditGuardrailModal({
     event.preventDefault();
     if (guardrailNameAvailability.isNameTaken) {
       setErrorData({
-        title: "Name already taken",
-        list: [guardrailNameAvailability.reason || "Please choose a different name."],
+        title: t("Name already taken"),
+        list: [guardrailNameAvailability.reason || t("Please choose a different name.")],
       });
       return;
     }
 
     if (!modelRegistryId) {
       setErrorData({
-        title: "Model is required",
-        list: ["Please select a model from Model Registry."],
+        title: t("Model is required"),
+        list: [t("Please select a model from Model Registry.")],
       });
       return;
     }
 
     if (status === "active" && configYml.trim() === "") {
       setErrorData({
-        title: "config_yml is required",
-        list: ["Active guardrails require config_yml. prompts_yml is optional."],
+        title: t("config_yml is required"),
+        list: [t("Active guardrails require config_yml. prompts_yml is optional.")],
       });
       return;
     }
@@ -453,7 +455,7 @@ export default function EditGuardrailModal({
     try {
       runtimeConfig = buildRuntimeConfig();
     } catch (error) {
-      setErrorData({ title: "Invalid runtime config", list: [String(error)] });
+      setErrorData({ title: t("Invalid runtime config"), list: [String(error)] });
       return;
     }
 
@@ -476,17 +478,17 @@ export default function EditGuardrailModal({
     try {
       if (isEditMode && guardrail?.id) {
         await updateMutation.mutateAsync({ id: guardrail.id, payload });
-        setSuccessData({ title: `Guardrail "${payload.name}" updated.` });
+        setSuccessData({ title: t('Guardrail "{{name}}" updated.', { name: payload.name }) });
       } else {
         await createMutation.mutateAsync(payload);
-        setSuccessData({ title: `Guardrail "${payload.name}" created.` });
+        setSuccessData({ title: t('Guardrail "{{name}}" created.', { name: payload.name }) });
       }
       onOpenChange(false);
     } catch (error) {
       setErrorData({
         title: isEditMode
-          ? "Failed to update guardrail"
-          : "Failed to create guardrail",
+          ? t("Failed to update guardrail")
+          : t("Failed to create guardrail"),
         list: [String(error)],
       });
     }
@@ -497,12 +499,12 @@ export default function EditGuardrailModal({
       <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>
-            {readOnly ? "View Guardrail (Production — Read Only)" : isEditMode ? "Edit Guardrail" : "Add Guardrail"}
+            {readOnly ? t("View Guardrail (Production - Read Only)") : isEditMode ? t("Edit Guardrail") : t("Add Guardrail")}
           </DialogTitle>
           <DialogDescription>
             {readOnly
-              ? "This is a frozen production copy. Configuration cannot be modified."
-              : "Configure guardrail metadata and NeMo runtime files. You only need `config_yml` and optional `prompts_yml`. Model details and credentials come from Model Registry."}
+              ? t("This is a frozen production copy. Configuration cannot be modified.")
+              : t("Configure guardrail metadata and NeMo runtime files. You only need `config_yml` and optional `prompts_yml`. Model details and credentials come from Model Registry.")}
           </DialogDescription>
         </DialogHeader>
 
@@ -511,7 +513,7 @@ export default function EditGuardrailModal({
           {!isEditMode && !readOnly && (
             <div className="space-y-1.5 rounded-md border border-dashed border-primary/40 bg-primary/5 p-4">
               <Label htmlFor="guardrail-template" className="text-sm font-semibold">
-                Predefined Guardrails
+                {t("Predefined Guardrails")}
               </Label>
               <p className="text-xs text-muted-foreground">
                 Select a template to auto-populate the configuration, or choose
@@ -523,7 +525,7 @@ export default function EditGuardrailModal({
                 onChange={(event) => handleTemplateSelect(event.target.value)}
                 className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
               >
-                <option value="">Custom (blank template)</option>
+                <option value="">{t("Custom (blank template)")}</option>
                 {PREDEFINED_GUARDRAIL_TEMPLATES.map((t) => (
                   <option key={t.id} value={t.id}>
                     {t.label}
@@ -542,13 +544,13 @@ export default function EditGuardrailModal({
 
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
             <div className="space-y-1.5">
-              <Label htmlFor="guardrail-name">Name *</Label>
+              <Label htmlFor="guardrail-name">{t("Name")} *</Label>
               <Input
                 id="guardrail-name"
                 required
                 readOnly={readOnly}
                 disabled={readOnly}
-                placeholder="NeMo Content Safety"
+                placeholder={t("NeMo Content Safety")}
                 value={name}
                 onChange={(event) => setName(event.target.value)}
               />
@@ -557,12 +559,12 @@ export default function EditGuardrailModal({
                 guardrailNameAvailability.isNameTaken && (
                   <p className="text-xs font-medium text-red-500">
                     {guardrailNameAvailability.reason ??
-                      "This name is already taken in the selected scope."}
+                      t("This name is already taken in the selected scope.")}
                   </p>
                 )}
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="guardrail-model">Model Registry Entry *</Label>
+              <Label htmlFor="guardrail-model">{t("Model Registry Entry")} *</Label>
               <select
                 id="guardrail-model"
                 required
@@ -574,13 +576,13 @@ export default function EditGuardrailModal({
                 {registryModels.length === 0 ? (
                   <option value="">
                     {isModelsLoading
-                      ? "Loading models..."
-                      : "No models in registry"}
+                      ? t("Loading models...")
+                      : t("No models in registry")}
                   </option>
                 ) : (
                   <>
                     <option value="" disabled>
-                      Select a model
+                      {t("Select a model")}
                     </option>
                     {registryModels.map((option) => (
                       <option key={option.id} value={option.id}>
@@ -593,9 +595,9 @@ export default function EditGuardrailModal({
               </select>
               {selectedModel && (
                 <p className="text-xs text-muted-foreground">
-                  Provider:{" "}
+                  {t("Provider")}:{" "}
                   <span className="font-medium">{selectedModel.provider}</span>{" "}
-                  | Model:{" "}
+                  | {t("Model")}:{" "}
                   <span className="font-medium">
                     {selectedModel.model_name}
                   </span>
@@ -605,13 +607,13 @@ export default function EditGuardrailModal({
           </div>
 
           <div className="space-y-1.5">
-            <Label htmlFor="guardrail-description">Description</Label>
+            <Label htmlFor="guardrail-description">{t("Description")}</Label>
             <Textarea
               id="guardrail-description"
               rows={2}
               readOnly={readOnly}
               disabled={readOnly}
-              placeholder="What this guardrail enforces"
+              placeholder={t("What this guardrail enforces")}
               value={description}
               onChange={(event) => setDescription(event.target.value)}
             />
@@ -619,15 +621,15 @@ export default function EditGuardrailModal({
 
           <div className="rounded-lg border border-border p-4">
             <div className="mb-4">
-              <Label className="mb-1.5 block">Tenancy</Label>
+              <Label className="mb-1.5 block">{t("Tenancy")}</Label>
               <p className="text-xs text-muted-foreground">
-                Guardrails use direct tenancy only. No approval flow applies here.
+                {t("Guardrails use direct tenancy only. No approval flow applies here.")}
               </p>
             </div>
 
             <div className="space-y-4">
               <div className="space-y-1.5">
-                <Label>Visibility Scope</Label>
+                <Label>{t("Visibility Scope")}</Label>
                 <select
                   value={visibilityScope}
                   onChange={(event) =>
@@ -638,22 +640,22 @@ export default function EditGuardrailModal({
                   disabled={readOnly}
                   className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
                 >
-                  <option value="private">Private</option>
-                  <option value="department">Department</option>
-                  <option value="organization">Organization</option>
+                  <option value="private">{t("Private")}</option>
+                  <option value="department">{t("Department")}</option>
+                  <option value="organization">{t("Organization")}</option>
                 </select>
               </div>
 
               {visibilityScope === "organization" && (
                 <div className="space-y-1.5">
-                  <Label>Organization</Label>
+                  <Label>{t("Organization")}</Label>
                   <select
                     value={orgId}
                     onChange={(event) => setOrgId(event.target.value)}
                     disabled={readOnly || role === "developer" || role === "department_admin"}
                     className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm disabled:opacity-80"
                   >
-                    <option value="">Select organization</option>
+                    <option value="">{t("Select organization")}</option>
                     {visibilityOptions.organizations.map((org) => (
                       <option key={org.id} value={org.id}>
                         {org.name}
@@ -667,7 +669,7 @@ export default function EditGuardrailModal({
                 <>
                   {canMultiDept && (
                     <div className="space-y-1.5">
-                      <Label>Organization</Label>
+                      <Label>{t("Organization")}</Label>
                       <select
                         value={orgId}
                         onChange={(event) => {
@@ -677,7 +679,7 @@ export default function EditGuardrailModal({
                         disabled={readOnly}
                         className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
                       >
-                        <option value="">Select organization</option>
+                        <option value="">{t("Select organization")}</option>
                         {visibilityOptions.organizations.map((org) => (
                           <option key={org.id} value={org.id}>
                             {org.name}
@@ -688,7 +690,7 @@ export default function EditGuardrailModal({
                   )}
 
                   <div className="space-y-1.5">
-                    <Label>Department{canMultiDept ? "s" : ""}</Label>
+                    <Label>{canMultiDept ? t("Departments") : t("Department")}</Label>
                     {canMultiDept ? (
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
@@ -727,7 +729,7 @@ export default function EditGuardrailModal({
                         disabled
                         className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm disabled:opacity-80"
                       >
-                        <option value="">Select department</option>
+                        <option value="">{t("Select department")}</option>
                         {visibilityOptions.departments.map((dept) => (
                           <option key={dept.id} value={dept.id}>
                             {dept.name}
@@ -743,7 +745,7 @@ export default function EditGuardrailModal({
 
           <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
             <div className="space-y-1.5 md:col-span-2">
-              <Label htmlFor="guardrail-category">Category *</Label>
+              <Label htmlFor="guardrail-category">{t("Category")} *</Label>
               <select
                 id="guardrail-category"
                 required={!customCategory}
@@ -766,11 +768,11 @@ export default function EditGuardrailModal({
                     {option}
                   </option>
                 ))}
-                <option value="__custom__">Other (custom)</option>
+                <option value="__custom__">{t("Other (custom)")}</option>
               </select>
               {(!CATEGORY_OPTIONS.includes(category) || category === "") && (
                 <Input
-                  placeholder="Enter custom category (e.g. compliance-check)"
+                  placeholder={t("Enter custom category (e.g. compliance-check)")}
                   required
                   readOnly={readOnly}
                   disabled={readOnly}
@@ -785,7 +787,7 @@ export default function EditGuardrailModal({
               )}
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="guardrail-status">Status *</Label>
+              <Label htmlFor="guardrail-status">{t("Status")} *</Label>
               <select
                 id="guardrail-status"
                 required
@@ -796,8 +798,8 @@ export default function EditGuardrailModal({
                 disabled={readOnly}
                 className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
               >
-                <option value="active">active</option>
-                <option value="inactive">inactive</option>
+                <option value="active">{t("active")}</option>
+                <option value="inactive">{t("inactive")}</option>
               </select>
             </div>
           </div>
@@ -812,17 +814,14 @@ export default function EditGuardrailModal({
               className="h-4 w-4 rounded border-input"
             />
             <Label htmlFor="guardrail-custom" className="text-sm">
-              Mark as custom guardrail
+              {t("Mark as custom guardrail")}
             </Label>
           </div>
 
           <div className="space-y-3 rounded-md border p-4">
-            <div className="text-sm font-semibold">Runtime Configuration</div>
+            <div className="text-sm font-semibold">{t("Runtime Configuration")}</div>
             <p className="text-xs text-muted-foreground">
-              Keep this simple: add `config_yml` and optional `prompts_yml`.
-              The backend injects model settings from Model Registry. You can
-              optionally customize `rails_co`; if left empty, a safe default is
-              applied.
+              {t("Keep this simple: add `config_yml` and optional `prompts_yml`. The backend injects model settings from Model Registry. You can optionally customize `rails_co`; if left empty, a safe default is applied.")}
             </p>
 
             <div className="space-y-1.5">
@@ -839,7 +838,7 @@ export default function EditGuardrailModal({
             </div>
 
             <div className="space-y-1.5">
-              <Label htmlFor="guardrail-rails-co">rails_co (Optional)</Label>
+              <Label htmlFor="guardrail-rails-co">{t("rails_co (Optional)")}</Label>
               <Textarea
                 id="guardrail-rails-co"
                 rows={readOnly ? 12 : 8}
@@ -873,7 +872,7 @@ export default function EditGuardrailModal({
                 variant="outline"
                 onClick={() => onOpenChange(false)}
               >
-                Close
+                {t("Close")}
               </Button>
             ) : (
               <>
@@ -882,7 +881,7 @@ export default function EditGuardrailModal({
                   variant="outline"
                   onClick={() => onOpenChange(false)}
                 >
-                  Cancel
+                  {t("Cancel")}
                 </Button>
                 <Button
                   type="submit"
@@ -895,7 +894,7 @@ export default function EditGuardrailModal({
                   }
                 >
                   {isSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                  {isEditMode ? "Save Changes" : "Create Guardrail"}
+                  {isEditMode ? t("Save Changes") : t("Create Guardrail")}
                 </Button>
               </>
             )}

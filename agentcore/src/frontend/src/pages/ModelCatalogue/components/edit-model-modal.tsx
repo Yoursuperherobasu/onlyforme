@@ -1,5 +1,6 @@
 import { useContext, useEffect, useMemo, useState } from "react";
 import { ChevronDown, Loader2, Zap } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -63,6 +64,7 @@ export default function EditModelModal({
   model,
   modelType = "llm",
 }: EditModelModalProps) {
+  const { t } = useTranslation();
   const { role } = useContext(AuthContext);
   const normalizedRole = String(role || "").toLowerCase();
   const canMultiDept = normalizedRole === "super_admin" || normalizedRole === "root";
@@ -120,11 +122,11 @@ export default function EditModelModal({
     [visibilityOptions.departments, orgId],
   );
   const selectedDeptLabel = useMemo(() => {
-    if (publicDeptIds.length === 0) return "Select departments";
+    if (publicDeptIds.length === 0) return t("Select departments");
     const names = departmentsForSelectedOrg
       .filter((dept) => publicDeptIds.includes(dept.id))
       .map((dept) => dept.name);
-    if (names.length === 0) return "Select departments";
+    if (names.length === 0) return t("Select departments");
     if (names.length <= 2) return names.join(", ");
     return `${names.slice(0, 2).join(", ")} +${names.length - 2}`;
   }, [departmentsForSelectedOrg, publicDeptIds]);
@@ -419,8 +421,8 @@ export default function EditModelModal({
 
         if (!hasChanges) {
           setErrorData({
-            title: "No changes detected",
-            list: ["Update at least one field before saving."],
+            title: t("No changes detected"),
+            list: [t("Update at least one field before saving.")],
           });
           return;
         }
@@ -431,8 +433,8 @@ export default function EditModelModal({
           const isPromotion = !normalizedOriginal.includes("prod") && normalizedDesired.includes("prod");
           if (!isPromotion) {
             setErrorData({
-              title: "Environment change not allowed",
-              list: ["Removing environments is not supported. Only UAT → PROD promotion is allowed."],
+              title: t("Environment change not allowed"),
+              list: [t("Removing environments is not supported. Only UAT to PROD promotion is allowed.")],
             });
             return;
           }
@@ -453,11 +455,11 @@ export default function EditModelModal({
         }
 
         setSuccessData({
-          title: `Model "${displayName}" updated.`,
+          title: t('Model "{{name}}" updated.', { name: displayName }),
           list:
             environmentChanged || scopeChanged
               ? [
-                  "Changes that affect environment or visibility may require approval. Check Review & Approval for status.",
+                  t("Changes that affect environment or visibility may require approval. Check Review & Approval for status."),
                 ]
               : undefined,
         });
@@ -473,16 +475,18 @@ export default function EditModelModal({
           autoTestRan = true;
         }
         if (!connectionResult.success) {
-          const message = connectionResult.message || "Connection test failed.";
+          const message = connectionResult.message || t("Connection test failed.");
           setErrorData({
-            title: "Connection test failed",
+            title: t("Connection test failed"),
             list: [message],
           });
           return;
         }
         if (autoTestRan) {
           setSuccessData({
-            title: `Connection successful${connectionResult.latency_ms ? ` (${connectionResult.latency_ms}ms)` : ""}`,
+            title: t("Connection successful{{latency}}", {
+              latency: connectionResult.latency_ms ? ` (${connectionResult.latency_ms}ms)` : "",
+            }),
           });
         }
 
@@ -515,17 +519,20 @@ export default function EditModelModal({
         const envLabel =
           environmentSelection === "both" ? "UAT + PROD" : environmentSelection.toUpperCase();
         setSuccessData({
-          title: `${isEmbedding ? "Embedding" : "Model"} "${displayName}" created.`,
+          title: t('{{type}} "{{name}}" created.', {
+            type: isEmbedding ? t("Embedding") : t("Model"),
+            name: displayName,
+          }),
           list: [
-            `Target environment: ${envLabel}.`,
-            "If approval is required, you'll see it in Review & Approval.",
+            t("Target environment: {{env}}.", { env: envLabel }),
+            t("If approval is required, you'll see it in Review & Approval."),
           ],
         });
       }
       onOpenChange(false);
     } catch (err: any) {
       setErrorData({
-        title: isEditMode ? "Model update failed" : "Model creation failed",
+        title: isEditMode ? t("Model update failed") : t("Model creation failed"),
         list: [err?.message ?? String(err)],
       });
     }
@@ -538,16 +545,18 @@ export default function EditModelModal({
       setTestPayloadKey(buildTestKey());
       if (result.success) {
         setSuccessData({
-          title: `Connection successful${result.latency_ms ? ` (${result.latency_ms}ms)` : ""}`,
+          title: t("Connection successful{{latency}}", {
+            latency: result.latency_ms ? ` (${result.latency_ms}ms)` : "",
+          }),
         });
       } else {
-        setErrorData({ title: "Connection failed", list: [result.message] });
+        setErrorData({ title: t("Connection failed"), list: [result.message] });
       }
     } catch (err: any) {
       setTestResult({ success: false, message: err?.message ?? String(err) });
       setTestPayloadKey(buildTestKey());
       setErrorData({
-        title: "Connection test failed",
+        title: t("Connection test failed"),
         list: [err?.message ?? String(err)],
       });
     }
@@ -575,13 +584,13 @@ export default function EditModelModal({
             <div>
               <h2 className="text-xl font-semibold">
                 {isEditMode
-                  ? isEmbedding ? "Edit Embedding Model" : "Edit Model"
-                  : isEmbedding ? "Add Embedding Model" : "Add Model"}
+                  ? isEmbedding ? t("Edit Embedding Model") : t("Edit Model")
+                  : isEmbedding ? t("Add Embedding Model") : t("Add Model")}
               </h2>
               <p className="mt-1 text-sm text-muted-foreground">
                 {isEditMode
-                  ? isEmbedding ? "Update embedding model configuration" : "Update model configuration and settings"
-                  : isEmbedding ? "Onboard a new embedding model to the registry" : "Onboard a new AI model to the registry"}
+                  ? isEmbedding ? t("Update embedding model configuration") : t("Update model configuration and settings")
+                  : isEmbedding ? t("Onboard a new embedding model to the registry") : t("Onboard a new AI model to the registry")}
               </p>
             </div>
           </div>
@@ -595,21 +604,21 @@ export default function EditModelModal({
           {/* ========== BASIC INFO ========== */}
           <fieldset className="space-y-4">
             <legend className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
-              Basic Information
+              {t("Basic Information")}
             </legend>
 
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <Label>Display Name *</Label>
+                <Label>{t("Display Name")} *</Label>
                 <Input
                   required
-                  placeholder="e.g., GPT-4o PROD"
+                  placeholder={t("e.g., GPT-4o PROD")}
                   value={displayName}
                   onChange={(e) => setDisplayName(e.target.value)}
                 />
               </div>
               <div>
-                <Label>Provider *</Label>
+                <Label>{t("Provider")} *</Label>
                 <select
                   required
                   value={provider}
@@ -626,10 +635,10 @@ export default function EditModelModal({
             </div>
 
             <div>
-              <Label>Description</Label>
+              <Label>{t("Description")}</Label>
               <Textarea
                 rows={2}
-                placeholder="Brief description of this model configuration"
+                placeholder={t("Brief description of this model configuration")}
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
               />
@@ -639,37 +648,37 @@ export default function EditModelModal({
           {/* ========== CONNECTION ========== */}
           <fieldset className="space-y-4">
             <legend className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
-              Connection
+              {t("Connection")}
             </legend>
 
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <Label>Model Name / ID *</Label>
+                <Label>{t("Model Name / ID")} *</Label>
                 <Input
                   required
-                  placeholder="e.g., gpt-4o, claude-3-opus-20240229"
+                  placeholder={t("e.g., gpt-4o, claude-3-opus-20240229")}
                   value={modelName}
                   onChange={(e) => setModelName(e.target.value)}
                 />
               </div>
               <div>
-                <Label>API Key {!isEditMode && "*"}</Label>
+                <Label>{t("API Key")} {!isEditMode && "*"}</Label>
                 <Input
                   type="password"
                   required={!isEditMode}
-                  placeholder={isEditMode ? "(unchanged)" : "sk-..."}
+                  placeholder={isEditMode ? t("(unchanged)") : t("sk-...")}
                   value={apiKey}
                   onChange={(e) => setApiKey(e.target.value)}
                 />
                 <p className="mt-1 text-xxs text-muted-foreground">
-                  Encrypted before storage. Never exposed in responses.
+                  {t("Encrypted before storage. Never exposed in responses.")}
                 </p>
               </div>
             </div>
 
             <div>
               <Label>
-                Base URL
+                {t("Base URL")}
                 {(provider === "azure" || provider === "openai_compatible") &&
                   " *"}
               </Label>
@@ -679,8 +688,8 @@ export default function EditModelModal({
                 }
                 placeholder={
                   provider === "azure"
-                    ? "https://your-resource.openai.azure.com/"
-                    : "https://api.example.com/v1"
+                    ? t("https://your-resource.openai.azure.com/")
+                    : t("https://api.example.com/v1")
                 }
                 value={baseUrl}
                 onChange={(e) => setBaseUrl(e.target.value)}
@@ -691,18 +700,18 @@ export default function EditModelModal({
             {provider === "azure" && (
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <Label>Deployment Name *</Label>
+                  <Label>{t("Deployment Name")} *</Label>
                   <Input
                     required
-                    placeholder="my-gpt4-deployment"
+                    placeholder={t("my-gpt4-deployment")}
                     value={azureDeployment}
                     onChange={(e) => setAzureDeployment(e.target.value)}
                   />
                 </div>
                 <div>
-                  <Label>API Version</Label>
+                  <Label>{t("API Version")}</Label>
                   <Input
-                    placeholder="2025-10-01-preview"
+                    placeholder={t("2025-10-01-preview")}
                     value={azureApiVersion}
                     onChange={(e) => setAzureApiVersion(e.target.value)}
                   />
@@ -713,10 +722,10 @@ export default function EditModelModal({
             {/* Custom headers */}
             {provider === "openai_compatible" && (
               <div>
-                <Label>Custom Headers (JSON)</Label>
+                <Label>{t("Custom Headers (JSON)")}</Label>
                 <Textarea
                   rows={3}
-                  placeholder='{"X-Custom-Header": "value"}'
+                  placeholder={t('{"X-Custom-Header": "value"}')}
                   value={customHeaders}
                   onChange={(e) => setCustomHeaders(e.target.value)}
                 />
@@ -727,10 +736,10 @@ export default function EditModelModal({
           {/* ========== ENVIRONMENT ========== */}
           <fieldset className="space-y-4">
             <legend className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
-              Environment & Tenancy
+              {t("Environment & Tenancy")}
             </legend>
             <div className="flex gap-3">
-              {[...ENVIRONMENTS, { value: "both" as const, label: "UAT + PROD" }].map((env) => (
+              {[...ENVIRONMENTS, { value: "both" as const, label: t("UAT + PROD") }].map((env) => (
                 <button
                   key={env.value}
                   type="button"
@@ -747,13 +756,13 @@ export default function EditModelModal({
             </div>
             <p className="text-xxs text-muted-foreground">
               {isEditMode
-                ? "Changing environment here will submit a promotion request when applicable."
-                : <>Models default to <strong>UAT</strong>. Selecting <strong>UAT + PROD</strong> submits a single approval for both environments.</>}
+                ? t("Changing environment here will submit a promotion request when applicable.")
+                : t("Models default to UAT. Selecting UAT + PROD submits a single approval for both environments.")}
             </p>
 
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <Label>Visibility Scope</Label>
+                <Label>{t("Visibility Scope")}</Label>
                 <select
                   value={visibilityScope}
                   onChange={(e) =>
@@ -761,21 +770,21 @@ export default function EditModelModal({
                   }
                   className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
                 >
-                  <option value="private">private</option>
-                  <option value="department">department</option>
-                  <option value="organization">organization</option>
+                  <option value="private">{t("private")}</option>
+                  <option value="department">{t("department")}</option>
+                  <option value="organization">{t("organization")}</option>
                 </select>
               </div>
               {visibilityScope === "organization" ? (
                 <div>
-                  <Label>Organization</Label>
+                  <Label>{t("Organization")}</Label>
                   <select
                     value={orgId}
                     onChange={(e) => setOrgId(e.target.value)}
                     className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
                     disabled={normalizedRole === "developer" || normalizedRole === "department_admin"}
                   >
-                    <option value="">Select organization</option>
+                    <option value="">{t("Select organization")}</option>
                     {visibilityOptions.organizations.map((org) => (
                       <option key={org.id} value={org.id}>
                         {org.name}
@@ -785,7 +794,7 @@ export default function EditModelModal({
                 </div>
               ) : visibilityScope === "department" ? (
                 <div>
-                  <Label>{canMultiDept ? "Departments" : "Department"}</Label>
+                  <Label>{canMultiDept ? t("Departments") : t("Department")}</Label>
                   {canMultiDept ? (
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
@@ -824,7 +833,7 @@ export default function EditModelModal({
                       className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
                       disabled={normalizedRole === "developer" || normalizedRole === "department_admin"}
                     >
-                      <option value="">Select department</option>
+                      <option value="">{t("Select department")}</option>
                       {departmentsForSelectedOrg.map((dept) => (
                         <option key={dept.id} value={dept.id}>
                           {dept.name}
@@ -839,7 +848,7 @@ export default function EditModelModal({
             </div>
             {isEditMode && (
               <p className="text-xxs text-muted-foreground">
-                Visibility changes here will submit approval requests when required.
+                {t("Visibility changes here will submit approval requests when required.")}
               </p>
             )}
           </fieldset>
@@ -847,20 +856,20 @@ export default function EditModelModal({
           {/* ========== DEFAULT PARAMS ========== */}
           <fieldset className="space-y-4">
             <legend className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
-              {isEmbedding ? "Embedding Parameters" : "Default Parameters"}
+              {isEmbedding ? t("Embedding Parameters") : t("Default Parameters")}
             </legend>
 
             <div className="grid grid-cols-2 gap-4">
               {!isEmbedding && (
                 <>
                   <div>
-                    <Label>Temperature (0-2)</Label>
+                    <Label>{t("Temperature (0-2)")}</Label>
                     <Input
                       type="number"
                       step="0.1"
                       min="0"
                       max="2"
-                      placeholder="Optional"
+                      placeholder={t("Optional")}
                       value={temperature}
                       onChange={(e) =>
                         setTemperature(
@@ -870,10 +879,10 @@ export default function EditModelModal({
                     />
                   </div>
                   <div>
-                    <Label>Max Output Tokens</Label>
+                    <Label>{t("Max Output Tokens")}</Label>
                     <Input
                       type="number"
-                      placeholder="4096"
+                      placeholder={t("4096")}
                       value={maxTokens}
                       onChange={(e) =>
                         setMaxTokens(e.target.value ? Number(e.target.value) : "")
@@ -884,17 +893,17 @@ export default function EditModelModal({
               )}
               {isEmbedding && (
                 <div>
-                  <Label>Dimensions</Label>
+                  <Label>{t("Dimensions")}</Label>
                   <Input
                     type="number"
-                    placeholder="e.g., 1536"
+                    placeholder={t("e.g., 1536")}
                     value={dimensions}
                     onChange={(e) =>
                       setDimensions(e.target.value ? Number(e.target.value) : "")
                     }
                   />
                   <p className="mt-1 text-xxs text-muted-foreground">
-                    Leave empty to use the model's default dimension.
+                    {t("Leave empty to use the model's default dimension.")}
                   </p>
                 </div>
               )}
@@ -904,7 +913,7 @@ export default function EditModelModal({
           {/* ========== STATUS ========== */}
           <fieldset className="space-y-2">
             <legend className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
-              Status
+              {t("Status")}
             </legend>
             <label className="flex items-center gap-2 text-sm">
               <input
@@ -913,11 +922,10 @@ export default function EditModelModal({
                 onChange={(e) => setIsActive(e.target.checked)}
                 className="h-4 w-4 rounded border-input"
               />
-              Active
+              {t("Active")}
             </label>
             <p className="text-xxs text-muted-foreground">
-              Inactive models won't appear in the agent builder component
-              dropdown.
+              {t("Inactive models won't appear in the agent builder component dropdown.")}
             </p>
           </fieldset>
         </form>
@@ -937,13 +945,13 @@ export default function EditModelModal({
               ) : (
                 <Zap className="mr-2 h-4 w-4" />
               )}
-              Test Connection
+              {t("Test Connection")}
             </Button>
 
             <div className="flex-1" />
 
             <Button type="button" variant="outline" onClick={handleClose}>
-              Cancel
+              {t("Cancel")}
             </Button>
             <Button
               type="submit"
@@ -951,7 +959,7 @@ export default function EditModelModal({
               onClick={handleSubmit}
             >
               {isSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              {isEditMode ? "Save Changes" : isEmbedding ? "Add Embedding" : "Add Model"}
+              {isEditMode ? t("Save Changes") : isEmbedding ? t("Add Embedding") : t("Add Model")}
             </Button>
           </div>
         </div>

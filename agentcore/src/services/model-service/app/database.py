@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from contextlib import asynccontextmanager
 from collections.abc import AsyncGenerator
 
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
@@ -29,3 +30,18 @@ async def get_session() -> AsyncGenerator[AsyncSession, None]:
         raise RuntimeError(msg)
     async with _async_session_factory() as session:
         yield session
+
+
+@asynccontextmanager
+async def session_scope() -> AsyncGenerator[AsyncSession, None]:
+    """Context manager for model-service database work outside FastAPI dependencies."""
+    if _async_session_factory is None:
+        msg = "Database not initialised. Set MODEL_SERVICE_DATABASE_URL in .env."
+        raise RuntimeError(msg)
+    async with _async_session_factory() as session:
+        try:
+            yield session
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise

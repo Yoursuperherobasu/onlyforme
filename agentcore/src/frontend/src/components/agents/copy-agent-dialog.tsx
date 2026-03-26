@@ -1,4 +1,4 @@
-import { useContext, useEffect, useMemo, useState } from "react";
+import { useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import cloneDeep from "lodash/cloneDeep";
 import { Button } from "@/components/ui/button";
@@ -57,6 +57,7 @@ export default function CopyAgentDialog({
   const [createProject, setCreateProject] = useState(false);
   const [newProjectName, setNewProjectName] = useState("");
   const [newProjectDescription, setNewProjectDescription] = useState("");
+  const previousOpenRef = useRef(false);
 
   const canCopy = permissions?.includes("copy_agents");
   const { data: folders = [], refetch: refetchFolders } = useGetFoldersQuery({
@@ -86,6 +87,13 @@ export default function CopyAgentDialog({
     });
   }, [folders, isAdminRole, currentUserEmail]);
 
+  const sourceKey = useMemo(() => {
+    if (!source) return "";
+    return source.type === "registry"
+      ? `registry:${source.registryId}`
+      : `agent:${source.agent.id}`;
+  }, [source]);
+
   useEffect(() => {
     if (!selectedProjectId && foldersForClone.length > 0) {
       setSelectedProjectId(String(foldersForClone[0].id || ""));
@@ -93,7 +101,10 @@ export default function CopyAgentDialog({
   }, [foldersForClone, selectedProjectId]);
 
   useEffect(() => {
-    if (!source) return;
+    const isOpening = open && !previousOpenRef.current;
+    previousOpenRef.current = open;
+
+    if (!open || !source || !isOpening) return;
     const defaultName =
       source.type === "registry"
         ? `${source.title} (Copy)`
@@ -102,7 +113,7 @@ export default function CopyAgentDialog({
     setCreateProject(false);
     setNewProjectName("");
     setNewProjectDescription("");
-  }, [source]);
+  }, [open, sourceKey, source]);
 
   const handleClone = async () => {
     try {

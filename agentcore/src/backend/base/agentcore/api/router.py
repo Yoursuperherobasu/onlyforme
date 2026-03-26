@@ -46,7 +46,6 @@ from agentcore.api.teams import router as teams_router
 from agentcore.api.triggers import router as triggers_router
 from agentcore.api.human_in_loop import router as hitl_router
 from agentcore.api.mcp_registry import router as mcp_registry_router
-from agentcore.api.package_inventory import router as package_inventory_router
 from agentcore.api.metrics_dashboard import router as metrics_dashboard_router
 from agentcore.api.tags import router as tags_router
 from agentcore.api.cost_limits import router as cost_limits_router
@@ -101,7 +100,6 @@ router.include_router(teams_router)
 router.include_router(triggers_router)
 router.include_router(hitl_router)
 router.include_router(mcp_registry_router)
-router.include_router(package_inventory_router)
 router.include_router(metrics_dashboard_router)
 router.include_router(tags_router)
 router.include_router(cost_limits_router)

@@ -32,27 +32,28 @@ const STATUS_COLORS: Record<string, string> = {
     "bg-orange-100 text-orange-800 dark:bg-orange-900/30 dark:text-orange-400",
 };
 
-function formatRelativeTime(isoString: string): string {
+function formatRelativeTime(isoString: string, t: (key: string, options?: Record<string, unknown>) => string): string {
   const date = new Date(isoString);
   const now = new Date();
   const diffMs = now.getTime() - date.getTime();
   const diffSec = Math.floor(diffMs / 1000);
-  if (diffSec < 60) return `${diffSec}s ago`;
+  if (diffSec < 60) return t("{{count}}s ago", { count: diffSec });
   const diffMin = Math.floor(diffSec / 60);
-  if (diffMin < 60) return `${diffMin}m ago`;
+  if (diffMin < 60) return t("{{count}}m ago", { count: diffMin });
   const diffHr = Math.floor(diffMin / 60);
-  if (diffHr < 24) return `${diffHr}h ago`;
+  if (diffHr < 24) return t("{{count}}h ago", { count: diffHr });
   const diffDay = Math.floor(diffHr / 24);
-  return `${diffDay}d ago`;
+  return t("{{count}}d ago", { count: diffDay });
 }
 
 function StatusBadge({ status }: { status: string }) {
+  const { t } = useTranslation();
   const colorClass = STATUS_COLORS[status] ?? STATUS_COLORS.pending;
   return (
     <span
       className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium capitalize ${colorClass}`}
     >
-      {status.replace("_", " ")}
+      {t(status.replace("_", " "))}
     </span>
   );
 }
@@ -182,7 +183,7 @@ function DetailModal({
                 {item.agent_name ?? item.agent_id.slice(0, 8) + "..."}
               </span>
               {" \u00b7 "}
-              <span>{formatRelativeTime(item.requested_at)}</span>
+              <span>{formatRelativeTime(item.requested_at, t)}</span>
             </div>
             <StatusBadge status={item.status} />
           </div>
@@ -197,7 +198,7 @@ function DetailModal({
                   <span className="font-medium text-foreground">{item.assigned_to_name}</span>
                   {item.delegated_by && item.delegated_at && (
                     <span className="text-xs text-muted-foreground">
-                      ({t("delegated")} {formatRelativeTime(item.delegated_at)})
+                      ({t("delegated")} {formatRelativeTime(item.delegated_at, t)})
                     </span>
                   )}
                 </div>
@@ -728,7 +729,7 @@ export default function HITLApprovalsPage(): JSX.Element {
 
                         {/* Time */}
                         <td className="px-4 py-3 text-sm text-muted-foreground whitespace-nowrap">
-                          {formatRelativeTime(item.requested_at)}
+                          {formatRelativeTime(item.requested_at, t)}
                         </td>
 
                         {/* Status */}

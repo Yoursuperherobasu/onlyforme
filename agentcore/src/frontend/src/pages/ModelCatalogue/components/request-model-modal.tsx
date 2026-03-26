@@ -1,5 +1,6 @@
 import { useContext, useEffect, useMemo, useState } from "react";
 import { ChevronDown, Loader2, Zap } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -46,6 +47,7 @@ export default function RequestModelModal({
   onOpenChange,
   modelType = "llm",
 }: RequestModelModalProps) {
+  const { t } = useTranslation();
   const { role } = useContext(AuthContext);
   const normalizedRole = String(role || "").toLowerCase();
   const canMultiDept = normalizedRole === "super_admin" || normalizedRole === "root";
@@ -93,11 +95,11 @@ export default function RequestModelModal({
     [visibilityOptions.departments],
   );
   const selectedDeptLabel = useMemo(() => {
-    if (publicDeptIds.length === 0) return "Select departments";
+    if (publicDeptIds.length === 0) return t("Select departments");
     const names = departmentsForSelectedOrg
       .filter((dept) => publicDeptIds.includes(dept.id))
       .map((dept) => dept.name);
-    if (names.length === 0) return "Select departments";
+    if (names.length === 0) return t("Select departments");
     if (names.length <= 2) return names.join(", ");
     return `${names.slice(0, 2).join(", ")} +${names.length - 2}`;
   }, [departmentsForSelectedOrg, publicDeptIds]);
@@ -221,8 +223,8 @@ export default function RequestModelModal({
   const handleTestConnection = async () => {
     if (!modelName.trim() || !apiKey.trim()) {
       setErrorData({
-        title: "Connection test failed",
-        list: ["Model name and API key are required."],
+        title: t("Connection test failed"),
+        list: [t("Model name and API key are required.")],
       });
       return;
     }
@@ -232,16 +234,18 @@ export default function RequestModelModal({
       setTestPayloadKey(buildTestKey());
       if (result.success) {
         setSuccessData({
-          title: `Connection successful${result.latency_ms ? ` (${result.latency_ms}ms)` : ""}`,
+          title: t("Connection successful{{latency}}", {
+            latency: result.latency_ms ? ` (${result.latency_ms}ms)` : "",
+          }),
         });
       } else {
-        setErrorData({ title: "Connection failed", list: [result.message] });
+        setErrorData({ title: t("Connection failed"), list: [result.message] });
       }
     } catch (err: any) {
       setTestResult({ success: false, message: err?.message ?? String(err) });
       setTestPayloadKey(buildTestKey());
       setErrorData({
-        title: "Connection test failed",
+        title: t("Connection test failed"),
         list: [err?.message ?? String(err)],
       });
     }
@@ -250,27 +254,27 @@ export default function RequestModelModal({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!apiKey.trim()) {
-      setErrorData({ title: "Submission failed", list: ["API key is required."] });
+      setErrorData({ title: t("Submission failed"), list: [t("API key is required.")] });
       return;
     }
     if (!chargeCode.trim() || !projectName.trim() || !reason.trim()) {
       setErrorData({
-        title: "Submission failed",
-        list: ["Charge code, project name, and reason are required."],
+        title: t("Submission failed"),
+        list: [t("Charge code, project name, and reason are required.")],
       });
       return;
     }
     if (visibilityScope === "department" && !canMultiDept && !deptId) {
       setErrorData({
-        title: "Submission failed",
-        list: ["Department is required for department visibility."],
+        title: t("Submission failed"),
+        list: [t("Department is required for department visibility.")],
       });
       return;
     }
     if (visibilityScope === "department" && canMultiDept && publicDeptIds.length === 0) {
       setErrorData({
-        title: "Submission failed",
-        list: ["Select at least one department for department visibility."],
+        title: t("Submission failed"),
+        list: [t("Select at least one department for department visibility.")],
       });
       return;
     }
@@ -295,16 +299,18 @@ export default function RequestModelModal({
         autoTestRan = true;
       }
       if (!connectionResult.success) {
-        const message = connectionResult.message || "Connection test failed.";
+        const message = connectionResult.message || t("Connection test failed.");
         setErrorData({
-          title: "Connection test failed",
+          title: t("Connection test failed"),
           list: [message],
         });
         return;
       }
       if (autoTestRan) {
         setSuccessData({
-          title: `Connection successful${connectionResult.latency_ms ? ` (${connectionResult.latency_ms}ms)` : ""}`,
+          title: t("Connection successful{{latency}}", {
+            latency: connectionResult.latency_ms ? ` (${connectionResult.latency_ms}ms)` : "",
+          }),
         });
       }
 
@@ -341,15 +347,15 @@ export default function RequestModelModal({
         is_active: true,
       });
       setSuccessData({
-        title: isDirectAddPath ? "Model created" : "Model request submitted",
+        title: isDirectAddPath ? t("Model created") : t("Model request submitted"),
         list: isDirectAddPath
-          ? ["If approval is required, you'll see it in Review & Approval."]
-          : ["Your request has been sent for approval."],
+          ? [t("If approval is required, you'll see it in Review & Approval.")]
+          : [t("Your request has been sent for approval.")],
       });
       handleClose();
     } catch (err: any) {
       setErrorData({
-        title: "Submission failed",
+        title: t("Submission failed"),
         list: [err?.message ?? String(err)],
       });
     } finally {
@@ -366,10 +372,10 @@ export default function RequestModelModal({
           <div className="flex items-start justify-between">
             <div>
               <h2 className="text-xl font-semibold">
-                {isEmbedding ? "Request Embedding" : "Request Model"}
+                {isEmbedding ? t("Request Embedding") : t("Request Model")}
               </h2>
               <p className="mt-1 text-sm text-muted-foreground">
-                Configure the model and submit. Requests route based on environment and visibility.
+                {t("Configure the model and submit. Requests route based on environment and visibility.")}
               </p>
             </div>
           </div>
@@ -378,21 +384,21 @@ export default function RequestModelModal({
         <form onSubmit={handleSubmit} className="flex-1 space-y-6 overflow-y-auto p-6">
           <fieldset className="space-y-4">
             <legend className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
-              Basic Information
+              {t("Basic Information")}
             </legend>
 
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <Label>Display Name *</Label>
+                <Label>{t("Display Name")} *</Label>
                 <Input
                   required
-                  placeholder="e.g., GPT-4.1 for Analytics"
+                  placeholder={t("e.g., GPT-4.1 for Analytics")}
                   value={displayName}
                   onChange={(e) => setDisplayName(e.target.value)}
                 />
               </div>
               <div>
-                <Label>Provider *</Label>
+                <Label>{t("Provider")} *</Label>
                 <select
                   required
                   value={provider}
@@ -410,25 +416,25 @@ export default function RequestModelModal({
 
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <Label>Model Name / ID *</Label>
+                <Label>{t("Model Name / ID")} *</Label>
                 <Input
                   required
-                  placeholder="e.g., gpt-4.1-mini"
+                  placeholder={t("e.g., gpt-4.1-mini")}
                   value={modelName}
                   onChange={(e) => setModelName(e.target.value)}
                 />
               </div>
               <div>
                 <Label>
-                  Base URL
+                  {t("Base URL")}
                   {(provider === "azure" || provider === "openai_compatible") && " *"}
                 </Label>
                 <Input
                   required={provider === "azure" || provider === "openai_compatible"}
                   placeholder={
                     provider === "azure"
-                      ? "https://your-resource.openai.azure.com/"
-                      : "https://api.example.com/v1"
+                      ? t("https://your-resource.openai.azure.com/")
+                      : t("https://api.example.com/v1")
                   }
                   value={baseUrl}
                   onChange={(e) => setBaseUrl(e.target.value)}
@@ -439,18 +445,18 @@ export default function RequestModelModal({
             {provider === "azure" && (
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <Label>Deployment Name *</Label>
+                  <Label>{t("Deployment Name")} *</Label>
                   <Input
                     required
-                    placeholder="my-gpt4-deployment"
+                    placeholder={t("my-gpt4-deployment")}
                     value={azureDeployment}
                     onChange={(e) => setAzureDeployment(e.target.value)}
                   />
                 </div>
                 <div>
-                  <Label>API Version</Label>
+                  <Label>{t("API Version")}</Label>
                   <Input
-                    placeholder="2025-10-01-preview"
+                    placeholder={t("2025-10-01-preview")}
                     value={azureApiVersion}
                     onChange={(e) => setAzureApiVersion(e.target.value)}
                   />
@@ -460,10 +466,10 @@ export default function RequestModelModal({
 
             {provider === "openai_compatible" && (
               <div>
-                <Label>Custom Headers (JSON)</Label>
+                <Label>{t("Custom Headers (JSON)")}</Label>
                 <Textarea
                   rows={3}
-                  placeholder='{"X-Custom-Header": "value"}'
+                  placeholder={t('{"X-Custom-Header": "value"}')}
                   value={customHeaders}
                   onChange={(e) => setCustomHeaders(e.target.value)}
                 />
@@ -471,26 +477,26 @@ export default function RequestModelModal({
             )}
 
             <div>
-              <Label>API Key *</Label>
+                <Label>{t("API Key")} *</Label>
               <Input
                 type="password"
                 required
-                placeholder="sk-..."
+                placeholder={t("sk-...")}
                 value={apiKey}
                 onChange={(e) => setApiKey(e.target.value)}
               />
               <p className="mt-1 text-xxs text-muted-foreground">
-                Required for request. A successful connection test is mandatory before submitting.
+                {t("Required for request. A successful connection test is mandatory before submitting.")}
               </p>
             </div>
 
             <div>
-              <Label>Environment *</Label>
+              <Label>{t("Environment")} *</Label>
               <div className="mt-2 flex gap-2">
                 {[
-                  { value: "uat", label: "UAT" },
-                  { value: "prod", label: "PROD" },
-                  { value: "both", label: "UAT + PROD" },
+                  { value: "uat", label: t("UAT") },
+                  { value: "prod", label: t("PROD") },
+                  { value: "both", label: t("UAT + PROD") },
                 ].map((env) => (
                   <button
                     key={env.value}
@@ -507,26 +513,26 @@ export default function RequestModelModal({
                 ))}
               </div>
               <p className="mt-1 text-xxs text-muted-foreground">
-                Selecting <strong>UAT + PROD</strong> submits a single approval for both environments.
+                {t("Selecting UAT + PROD submits a single approval for both environments.")}
               </p>
             </div>
           </fieldset>
 
           <fieldset className="space-y-4">
             <legend className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
-              {isEmbedding ? "Embedding Parameters" : "Default Parameters"}
+              {isEmbedding ? t("Embedding Parameters") : t("Default Parameters")}
             </legend>
             <div className="grid grid-cols-2 gap-4">
               {!isEmbedding && (
                 <>
                   <div>
-                    <Label>Temperature (0-2)</Label>
+                    <Label>{t("Temperature (0-2)")}</Label>
                     <Input
                       type="number"
                       step="0.01"
                       min="0"
                       max="2"
-                      placeholder="Optional"
+                      placeholder={t("Optional")}
                       value={temperature}
                       onChange={(e) =>
                         setTemperature(e.target.value ? Number(e.target.value) : "")
@@ -534,10 +540,10 @@ export default function RequestModelModal({
                     />
                   </div>
                   <div>
-                    <Label>Max Output Tokens</Label>
+                    <Label>{t("Max Output Tokens")}</Label>
                     <Input
                       type="number"
-                      placeholder="4096"
+                      placeholder={t("4096")}
                       value={maxTokens}
                       onChange={(e) =>
                         setMaxTokens(e.target.value ? Number(e.target.value) : "")
@@ -548,17 +554,17 @@ export default function RequestModelModal({
               )}
               {isEmbedding && (
                 <div>
-                  <Label>Dimensions</Label>
+                  <Label>{t("Dimensions")}</Label>
                   <Input
                     type="number"
-                    placeholder="e.g., 1536"
+                    placeholder={t("e.g., 1536")}
                     value={dimensions}
                     onChange={(e) =>
                       setDimensions(e.target.value ? Number(e.target.value) : "")
                     }
                   />
                   <p className="mt-1 text-xxs text-muted-foreground">
-                    Leave empty to use the model's default dimension.
+                    {t("Leave empty to use the model's default dimension.")}
                   </p>
                 </div>
               )}
@@ -567,12 +573,12 @@ export default function RequestModelModal({
 
           <fieldset className="space-y-4">
             <legend className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
-              Tenancy
+            {t("Tenancy")}
             </legend>
 
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <Label>Visibility Scope *</Label>
+                <Label>{t("Visibility Scope")} *</Label>
                 <select
                   value={visibilityScope}
                   onChange={(e) =>
@@ -582,15 +588,15 @@ export default function RequestModelModal({
                   }
                   className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
                 >
-                  <option value="private">private</option>
-                  <option value="department">department</option>
-                  <option value="organization">organization</option>
+                  <option value="private">{t("private")}</option>
+                  <option value="department">{t("department")}</option>
+                  <option value="organization">{t("organization")}</option>
                 </select>
               </div>
 
               {visibilityScope === "department" ? (
                 <div>
-                  <Label>{canMultiDept ? "Departments *" : "Department *"}</Label>
+                  <Label>{canMultiDept ? `${t("Departments")} *` : `${t("Department")} *`}</Label>
                   {canMultiDept ? (
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
@@ -632,7 +638,7 @@ export default function RequestModelModal({
                         normalizedRole === "department_admin"
                       }
                     >
-                      <option value="">Select department</option>
+                      <option value="">{t("Select department")}</option>
                       {departmentsForSelectedOrg.map((dept) => (
                         <option key={dept.id} value={dept.id}>
                           {dept.name}
@@ -643,7 +649,7 @@ export default function RequestModelModal({
                 </div>
               ) : (
                 <div className="flex items-end text-xs text-muted-foreground">
-                  Organization is derived automatically from your tenancy scope.
+                  {t("Organization is derived automatically from your tenancy scope.")}
                 </div>
               )}
             </div>
@@ -651,24 +657,24 @@ export default function RequestModelModal({
 
           <fieldset className="space-y-4">
             <legend className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
-              Request Details
+              {t("Request Details")}
             </legend>
 
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <Label>Charge Code *</Label>
+                <Label>{t("Charge Code")} *</Label>
                 <Input
                   required
-                  placeholder="e.g., CC-1042"
+                  placeholder={t("e.g., CC-1042")}
                   value={chargeCode}
                   onChange={(e) => setChargeCode(e.target.value)}
                 />
               </div>
               <div>
-                <Label>Project Name *</Label>
+                <Label>{t("Project Name")} *</Label>
                 <Input
                   required
-                  placeholder="e.g., Customer Support Revamp"
+                  placeholder={t("e.g., Customer Support Revamp")}
                   value={projectName}
                   onChange={(e) => setProjectName(e.target.value)}
                 />
@@ -676,11 +682,11 @@ export default function RequestModelModal({
             </div>
 
             <div>
-              <Label>Reason *</Label>
+              <Label>{t("Reason")} *</Label>
               <Textarea
                 required
                 rows={4}
-                placeholder="Tell admins why this model is needed and expected use-case."
+                placeholder={t("Tell admins why this model is needed and expected use-case.")}
                 value={reason}
                 onChange={(e) => setReason(e.target.value)}
               />
@@ -701,11 +707,11 @@ export default function RequestModelModal({
               ) : (
                 <Zap className="mr-2 h-4 w-4" />
               )}
-              Test Connection
+              {t("Test Connection")}
             </Button>
             <div className="flex-1" />
             <Button type="button" variant="outline" onClick={handleClose}>
-              Cancel
+              {t("Cancel")}
             </Button>
             <Button
               type="submit"
@@ -713,13 +719,13 @@ export default function RequestModelModal({
               disabled={isSubmitting || createMutation.isPending}
             >
               {isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              {isEmbedding ? "Submit Embedding Request" : "Submit Model Request"}
+              {isEmbedding ? t("Submit Embedding Request") : t("Submit Model Request")}
             </Button>
           </div>
           <p className="mt-2 text-xs text-muted-foreground">
             {isDirectAddPath
-              ? "This will be auto-approved."
-              : "This will create an approval request based on environment and visibility."}
+              ? t("This will be auto-approved.")
+              : t("This will create an approval request based on environment and visibility.")}
           </p>
         </div>
       </DialogContent>

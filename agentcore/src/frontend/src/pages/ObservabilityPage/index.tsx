@@ -1,4 +1,5 @@
 import { useState, useCallback, useMemo } from "react";
+import { useTranslation } from "react-i18next";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -22,6 +23,7 @@ import {
 } from "./components/DetailDialogs";
 
 export default function ObservabilityPage(): JSX.Element {
+  const { t } = useTranslation();
   // Detail modal selections
   const [selectedSession, setSelectedSession] = useState<string | null>(null);
   const [selectedTrace, setSelectedTrace] = useState<string | null>(null);
@@ -159,12 +161,12 @@ export default function ObservabilityPage(): JSX.Element {
   if (!initialQueries.status.data?.connected && !isProvisioningAdminSessionRole) {
     return (
       <div className="flex h-full w-full flex-col overflow-auto bg-background p-6">
-        <h1 className="text-2xl font-bold mb-6 text-foreground">Observability</h1>
+        <h1 className="text-2xl font-bold mb-6 text-foreground">{t("Observability")}</h1>
         <Alert variant="destructive">
           <AlertCircle className="h-4 w-4" />
-          <AlertTitle>Langfuse Not Connected</AlertTitle>
+          <AlertTitle>{t("Langfuse Not Connected")}</AlertTitle>
           <AlertDescription>
-            {initialQueries.status.data?.message || "Unable to connect to Langfuse. Please configure LANGFUSE_SECRET_KEY, LANGFUSE_PUBLIC_KEY, and LANGFUSE_HOST environment variables."}
+            {initialQueries.status.data?.message || t("Unable to connect to Langfuse. Please configure LANGFUSE_SECRET_KEY, LANGFUSE_PUBLIC_KEY, and LANGFUSE_HOST environment variables.")}
           </AlertDescription>
         </Alert>
       </div>
@@ -179,8 +181,8 @@ export default function ObservabilityPage(): JSX.Element {
           <div className="flex items-center gap-3">
             <BarChart3 className="h-6 w-6 md:h-7 md:w-7" style={{ color: THEME.primary }} />
             <div>
-              <h1 className="text-lg font-semibold md:text-xl text-foreground">Observability</h1>
-              <p className="text-sm text-muted-foreground">Monitor your AI usage, costs, and performance metrics</p>
+              <h1 className="text-lg font-semibold md:text-xl text-foreground">{t("Observability")}</h1>
+              <p className="text-sm text-muted-foreground">{t("Monitor your AI usage, costs, and performance metrics")}</p>
             </div>
           </div>
 
@@ -208,8 +210,8 @@ export default function ObservabilityPage(): JSX.Element {
         {!initialQueries.status.data?.connected && (
           <Alert variant="destructive">
             <AlertCircle className="h-4 w-4" />
-            <AlertTitle>Langfuse Not Connected</AlertTitle>
-            <AlertDescription>{initialQueries.status.data?.message || "Unable to connect to Langfuse for the selected scope."}</AlertDescription>
+          <AlertTitle>{t("Langfuse Not Connected")}</AlertTitle>
+          <AlertDescription>{initialQueries.status.data?.message || t("Unable to connect to Langfuse for the selected scope.")}</AlertDescription>
           </Alert>
         )}
 
@@ -245,9 +247,9 @@ export default function ObservabilityPage(): JSX.Element {
         {requiresFilterFirst && !scopeReady && (
           <Alert className="border-blue-200 bg-blue-50 dark:border-blue-800 dark:bg-blue-950/30">
             <AlertCircle className="h-4 w-4 text-blue-500" />
-            <AlertTitle className="text-foreground">Scope Required</AlertTitle>
+            <AlertTitle className="text-foreground">{t("Scope Required")}</AlertTitle>
             <AlertDescription className="text-muted-foreground">
-              Select an organization or department scope to load observability data.
+              {t("Select an organization or department scope to load observability data.")}
             </AlertDescription>
           </Alert>
         )}
@@ -255,7 +257,7 @@ export default function ObservabilityPage(): JSX.Element {
         {showScopeWarning && scopeWarningMessage && (
           <Alert className="border-amber-200 bg-amber-50 dark:border-amber-800 dark:bg-amber-950/30">
             <AlertCircle className="h-4 w-4 text-amber-500" />
-            <AlertTitle className="text-foreground">Observability Scope Warning</AlertTitle>
+            <AlertTitle className="text-foreground">{t("Observability Scope Warning")}</AlertTitle>
             <AlertDescription className="text-muted-foreground">{scopeWarningMessage}</AlertDescription>
           </Alert>
         )}
@@ -264,12 +266,12 @@ export default function ObservabilityPage(): JSX.Element {
           <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
             <TabsList className="bg-card border shadow-sm p-1 rounded-lg">
               {[
-                { value: "overview", label: "Overview", icon: BarChart3 },
-                { value: "agents", label: "Agents", icon: Bot },
-                { value: "projects", label: "Projects", icon: FolderOpen },
-                { value: "sessions", label: "Sessions", icon: Clock },
-                { value: "models", label: "Models", icon: Cpu },
-                { value: "usage", label: "Usage", icon: Activity },
+                { value: "overview", label: t("Overview"), icon: BarChart3 },
+                { value: "agents", label: t("Agents"), icon: Bot },
+                { value: "projects", label: t("Projects"), icon: FolderOpen },
+                { value: "sessions", label: t("Sessions"), icon: Clock },
+                { value: "models", label: t("Models"), icon: Cpu },
+                { value: "usage", label: t("Usage"), icon: Activity },
               ].map((tab) => (
                 <TabsTrigger
                   key={tab.value}

@@ -130,6 +130,11 @@ type HitlSeriesResponse = {
   series: PendingSeriesPoint[];
 };
 
+const formatPercentMetric = (value: number | null | undefined): string => {
+  if (value == null || !Number.isFinite(value)) return "0%";
+  return `${value.toFixed(2)}%`;
+};
+
 // --- Section Definitions (data unchanged from original) -------------------
 
 const sections: SectionConfig[] = [
@@ -145,6 +150,9 @@ const sections: SectionConfig[] = [
       { name: "Error Rate %", value: "0%", scope: "global" },
       { name: "AKS Pod Scaling Events", value: "0" },
       { name: "CPU/Memory Saturation %", value: "0%", scope: "global" },
+      { name: "Total Runs", value: "0" },
+      { name: "Total Failed Runs", value: "0" },
+      { name: "Execution Failure Rate", value: "0%" },
     ],
     charts: [
       {
@@ -192,6 +200,24 @@ const sections: SectionConfig[] = [
       { name: "% Agents Without Guardrails", value: "0%" },
     ],
     charts: [],
+  },
+  {
+    id: "cost",
+    label: "Cost & Financial",
+    headline: "Cost & Financial KPIs",
+    description: "Agent execution costs, average cost per run, and monthly cost trends.",
+    kpis: [
+      { name: "Total Cost", value: "$0" },
+      { name: "Avg Cost Per Run", value: "$0" },
+    ],
+    charts: [
+      {
+        title: "Monthly Cost Trend",
+        subtitle: "Daily cost over time",
+        type: "area",
+        data: [],
+      },
+    ],
   },
   {
     id: "lifecycle",
@@ -517,6 +543,7 @@ function SectionCard({
   charts,
   approvalRangeSelector,
   hitlRangeSelector,
+  costRangeSelector,
   defaultExpanded,
 }: {
   section: SectionConfig;
@@ -524,6 +551,7 @@ function SectionCard({
   charts: SectionChart[];
   approvalRangeSelector?: React.ReactNode;
   hitlRangeSelector?: React.ReactNode;
+  costRangeSelector?: React.ReactNode;
   defaultExpanded: boolean;
 }) {
   const [expanded, setExpanded] = useState(defaultExpanded);
@@ -608,7 +636,7 @@ function SectionCard({
                   Global
                 </span>
               )}
-              <span className="text-xxs font-bold text-foreground">{t(kpi.value)}</span>
+              <span className="text-xxs font-bold text-foreground">{kpi.value}</span>
             </div>
           ))}
         </div>
@@ -649,7 +677,7 @@ function SectionCard({
                     )}
                   </div>
                   <p className="mt-2 text-2xl font-bold text-foreground leading-none tracking-tight">
-                    {t(kpi.value)}
+                    {kpi.value}
                   </p>
                   {/* subtle bg glow */}
                   <div
@@ -679,6 +707,7 @@ function SectionCard({
                 {charts.map((chart) => {
                   const isApprovalChart = section.id === "approval" && chart.title === "Pending Approvals";
                   const isHitlChart = section.id === "hitl" && (chart.title === "Invocation Rate" || chart.title === "Response Time");
+                  const isCostChart = section.id === "cost" && chart.title === "Monthly Cost Trend";
                   return (
                     <div
                       key={chart.title}
@@ -705,7 +734,8 @@ function SectionCard({
                         <div className="shrink-0 ml-3">
                           {isApprovalChart && approvalRangeSelector}
                           {isHitlChart && hitlRangeSelector}
-                          {!isApprovalChart && !isHitlChart && (
+                          {isCostChart && costRangeSelector}
+                          {!isApprovalChart && !isHitlChart && !isCostChart && (
                             <div
                               className="rounded-lg p-1.5"
                               style={{ backgroundColor: theme.accent + "1a" }}
@@ -801,6 +831,9 @@ export default function DashboardAdmin(): JSX.Element {
   const [devLatencySeries, setDevLatencySeries]     = useState<Array<{ label: string; p95?: number; p99?: number }> | null>(null);
   const [businessExperienceKpis, setBusinessExperienceKpis] = useState<SectionKpi[] | null>(null);
   const [businessResponseTimeSeries, setBusinessResponseTimeSeries] = useState<PendingSeriesPoint[] | null>(null);
+  const [costKpis, setCostKpis]                           = useState<SectionKpi[] | null>(null);
+  const [costRange, setCostRange]                         = useState<"30d" | "90d">("30d");
+  const [costTrendSeries, setCostTrendSeries]             = useState<PendingSeriesPoint[] | null>(null);
 
   // Fallbacks
   const lifecycleKpiFallback:   SectionKpi[] = [{ name: "Agents in UAT", value: "0" }, { name: "UAT to PROD Conversion Rate", value: "0%" }, { name: "Deprecated Agent Count", value: "0" }];
@@ -811,7 +844,8 @@ export default function DashboardAdmin(): JSX.Element {
   const devCodeKpiFallback:     SectionKpi[] = [{ name: "Avg. Version Count of Agents", value: "0" }];
   const businessMaturityFallback:SectionKpi[]= [{ name: "% Agents with Guardrails", value: "0%" }, { name: "% Agents with RAG", value: "0%" }, { name: "% Agents with HITL", value: "0%" }];
   const rootMaturityFallback:   SectionKpi[] = [{ name: "% Agents with Guardrails", value: "0%" }, { name: "% Agents with RAG", value: "0%" }, { name: "% Agents with HITL", value: "0%" }];
-  const platformKpiFallback:    SectionKpi[] = [{ name: "Platform Uptime %", value: "0%" }, { name: "API Latency P95", value: "0ms" }, { name: "API Latency P99", value: "0ms" }, { name: "Error Rate %", value: "0%" }, { name: "AKS Pod Scaling Events", value: "0" }, { name: "CPU/Memory Saturation %", value: "0%" }];
+  const platformKpiFallback:    SectionKpi[] = [{ name: "Platform Uptime %", value: "0%" }, { name: "API Latency P95", value: "0ms" }, { name: "API Latency P99", value: "0ms" }, { name: "Error Rate %", value: "0%" }, { name: "AKS Pod Scaling Events", value: "0" }, { name: "CPU/Memory Saturation %", value: "0%" }, { name: "Total Agent Runs", value: "0" }, { name: "Failed Agent Runs", value: "0" }, { name: "Execution Failure Rate", value: "0%" }];
+  const costKpiFallback:        SectionKpi[] = [{ name: "Total Cost", value: "$0.00" }, { name: "Avg Cost Per Run", value: "$0.00" }];
   const devPerformanceFallback: SectionKpi[] = [{ name: "Avg Agent Latency", value: "0ms" }, { name: "Latency P95", value: "0ms" }, { name: "Latency P99", value: "0ms" }];
   const businessExperienceFallback:SectionKpi[]=[{ name: "Avg Response Time", value: "0ms" }, { name: "Avg Session Duration", value: "0ms" }, { name: "Escalation to Human", value: "0" }, { name: "User Satisfaction Score", value: "0" }];
   const approvalRangeOptions = [{ value: "7d", label: "Last 7 days" }, { value: "30d", label: "Last 30 days" }, { value: "12w", label: "Last 12 weeks" }];
@@ -829,7 +863,7 @@ export default function DashboardAdmin(): JSX.Element {
       .then(([u, p95, p99, er, cpu, mem, sc]) => {
         const uv = gv(u?.data?.prometheus), p95v = gv(p95?.data?.prometheus), p99v = gv(p99?.data?.prometheus), erv = gv(er?.data?.prometheus), cpuv = gv(cpu?.data?.prometheus), memv = gv(mem?.data?.prometheus);
         const dv = gsv(sc?.data, "Desired Replicas (HPA)"); let se = 0; for (let i = 1; i < dv.length; i++) if (dv[i] !== dv[i-1]) se++;
-        setPlatformKpis([{ name: "Platform Uptime %", value: uv != null ? `${uv.toFixed(2)}%` : "0%" }, { name: "API Latency P95", value: p95v != null ? `${Math.round(p95v)}ms` : "0ms" }, { name: "API Latency P99", value: p99v != null ? `${Math.round(p99v)}ms` : "0ms" }, { name: "Error Rate %", value: erv != null ? `${erv.toFixed(2)}%` : "0%" }, { name: "AKS Pod Scaling Events", value: `${se}` }, { name: "CPU/Memory Saturation %", value: cpuv != null && memv != null ? `${Math.round(cpuv)}% / ${Math.round(memv)}%` : "0%" }]);
+        setPlatformKpis([{ name: "Platform Uptime %", value: uv != null ? `${uv.toFixed(2)}%` : "0%" }, { name: "API Latency P95", value: p95v != null ? `${Math.round(p95v)}ms` : "0ms" }, { name: "API Latency P99", value: p99v != null ? `${Math.round(p99v)}ms` : "0ms" }, { name: "Error Rate %", value: erv != null ? `${erv.toFixed(2)}%` : "0%" }, { name: "AKS Pod Scaling Events", value: `${se}` }, { name: "CPU/Memory Saturation %", value: cpuv != null && memv != null ? `${formatPercentMetric(cpuv)} / ${formatPercentMetric(memv)}` : "0%" }]);
       }).catch(() => setPlatformKpis(platformKpiFallback));
   }, [isSuperAdmin, refreshTick]);
   useEffect(() => {
@@ -911,6 +945,39 @@ export default function DashboardAdmin(): JSX.Element {
       .catch(() => setHitlResponseSeries([]));
   }, [hitlRange, isDepartmentAdmin, refreshTick, tzOffsetMinutes]);
   useEffect(() => { if (!isSuperAdmin && !isRootAdmin) return; const orgId = userData?.organization_id || null; const p: any = { ...(regionConfig || {}), params: orgId ? { org_id: orgId } : undefined }; api.get<DashboardSectionApiResponse>("/api/dashboard/sections/governance-guardrail", p).then((r) => setGovernanceKpis(r.data?.kpis?.map((k) => ({ name: k.label, value: k.unit ? `${k.value}${k.unit}` : `${k.value}` })) ?? governanceKpiFallback)).catch(() => setGovernanceKpis(governanceKpiFallback)); }, [isSuperAdmin, isRootAdmin, refreshTick, userData?.organization_id, selectedRegionCode]);
+  useEffect(() => {
+    if (!isSuperAdmin && !isRootAdmin) return;
+    const orgId = userData?.organization_id || null;
+    const p: any = { ...(regionConfig || {}), params: orgId ? { org_id: orgId } : undefined };
+    api.get<DashboardSectionApiResponse>("/api/dashboard/sections/observability-health", p)
+      .then((r) => {
+        const mapped = r.data?.kpis?.map((k) => ({ name: k.label, value: k.unit ? `${k.value}${k.unit}` : `${k.value}` })) ?? [];
+        setPlatformKpis((prev) => {
+          const base = prev ?? platformKpiFallback;
+          const obsNames = new Set(mapped.map((k) => k.name));
+          return [...base.filter((k) => !obsNames.has(k.name)), ...mapped];
+        });
+      })
+      .catch(() => {});
+  }, [isSuperAdmin, isRootAdmin, refreshTick, userData?.organization_id, selectedRegionCode]);
+  useEffect(() => {
+    if (!isSuperAdmin && !isRootAdmin) return;
+    const orgId = userData?.organization_id || null;
+    const p: any = { ...(regionConfig || {}), params: orgId ? { org_id: orgId } : undefined };
+    api.get<DashboardSectionApiResponse>("/api/dashboard/sections/cost-financial", p)
+      .then((r) => setCostKpis(r.data?.kpis?.map((k) => ({ name: k.label, value: k.unit === "$" ? `$${k.value}` : k.unit ? `${k.value}${k.unit}` : `${k.value}` })) ?? costKpiFallback))
+      .catch(() => setCostKpis(costKpiFallback));
+  }, [isSuperAdmin, isRootAdmin, refreshTick, userData?.organization_id, selectedRegionCode]);
+  useEffect(() => {
+    if (!isSuperAdmin && !isRootAdmin) return;
+    const orgId = userData?.organization_id || null;
+    api.get<PendingSeriesResponse>("/api/dashboard/sections/cost-financial/monthly-trend", {
+      ...(regionConfig || {}),
+      params: { range: costRange, tz_offset_minutes: tzOffsetMinutes, ...(orgId ? { org_id: orgId } : {}) },
+    })
+      .then((r) => setCostTrendSeries(r.data?.series ?? []))
+      .catch(() => setCostTrendSeries([]));
+  }, [costRange, isSuperAdmin, isRootAdmin, refreshTick, userData?.organization_id, selectedRegionCode, tzOffsetMinutes]);
 
   // -- Chart data helpers ------------------------------------------------
 
@@ -940,6 +1007,8 @@ export default function DashboardAdmin(): JSX.Element {
   const platLatencyData  = useMemo(() => platformLatencySeries?.length ? platformLatencySeries : mkTsSeries(8).map((p) => ({ ...p, p95: 0, p99: 0 })), [platformLatencySeries]);
   const platErrorData    = useMemo(() => platformErrorSeries?.length ? platformErrorSeries : mkTsSeries(8).map((p) => ({ ...p, value: 0 })), [platformErrorSeries]);
   const platCpuMemData   = useMemo(() => platformCpuMemSeries?.length ? platformCpuMemSeries : mkTsSeries(8).map((p) => ({ ...p, cpu: 0, memory: 0 })), [platformCpuMemSeries]);
+  const cDays = costRange === "90d" ? 90 : 30;
+  const costTrendChartData = useMemo(() => mkDateSeries(costTrendSeries, cDays), [costTrendSeries, cDays]);
   const devLatData       = useMemo(() => devLatencySeries ?? [], [devLatencySeries]);
 
   // -- Resolve KPIs + charts for each section ----------------------------
@@ -958,6 +1027,7 @@ export default function DashboardAdmin(): JSX.Element {
     if (isSuperAdmin && section.id === "lifecycle") kpis = lifecycleKpis ?? lifecycleKpiFallback;
     if (isSuperAdmin && section.id === "governance") applyOverride(governanceKpis);
     if (isSuperAdmin && section.id === "platform") applyOverride(platformKpis);
+    if (isSuperAdmin && section.id === "cost") applyOverride(costKpis);
     if (isDepartmentAdmin && section.id === "usage") applyOverride(deptUsageKpis);
     if (isDepartmentAdmin && section.id === "approval") applyOverride(deptApprovalKpis);
     if (isDepartmentAdmin && section.id === "hitl") applyOverride(deptHitlKpis);
@@ -973,6 +1043,7 @@ export default function DashboardAdmin(): JSX.Element {
         if (chart.title === "Error Rate Trend")        return { ...chart, data: platErrorData };
         if (chart.title === "CPU & Memory Saturation") return { ...chart, data: platCpuMemData };
       }
+      if (section.id === "cost" && chart.title === "Monthly Cost Trend") return { ...chart, data: costTrendChartData };
       if (section.id === "usage" && chart.title === "Response Time Trend") return { ...chart, data: deptRtChartData };
       if (section.id === "approval" && chart.title === "Pending Approvals") return { ...chart, data: approvalChartData };
       if (section.id === "hitl") {
@@ -1007,6 +1078,13 @@ export default function DashboardAdmin(): JSX.Element {
     <Select value={hitlRange} onValueChange={(v) => setHitlRange(v as "7d" | "30d" | "12w")}>
       <SelectTrigger className="h-7 w-[130px] text-xs"><SelectValue /></SelectTrigger>
       <SelectContent>{approvalRangeOptions.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}</SelectContent>
+    </Select>
+  );
+  const costRangeOptions = [{ value: "30d", label: "Last 30 days" }, { value: "90d", label: "Last 90 days" }];
+  const costRangeSelector = (
+    <Select value={costRange} onValueChange={(v) => setCostRange(v as "30d" | "90d")}>
+      <SelectTrigger className="h-7 w-[130px] text-xs"><SelectValue /></SelectTrigger>
+      <SelectContent>{costRangeOptions.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}</SelectContent>
     </Select>
   );
 
@@ -1085,6 +1163,7 @@ export default function DashboardAdmin(): JSX.Element {
                 charts={charts}
                 approvalRangeSelector={section.id === "approval" ? approvalRangeSelector : undefined}
                 hitlRangeSelector={section.id === "hitl" ? hitlRangeSelector : undefined}
+                costRangeSelector={section.id === "cost" ? costRangeSelector : undefined}
                 defaultExpanded={i === 0}
               />
             );
@@ -1094,6 +1173,4 @@ export default function DashboardAdmin(): JSX.Element {
     </div>
   );
 }
-
-
 

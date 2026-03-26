@@ -1,5 +1,6 @@
 import { Edit2, Eye, Lock, MoreVertical, Plus, Search, Shield, Trash2, ArrowLeft } from "lucide-react";
 import { useCallback, useContext, useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -55,6 +56,7 @@ export default function GuardrailsView({
   guardrails = [],
   setSearch = () => {},
 }: GuardrailsViewProps): JSX.Element {
+  const { t } = useTranslation();
   const [filter] = useState<CategoryType>("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
@@ -290,15 +292,15 @@ export default function GuardrailsView({
 
   const handleDeleteGuardrail = async (guardrail: GuardrailInfo) => {
     const shouldDelete = window.confirm(
-      `Delete guardrail "${guardrail.name}"?`,
+      t('Delete guardrail "{{name}}"?', { name: guardrail.name }),
     );
     if (!shouldDelete) return;
 
     try {
       await deleteMutation.mutateAsync({ id: guardrail.id });
-      setSuccessData({ title: `Guardrail "${guardrail.name}" deleted.` });
+      setSuccessData({ title: t('Guardrail "{{name}}" deleted.', { name: guardrail.name }) });
     } catch {
-      setErrorData({ title: "Failed to delete guardrail." });
+      setErrorData({ title: t("Failed to delete guardrail.") });
     }
   };
 
@@ -323,12 +325,12 @@ export default function GuardrailsView({
                 >
                   <ArrowLeft className="h-4 w-4" />
                 </Button>
-                <h1 className="text-xl font-semibold">{selectedFramework.name} Policies</h1>
+                <h1 className="text-xl font-semibold">{t("{{name}} Policies", { name: selectedFramework.name })}</h1>
               </div>
               <p className="text-sm text-muted-foreground">
                 {isProdView
-                  ? `Frozen production guardrail policies for ${selectedFramework.name} (read-only)`
-                  : `Manage and configure guardrail policies for ${selectedFramework.name}`}
+                    ? t("Frozen production guardrail policies for {{name}} (read-only)", { name: selectedFramework.name })
+                  : t("Manage and configure guardrail policies for {{name}}", { name: selectedFramework.name })}
               </p>
             </div>
 
@@ -336,8 +338,8 @@ export default function GuardrailsView({
               {/* Environment Toggle */}
               <div className="flex items-center rounded-lg border border-border bg-muted/50 p-1">
                 {([
-                  { value: "uat" as const, label: "UAT" },
-                  { value: "prod" as const, label: "PROD" },
+                  { value: "uat" as const, label: t("UAT") },
+                  { value: "prod" as const, label: t("PROD") },
                 ] as const).map((env) => (
                   <button
                     key={env.value}
@@ -358,7 +360,7 @@ export default function GuardrailsView({
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                 <input
-                  placeholder="Search guardrails..."
+                  placeholder={t("Search guardrails...")}
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   className="w-64 rounded-lg border border-border bg-card py-2.5 pl-10 pr-4 text-sm text-foreground placeholder:text-muted-foreground focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring"
@@ -369,14 +371,14 @@ export default function GuardrailsView({
                 disabled={isProdView || !canAddGuardrails}
                 title={
                   isProdView
-                    ? "Production view is read-only"
+                    ? t("Production view is read-only")
                     : !canAddGuardrails
-                      ? "You do not have permission to add guardrails"
+                      ? t("You do not have permission to add guardrails")
                       : undefined
                 }
               >
                 <Plus className="mr-2 h-4 w-4" />
-                Add Guardrail
+                {t("Add Guardrail")}
               </Button>
             </div>
           </div>
@@ -390,7 +392,7 @@ export default function GuardrailsView({
               <>
                 {!!error && (
                   <div className="mb-4 rounded-md border border-destructive/20 bg-destructive/5 px-4 py-3 text-sm text-destructive">
-                    Failed to load guardrails from database.
+                    {t("Failed to load guardrails from database.")}
                   </div>
                 )}
                 <div className="overflow-x-auto rounded-lg border border-border bg-card">

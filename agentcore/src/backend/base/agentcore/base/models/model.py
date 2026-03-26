@@ -299,7 +299,7 @@ class LCModelNode(Node):
                 from agentcore.observability.metrics_registry import record_llm_call
                 record_llm_call(
                     model_name=getattr(self, "model_name", "") or self.display_name,
-                    provider=getattr(self, "model_provider", "unknown"),
+                    provider=getattr(self, "model_provider", None) or getattr(self, "provider", None) or "unknown",
                     duration_ms=(_time_mod.perf_counter() - _llm_start) * 1000,
                     input_tokens=0,
                     output_tokens=0,
@@ -360,7 +360,7 @@ class LCModelNode(Node):
         from agentcore.observability.metrics_registry import record_llm_call
         record_llm_call(
             model_name=model_name or self.display_name,
-            provider=getattr(self, "model_provider", "unknown"),
+            provider=getattr(self, "model_provider", None) or getattr(self, "provider", None) or "unknown",
             duration_ms=duration_ms,
             input_tokens=input_tokens,
             output_tokens=output_tokens,

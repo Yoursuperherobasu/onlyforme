@@ -485,6 +485,9 @@ class LangFuseTracer(BaseTracer):
                     "output": serialize(outputs),
                     "metadata": metadata,
                 }
+                if error is not None:
+                    root_update["level"] = "ERROR"
+                    root_update["status_message"] = str(error)
                 if self._accumulated_tokens["total"] > 0 or self._accumulated_tokens["input"] > 0:
                     root_update["usage_details"] = dict(self._accumulated_tokens)
                     root_update["usage"] = dict(self._accumulated_tokens)
@@ -512,10 +515,21 @@ class LangFuseTracer(BaseTracer):
             except Exception:
                 pass
 
-        # Flush
+        # Flush both the Langfuse client buffer AND the OTEL span processor.
+        # The Langfuse client.flush() may only flush its own REST queue, while
+        # OTEL spans sit in the BatchSpanProcessor's separate buffer.  Without
+        # flushing both, earlier traces' spans can be lost before the next trace
+        # starts.
         try:
             if hasattr(self._client, 'flush'):
                 self._client.flush()
+        except Exception:
+            pass
+        try:
+            from opentelemetry import trace as otel_trace
+            provider = otel_trace.get_tracer_provider()
+            if hasattr(provider, 'force_flush'):
+                provider.force_flush(timeout_millis=5000)
         except Exception:
             pass
 
