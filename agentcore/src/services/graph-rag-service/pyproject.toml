@@ -17,6 +17,7 @@ dependencies = [
     "neo4j>=5.20.0",
     "azure-identity>=1.15.0",
     "azure-keyvault-secrets>=4.8.0",
+    "toml>=0.10.2",
 ]
 
 [project.scripts]
