@@ -198,9 +198,9 @@ KPI_PRESETS = [
         "name": "Memory Saturation %",
         "section": "Infrastructure",
         "query": (
-            "100 * avg(container_memory_working_set_bytes"
-            '{container!="POD", container!=""}'
-            " / on(node) group_left() machine_memory_bytes)"
+            "100 * sum(container_memory_working_set_bytes"
+            '{container!="POD", container!=""})'
+            ' / sum(kube_node_status_capacity{resource="memory"})'
         ),
         "unit": "%",
         "thresholds": {"green": 70, "yellow": 85},
@@ -289,9 +289,9 @@ CHART_PRESETS = [
             {
                 "label": "Memory %",
                 "query": (
-                    "100 * avg(container_memory_working_set_bytes"
-                    '{container!="POD", container!=""}'
-                    " / on(node) group_left() machine_memory_bytes)"
+                    "100 * sum(container_memory_working_set_bytes"
+                    '{container!="POD", container!=""})'
+                    ' / sum(kube_node_status_capacity{resource="memory"})'
                 ),
             },
         ],
