@@ -1,38 +1,8 @@
-"""Manifest YAML helpers -- add / remove deployment entries."""
+"""Manifest YAML helpers -- add / remove agent entries directly in Git repo."""
 
 from __future__ import annotations
 
-from pathlib import Path
-
-import yaml
-from dotenv import find_dotenv
 from loguru import logger
-
-from agentcore.services.deps import get_settings_service
-
-
-def _resolve_manifest_path() -> Path:
-    """Return the absolute path to agents.yaml, resolved from settings."""
-    configured = get_settings_service().settings.manifest_file_path
-    manifest_path = Path(configured) if configured else Path("agents.yaml")
-    if not manifest_path.is_absolute():
-        env_dir = Path(find_dotenv()).resolve().parent
-        manifest_path = (env_dir / manifest_path).resolve()
-    return manifest_path
-
-
-def _load_manifest(path: Path) -> dict:
-    if path.exists():
-        return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    return {}
-
-
-def _save_manifest(path: Path, data: dict) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        yaml.dump(data, default_flow_style=False, allow_unicode=True, sort_keys=False),
-        encoding="utf-8",
-    )
 
 
 _ENV_TO_NUMERIC = {"dev": 0, "uat": 1, "prod": 2}
@@ -54,59 +24,49 @@ def add_manifest_entry(
     environment: str,
     deployment_id: str,
 ) -> None:
-    """Add a deployment entry. Idempotent -- skips if deployment_id already present."""
+    """Add an agent entry directly in the Git repo. Idempotent -- skips if deployment_id already present."""
     try:
-        path = _resolve_manifest_path()
-        data = _load_manifest(path)
-        deployments: list = data.get("agents", [])
+        from agentcore.services.git_manifest import read_manifest_from_git, push_manifest_to_git
 
-        if any(d.get("deployment_id") == deployment_id for d in deployments):
+        data = read_manifest_from_git()
+        agents: list = data.get("agents", [])
+
+        if any(d.get("deployment_id") == deployment_id for d in agents):
             logger.debug(f"[MANIFEST] Entry for {deployment_id} already exists, skipping add.")
             return
 
         env_code = _normalize_env(environment)
-        deployments.append({
+        agents.append({
             "agent_id": agent_id,
             "agent_name": agent_name,
             "version_number": version_number,
             "environment": env_code,
             "deployment_id": deployment_id,
         })
-        updated = {"agents": deployments}
-        _save_manifest(path, updated)
-        logger.info(f"[MANIFEST] Added entry for deployment_id={deployment_id} (total: {len(deployments)})")
-
-        try:
-            from agentcore.services.git_manifest import push_manifest_to_git
-            push_manifest_to_git(updated, f"manifest: add deployment {deployment_id}")
-        except Exception as git_err:
-            logger.warning(f"[MANIFEST] Git sync failed (add): {git_err}")
+        updated = {"agents": agents}
+        push_manifest_to_git(updated, f"manifest: add agent {agent_name} ({deployment_id})")
+        logger.info(f"[MANIFEST] Added entry for deployment_id={deployment_id} (total: {len(agents)})")
     except Exception as err:
         logger.warning(f"[MANIFEST] Failed to add entry: {err}")
 
 
 def remove_manifest_entry(*, deployment_id: str) -> None:
-    """Remove the entry matching deployment_id. No-op if not found."""
+    """Remove the entry matching deployment_id directly from the Git repo. No-op if not found."""
     try:
-        path = _resolve_manifest_path()
-        data = _load_manifest(path)
-        deployments: list = data.get("agents", [])
+        from agentcore.services.git_manifest import read_manifest_from_git, push_manifest_to_git
 
-        original_len = len(deployments)
-        deployments = [d for d in deployments if d.get("deployment_id") != deployment_id]
+        data = read_manifest_from_git()
+        agents: list = data.get("agents", [])
 
-        if len(deployments) == original_len:
+        original_len = len(agents)
+        agents = [d for d in agents if d.get("deployment_id") != deployment_id]
+
+        if len(agents) == original_len:
             logger.debug(f"[MANIFEST] No entry found for {deployment_id}, nothing to remove.")
             return
 
-        updated = {"agents": deployments}
-        _save_manifest(path, updated)
-        logger.info(f"[MANIFEST] Removed entry for deployment_id={deployment_id} (remaining: {len(deployments)})")
-
-        try:
-            from agentcore.services.git_manifest import push_manifest_to_git
-            push_manifest_to_git(updated, f"manifest: remove deployment {deployment_id}")
-        except Exception as git_err:
-            logger.warning(f"[MANIFEST] Git sync failed (remove): {git_err}")
+        updated = {"agents": agents}
+        push_manifest_to_git(updated, f"manifest: remove deployment {deployment_id}")
+        logger.info(f"[MANIFEST] Removed entry for deployment_id={deployment_id} (remaining: {len(agents)})")
     except Exception as err:
         logger.warning(f"[MANIFEST] Failed to remove entry: {err}")
