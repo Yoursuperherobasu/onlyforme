@@ -1,0 +1,99 @@
+# ============================================================
+# Dockerfile.agentcore — Main AgentCore backend + frontend
+# Build context: repo root
+# Usage: docker build -f Dockerfile.agentcore -t agentcore .
+# ============================================================
+
+# ---- Stage 1: Frontend build ----
+FROM node:20-alpine AS frontend-build
+
+WORKDIR /app
+
+COPY agentcore/src/frontend/package.json agentcore/src/frontend/package-lock.json ./
+RUN npm ci --ignore-scripts --no-audit --no-fund && \
+    rm -rf ~/.npm
+
+COPY agentcore/src/frontend/ ./
+COPY agentcore/.env /app-root/.env
+
+# Build static assets (output → /app/build)
+RUN npm run build && \
+    rm -rf node_modules src .cache
+
+# ---- Stage 2: Python dependency builder ----
+FROM python:3.11-slim AS py-builder
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    UV_COMPILE_BYTECODE=0
+
+RUN pip install --no-cache-dir uv
+
+WORKDIR /build
+
+COPY agentcore/src/backend/pyproject.toml agentcore/src/backend/uv.lock ./
+
+# Install deps into a virtual env we can copy later
+RUN uv venv /opt/venv && \
+    . /opt/venv/bin/activate && \
+    uv sync --frozen --no-dev --no-install-project && \
+    # ---- Aggressive cleanup inside venv ----
+    find /opt/venv -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null; \
+    find /opt/venv -type d -name "tests" -exec rm -rf {} + 2>/dev/null; \
+    find /opt/venv -type d -name "test" -exec rm -rf {} + 2>/dev/null; \
+    find /opt/venv -type d -name "docs" -exec rm -rf {} + 2>/dev/null; \
+    find /opt/venv -type f -name "*.pyc" -delete 2>/dev/null; \
+    find /opt/venv -type f -name "*.pyo" -delete 2>/dev/null; \
+    find /opt/venv -type f -name "*.pyi" -delete 2>/dev/null; \
+    find /opt/venv -type f -name "*.dist-info/RECORD" -delete 2>/dev/null; \
+    find /opt/venv -type f -name "*.dist-info/top_level.txt" -delete 2>/dev/null; \
+    find /opt/venv -type d -name "*.dist-info" -exec sh -c 'rm -f "$1"/RECORD "$1"/INSTALLER "$1"/REQUESTED "$1"/direct_url.json' _ {} \; 2>/dev/null; \
+    true
+
+# ---- Stage 3: Final runtime ----
+FROM python:3.11-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PATH="/opt/venv/bin:$PATH" \
+    VIRTUAL_ENV=/opt/venv
+
+# Install only essential runtime system deps in one layer
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        curl \
+        libpq5 \
+        poppler-utils && \
+    apt-get purge -y --auto-remove && \
+    rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+
+# Copy venv from builder
+COPY --from=py-builder /opt/venv /opt/venv
+
+WORKDIR /app
+
+# Copy backend application code
+COPY agentcore/src/backend/ ./
+
+# Copy frontend build output into static dir
+COPY --from=frontend-build /app/build ./frontend/build
+
+# Remove unnecessary files from app
+RUN find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null; \
+    find . -type f -name "*.pyc" -delete 2>/dev/null; \
+    rm -rf tests/ .pytest_cache/ .ruff_cache/ coverage/ 2>/dev/null; \
+    true
+
+# Non-root user
+RUN groupadd -r appuser && useradd -r -g appuser -d /app -s /sbin/nologin appuser && \
+    chown -R appuser:appuser /app
+USER appuser
+
+EXPOSE 7860
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD curl -f http://localhost:7860/ready || exit 1
+
+CMD ["uvicorn", "agentcore.main:create_app", \
+     "--host", "0.0.0.0", "--port", "7860", "--factory"]

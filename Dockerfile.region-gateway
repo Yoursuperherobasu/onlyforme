@@ -1,0 +1,52 @@
+# ============================================================
+# Dockerfile.region-gateway — Cross-region dashboard proxy
+# Build context: repo root
+# Usage: docker build -f Dockerfile.region-gateway -t region-gateway .
+# Target: < 200MB (lightest service — no DB, no ML)
+# ============================================================
+
+FROM python:3.11-slim AS builder
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=1 \
+    UV_COMPILE_BYTECODE=0
+
+RUN pip install --no-cache-dir uv
+
+WORKDIR /build
+COPY agentcore/src/services/region-gateway/pyproject.toml ./
+
+# No uv.lock for this service — install directly
+RUN uv venv /opt/venv && \
+    . /opt/venv/bin/activate && \
+    uv pip install . && \
+    find /opt/venv -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null; \
+    find /opt/venv -type d \( -name "tests" -o -name "test" -o -name "docs" \) -exec rm -rf {} + 2>/dev/null; \
+    find /opt/venv -type f \( -name "*.pyc" -o -name "*.pyo" -o -name "*.pyi" \) -delete 2>/dev/null; \
+    true
+
+FROM python:3.11-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PATH="/opt/venv/bin:$PATH" \
+    VIRTUAL_ENV=/opt/venv
+
+# No extra system deps needed — no DB driver
+COPY --from=builder /opt/venv /opt/venv
+
+WORKDIR /app
+COPY agentcore/src/services/region-gateway/app ./app
+
+RUN find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null; true
+
+RUN groupadd -r appuser && useradd -r -g appuser -d /app -s /sbin/nologin appuser && \
+    chown -R appuser:appuser /app
+USER appuser
+
+EXPOSE 8006
+
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8006/health')" || exit 1
+
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8006"]

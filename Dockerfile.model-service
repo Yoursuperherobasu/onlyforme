@@ -1,0 +1,58 @@
+# ============================================================
+# Dockerfile.model-service — LLM & Embeddings microservice
+# Build context: repo root
+# Usage: docker build -f Dockerfile.model-service -t model-service .
+# Target: < 400MB
+# ============================================================
+
+# ---- Stage 1: Build dependencies ----
+FROM python:3.11-slim AS builder
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=1 \
+    UV_COMPILE_BYTECODE=0
+
+RUN pip install --no-cache-dir uv
+
+WORKDIR /build
+COPY agentcore/src/services/model-service/pyproject.toml \
+     agentcore/src/services/model-service/uv.lock ./
+
+RUN uv venv /opt/venv && \
+    . /opt/venv/bin/activate && \
+    uv sync --frozen --no-dev --no-install-project && \
+    find /opt/venv -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null; \
+    find /opt/venv -type d \( -name "tests" -o -name "test" -o -name "docs" \) -exec rm -rf {} + 2>/dev/null; \
+    find /opt/venv -type f \( -name "*.pyc" -o -name "*.pyo" -o -name "*.pyi" \) -delete 2>/dev/null; \
+    true
+
+# ---- Stage 2: Runtime ----
+FROM python:3.11-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PATH="/opt/venv/bin:$PATH" \
+    VIRTUAL_ENV=/opt/venv
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends libpq5 && \
+    rm -rf /var/lib/apt/lists/* /tmp/*
+
+COPY --from=builder /opt/venv /opt/venv
+
+WORKDIR /app
+COPY agentcore/src/services/model-service/app ./app
+
+RUN find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null; true
+
+RUN groupadd -r appuser && useradd -r -g appuser -d /app -s /sbin/nologin appuser && \
+    chown -R appuser:appuser /app
+USER appuser
+
+EXPOSE 8001
+
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8001/health')" || exit 1
+
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8001"]
