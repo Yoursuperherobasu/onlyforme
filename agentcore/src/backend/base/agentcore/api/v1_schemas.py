@@ -398,6 +398,7 @@ class SimplifiedAPIRequest(BaseModel):
     )
     tweaks: Tweaks | None = Field(default=None, description="The tweaks")
     session_id: str | None = Field(default=None, description="The session id")
+    files: list[str] | None = Field(default=None, description="List of file paths for uploaded files")
 
 
 # (alias) type ReactFlowJsonObject<NodeData = any, EdgeData = any> = {

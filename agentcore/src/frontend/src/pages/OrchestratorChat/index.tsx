@@ -435,6 +435,7 @@ export default function AgentOrchestrator() {
   const handleSelectAgent = (agent: Agent) => {
     const updated = input.replace(/@[\w\s]*$/, `@${agent.name} `);
     setInput(updated);
+    setSelectedModelId(agent.id);
     setShowMentions(false);
     textareaRef.current?.focus();
   };
@@ -1132,20 +1133,22 @@ export default function AgentOrchestrator() {
                 value={input}
                 onChange={(e) => handleInputChange(e.target.value)}
                 onPaste={handlePaste}
+                disabled={isSending}
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && !e.shiftKey) {
                     e.preventDefault();
                     handleSend();
                   }
                 }}
-                placeholder={t("Message agents or type @ to mention...")}
+                placeholder={isSending ? t("Waiting for response...") : t("Message agents or type @ to mention...")}
                 rows={1}
-                className="w-full resize-none border-none bg-transparent px-5 py-4 pr-14 text-[15px] text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-0"
+                className={`w-full resize-none border-none bg-transparent px-5 py-4 pr-14 text-[15px] text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-0 ${isSending ? "cursor-not-allowed opacity-50" : ""}`}
               />
               <div className="flex items-center justify-between px-3 pb-3">
                 <button
                   onClick={() => fileInputRef.current?.click()}
-                  className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                  disabled={isSending}
+                  className={`flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors ${isSending ? "cursor-not-allowed opacity-50" : "hover:bg-accent hover:text-foreground"}`}
                   title={t("Upload image")}
                 >
                   <ImagePlus size={16} />
