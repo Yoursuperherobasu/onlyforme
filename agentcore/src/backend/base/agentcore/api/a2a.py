@@ -439,7 +439,10 @@ def _extract_output_text(run_outputs: list) -> str:
                 return ""
 
             for output in first_output.outputs:
-                if output and hasattr(output, "results"):
+                if output is None:
+                    continue
+                # Check results dict
+                if hasattr(output, "results") and output.results:
                     for result_value in output.results.values():
                         if hasattr(result_value, "data"):
                             data = result_value.data
@@ -450,12 +453,25 @@ def _extract_output_text(run_outputs: list) -> str:
                                     return str(data["message"])
                             if isinstance(data, str):
                                 return data
-                        if hasattr(result_value, "text"):
+                        if hasattr(result_value, "text") and result_value.text:
                             return str(result_value.text)
                         if isinstance(result_value, str):
                             return result_value
+                # Check messages list (ChatOutputResponse)
+                if hasattr(output, "messages") and output.messages:
+                    for msg in output.messages:
+                        if hasattr(msg, "message") and msg.message:
+                            return str(msg.message)
+                        if hasattr(msg, "text") and msg.text:
+                            return str(msg.text)
+                # Check outputs dict
+                if hasattr(output, "outputs") and output.outputs:
+                    for out_val in output.outputs.values():
+                        if hasattr(out_val, "message") and out_val.message:
+                            return str(out_val.message)
 
-        return str(first_output)
+        logger.warning(f"Could not extract text from run_outputs: {type(first_output).__name__}")
+        return "I processed your request but couldn't format the response."
 
     except Exception as e:
         logger.warning(f"Error extracting output text: {e}")
