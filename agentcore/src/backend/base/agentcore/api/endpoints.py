@@ -388,6 +388,7 @@ async def simple_run_agent(
             outputs=outputs,
             stream=stream,
             event_manager=event_manager,
+            files=input_request.files,
         )
 
         return RunResponse(outputs=task_result, session_id=session_id)

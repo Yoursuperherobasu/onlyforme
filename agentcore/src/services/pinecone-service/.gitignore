@@ -3,7 +3,7 @@ __pycache__/
 *.py[cod]
 *$py.class
 notebooks
-.venvpipe/
+.venvpine/
 # frontend
 src/frontend
 
