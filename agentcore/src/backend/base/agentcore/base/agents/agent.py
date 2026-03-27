@@ -9,7 +9,7 @@ from langchain_core.messages import HumanMessage
 from langchain_core.runnables import Runnable
 
 from agentcore.base.agents.callback import AgentAsyncHandler
-from agentcore.base.agents.events import ExceptionWithMessageError, process_agent_events
+from agentcore.base.agents.events import AccumulatedUsage, ExceptionWithMessageError, process_agent_events
 from agentcore.base.agents.utils import data_to_messages
 from agentcore.custom.custom_node.node import Node, _get_component_toolkit
 from agentcore.field_typing import Tool
@@ -212,10 +212,10 @@ class LCAgentNode(Node):
         event_manager = self._event_manager if hasattr(self, "_event_manager") else None
         
         try:
-            result = await process_agent_events(
+            result, accumulated_usage = await process_agent_events(
                 runnable.astream_events(
                     input_dict,
-                    config={"callbacks": [AgentAsyncHandler(self.log), *self.get_langchain_callbacks()]},
+                    config={"callbacks": [AgentAsyncHandler(self.log)]},
                     version="v2",
                 ),
                 agent_message,
@@ -233,6 +233,10 @@ class LCAgentNode(Node):
             # Log or handle any other exceptions
             logger.error(f"Error: {e}")
             raise
+
+        usage_meta = accumulated_usage.to_metadata()
+        if usage_meta:
+            self.trace_output_metadata = usage_meta
 
         self.status = result
         return result

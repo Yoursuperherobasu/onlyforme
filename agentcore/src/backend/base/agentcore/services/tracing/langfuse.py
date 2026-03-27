@@ -93,14 +93,8 @@ class LangfuseCallbackWrapper(BaseCallbackHandler):
 
 
 # ==========================================================
-# Write-path Langfuse client cache
+# Write-path Langfuse client factory
 # ==========================================================
-# Reuse Langfuse clients across traces to prevent the OTEL
-# SpanExporter from being replaced on each trace, which causes
-# buffered spans (previous traces) to be lost and timestamps
-# to become inconsistent across exporter instances.
-
-_WRITE_CLIENT_CACHE: dict[str, Any] = {}
 
 _BLOCKED_INSTRUMENTATION_SCOPES = [
     "fastapi", "starlette", "asgi",
@@ -114,6 +108,8 @@ _BLOCKED_INSTRUMENTATION_SCOPES = [
     "opentelemetry.instrumentation.urllib3",
 ]
 
+_WRITE_CLIENT_CACHE: dict[str, Any] = {}
+
 
 def _get_or_create_write_client(
     host: str | None,
@@ -121,7 +117,11 @@ def _get_or_create_write_client(
     secret_key: str | None,
     environment: str | None,
 ) -> Any:
-    """Return a cached Langfuse client for trace writing, creating one if needed."""
+    """Return a cached Langfuse client for trace writing, creating one if needed.
+
+    Reusing the client keeps the same OTEL TracerProvider/SpanExporter across
+    traces so buffered spans are not lost between traces.
+    """
     cache_key = f"{host or ''}:{public_key or ''}:{environment or ''}"
     cached = _WRITE_CLIENT_CACHE.get(cache_key)
     if cached is not None:
@@ -153,7 +153,6 @@ def _get_or_create_write_client(
                 raise
             client = get_client()
 
-    # Health check on first creation
     if hasattr(client, "auth_check"):
         try:
             if not client.auth_check():
@@ -253,8 +252,7 @@ class LangFuseTracer(BaseTracer):
                 os.environ["LANGFUSE_BASE_URL"] = str(host)
 
             # Reuse a cached client to keep the same OTEL TracerProvider/SpanExporter
-            # across traces.  Creating a new client per trace replaces the exporter,
-            # causing buffered spans from earlier traces to be lost.
+            # across traces so buffered spans are not lost between traces.
             self._client = _get_or_create_write_client(
                 host=host,
                 public_key=self.langfuse_public_key,
@@ -262,13 +260,17 @@ class LangFuseTracer(BaseTracer):
                 environment=self.environment,
             )
 
-            # Build trace metadata
+            # Build trace metadata.  Include an explicit UTC timestamp so the
+            # observability layer can use it instead of Langfuse's potentially
+            # timezone-inconsistent trace timestamp.
+            from datetime import datetime as _dt, timezone as _tz
             trace_metadata = {
                 "agent_id": self.agent_id,
                 "agent_name": self.agent_name,
                 "run_id": str(self.trace_id),
                 "user_id": self.user_id,
                 "session_id": self.session_id,
+                "trace_created_at_utc": _dt.now(_tz.utc).isoformat(),
             }
             if self.observability_project_id:
                 trace_metadata["project_id"] = self.observability_project_id
@@ -287,8 +289,10 @@ class LangFuseTracer(BaseTracer):
             except ImportError:
                 pass
 
-            # v3: Create root span using start_as_current_observation
-            # The root span becomes the trace, input/output derive from it
+            # v3: Create root span as the trace container.  Child component
+            # spans (Worker Node, etc.) are created as "generation" and carry
+            # their own token/cost data.  Langfuse aggregates child generation
+            # metrics to the trace level automatically.
             self._root_context = self._client.start_as_current_observation(
                 as_type="span",
                 name=self.agent_name or self.agent_id,
@@ -356,10 +360,12 @@ class LangFuseTracer(BaseTracer):
         span_metadata |= metadata or {}
 
         try:
-            # Use "generation" for LLM and guardrail components so Langfuse
-            # displays token usage, model info, and latency in its Generation tab.
+            # Use "generation" for components that produce LLM token usage so
+            # Langfuse displays token counts, model info, and cost in its UI.
+            # Agent-type nodes (Worker Node, etc.) also carry token usage from
+            # their internal LLM calls, so they need "generation" too.
             # "span" observations do not show token metrics in the Langfuse UI.
-            observation_type = "generation" if str(trace_type).lower() in ("llm", "guardrail") else "span"
+            observation_type = "generation" if str(trace_type).lower() in ("llm", "guardrail", "agent") else "span"
             # v3: Create span with input passed directly to start_as_current_observation
             span_context = self._client.start_as_current_observation(
                 as_type=observation_type,
@@ -488,9 +494,10 @@ class LangFuseTracer(BaseTracer):
                 if error is not None:
                     root_update["level"] = "ERROR"
                     root_update["status_message"] = str(error)
-                if self._accumulated_tokens["total"] > 0 or self._accumulated_tokens["input"] > 0:
-                    root_update["usage_details"] = dict(self._accumulated_tokens)
-                    root_update["usage"] = dict(self._accumulated_tokens)
+                # Do NOT write accumulated tokens to the root span — child
+                # generation spans already carry token/cost data.  Writing
+                # them here too causes Langfuse to double-count at the trace
+                # level (root usage + child usage).
                 if self._accumulated_model:
                     root_update["model"] = self._accumulated_model
                 self._root_span.update(**root_update)

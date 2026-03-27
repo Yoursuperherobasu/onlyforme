@@ -749,12 +749,20 @@ def _build_enriched_traces(raw_traces: list[Any], clients: list[Any]) -> list[En
         except (TypeError, ValueError):
             idx = 0
 
+        # Prefer our own UTC timestamp from trace metadata over Langfuse's
+        # trace timestamp, which can be timezone-inconsistent across traces
+        # (some arrive as UTC, others as server-local time without tz info).
+        trace_metadata_raw = normalize_metadata(get_attr(trace, "metadata", "meta"))
+        our_utc_ts = parse_datetime(trace_metadata_raw.get("trace_created_at_utc"))
+        langfuse_ts = parse_datetime(get_attr(trace, "timestamp"))
+        final_ts = our_utc_ts or langfuse_ts
+
         enriched.append(EnrichedTrace(
             id=trace_id,
             name=get_attr(trace, "name"),
             session_id=get_attr(trace, "session_id", "sessionId"),
             user_id=user_id,
-            timestamp=parse_datetime(get_attr(trace, "timestamp")),
+            timestamp=final_ts,
             total_tokens=int(metrics["total_tokens"]),
             input_tokens=int(metrics["input_tokens"]),
             output_tokens=int(metrics["output_tokens"]),
@@ -764,7 +772,7 @@ def _build_enriched_traces(raw_traces: list[Any], clients: list[Any]) -> list[En
             error_count=int(metrics["error_count"]),
             observation_count=int(metrics["observation_count"] or 0),
             level=get_attr(trace, "level"),
-            metadata=normalize_metadata(get_attr(trace, "metadata", "meta")),
+            metadata=trace_metadata_raw,
             tags=get_attr(trace, "tags", default=[]) or [],
             _raw=trace,
             _client_idx=idx,

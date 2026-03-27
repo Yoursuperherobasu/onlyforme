@@ -31,6 +31,7 @@ class SupervisorAgent(Node):
     and reads its result, so no back-edges are needed.
     """
 
+    trace_type = "agent"
     display_name = "Supervisor Agent"
     description = (
         "Iterative multi-agent supervisor. Delegates tasks to specialist worker agents "

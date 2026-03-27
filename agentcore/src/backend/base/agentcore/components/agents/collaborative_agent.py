@@ -117,6 +117,7 @@ class CollaborativeAgent(Node):
     declares DONE, all agents PASS, or ``max_turns`` is reached.
     """
 
+    trace_type = "agent"
     display_name = "Collaborative Agent"
     description = (
         "Peer-to-peer multi-agent collaboration. Agents communicate in a shared "
