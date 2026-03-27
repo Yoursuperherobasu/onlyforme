@@ -262,11 +262,16 @@ async def teams_oauth_callback(
     if cache:
         try:
             stored = await cache.get(f"teams:oauth_state:{state}")
-            if stored and stored != user_id_str:
-                logger.warning("OAuth state mismatch")
+            if not stored:
+                return _oauth_popup_response("error", error="session_expired", description="OAuth session expired. Please try again.")
+            if stored != user_id_str:
+                return _oauth_popup_response("error", error="state_mismatch", description="OAuth state mismatch. Please try again.")
             await cache.delete(f"teams:oauth_state:{state}")
         except Exception:
-            pass
+            logger.error("Redis unavailable during OAuth callback — rejecting for security")
+            return _oauth_popup_response("error", error="service_unavailable", description="Authentication service unavailable. Please try again.")
+    else:
+        return _oauth_popup_response("error", error="service_unavailable", description="Authentication service unavailable. Please try again.")
 
     # Exchange code for tokens
     try:
@@ -275,8 +280,12 @@ async def teams_oauth_callback(
         token_data = await graph_client.exchange_code_for_tokens(code, redirect_uri)
 
         # Store tokens for this user
+        access_token = token_data.get("access_token")
+        if not access_token:
+            logger.error(f"Token response missing access_token: {list(token_data.keys())}")
+            return _oauth_popup_response("error", error="invalid_token", description="Microsoft returned an invalid token response.")
         stored_data = {
-            "access_token": token_data["access_token"],
+            "access_token": access_token,
             "refresh_token": token_data.get("refresh_token"),
             "expires_at": time.time() + token_data.get("expires_in", 3600),
         }
@@ -626,9 +635,12 @@ async def sync_teams_app(
             "https://localhost:7860",
         )
 
-        parts = teams_app.manifest_version.split(".")
-        parts[-1] = str(int(parts[-1]) + 1)
-        new_version = ".".join(parts)
+        try:
+            parts = teams_app.manifest_version.split(".")
+            parts[-1] = str(int(parts[-1]) + 1)
+            new_version = ".".join(parts)
+        except (ValueError, IndexError):
+            new_version = f"1.0.{int(time.time())}"
 
         manifest = generate_manifest(
             agent=agent,

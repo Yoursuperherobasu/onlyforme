@@ -77,7 +77,7 @@ const EXCEL_PERMISSION_STRUCTURE: Array<{
       { name: "Page Access", keys: ["view_control_panel"] },
       {
         name: "Actions",
-        keys: ["share_agent", "start_stop_agent", "enable_disable_agent", "add_scheduler"],
+        keys: ["share_agent", "start_stop_agent", "enable_disable_agent", "move_uat_to_prod"],
       },
     ],
   },
@@ -229,7 +229,6 @@ const ROLE_PERMISSION_ALIASES: Record<string, string[]> = {
   ],
   view_control_panel: ["view_agent_scheduler_page"],
   view_agent_scheduler_page: ["view_control_panel"],
-  start_stop_agent: ["add_scheduler"],
   edit_projects_page: ["edit_project"],
   view_only_agent: ["view_registry_agent"],
   edit_model_registry: ["edit_model"],

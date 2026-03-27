@@ -639,7 +639,7 @@ const SideBarFoldersButtonsComponent = ({
           </SidebarMenuItem>
         )}
 
-        {(can("view_connector_page") || can("connectore_page") || can("view_connectors_page") || can("connector_page")) && (
+        {can("view_connector_page") && (
           <SidebarMenuItem>
               <SidebarMenuButton
                 size="md"
@@ -726,7 +726,7 @@ const SideBarFoldersButtonsComponent = ({
           </SidebarMenuItem>
         )}
 
-        {role === "root" && can("view_platform_configs") && (
+        {can("view_platform_configs") && (
           <SidebarMenuItem>
             <SidebarMenuButton
               size="md"

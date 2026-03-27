@@ -17,7 +17,7 @@ from sqlalchemy import and_, or_
 
 from agentcore.api.schemas import UploadFileResponse
 from agentcore.api.utils import CurrentActiveUser, DbSession
-from agentcore.services.auth.permissions import normalize_role
+from agentcore.services.auth.permissions import get_permissions_for_role, normalize_role
 from agentcore.services.database.models.department.model import Department
 from agentcore.services.database.models.file.model import File as UserFile
 from agentcore.services.database.models.knowledge_base.model import KBVisibilityEnum, KnowledgeBase
@@ -364,6 +364,19 @@ async def _get_or_create_knowledge_base(
     return kb
 
 
+async def _require_knowledge_base_upload_permission(current_user: CurrentActiveUser) -> None:
+    role = normalize_role(getattr(current_user, "role", None))
+    if role == "root":
+        return
+
+    allowed_actions = await get_permissions_for_role(current_user.role)
+    if "add_new_knowledge" not in allowed_actions:
+        raise HTTPException(
+            status_code=403,
+            detail=f"User {current_user.username} lacks permission: add_new_knowledge",
+        )
+
+
 async def byte_stream_generator(file_input, chunk_size: int = 8192) -> AsyncGenerator[bytes, None]:
     """Convert bytes object or stream into an async generator that yields chunks."""
     if isinstance(file_input, bytes):
@@ -498,6 +511,7 @@ async def upload_user_file(
         safe_knowledge_base_name = ""
         knowledge_base: KnowledgeBase | None = None
         if knowledge_base_name:
+            await _require_knowledge_base_upload_permission(current_user)
             safe_knowledge_base_name = sanitize_knowledge_base_name(knowledge_base_name)
             if not safe_knowledge_base_name:
                 raise HTTPException(status_code=400, detail="Invalid knowledge base name")

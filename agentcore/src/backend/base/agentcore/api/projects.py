@@ -41,7 +41,7 @@ from agentcore.services.database.models.user_department_membership.model import 
 from agentcore.services.database.models.user_organization_membership.model import UserOrganizationMembership
 from agentcore.services.database.models.tag.model import ProjectTag, Tag
 from agentcore.api.tags import get_tags_for_project, sync_project_tags, _get_user_org_id
-from agentcore.services.auth.permissions import normalize_role
+from agentcore.services.auth.permissions import get_permissions_for_role, normalize_role
 
 router = APIRouter(prefix="/projects", tags=["Projects"])
 
@@ -205,6 +205,19 @@ async def _can_access_project(session: DbSession, current_user: CurrentActiveUse
                 return True
 
     return False
+
+
+async def _require_project_action_permission(current_user: CurrentActiveUser, action: str) -> None:
+    role = normalize_role(getattr(current_user, "role", None))
+    if role == "root":
+        return
+
+    allowed_actions = await get_permissions_for_role(current_user.role)
+    if action not in allowed_actions:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"User {current_user.username} lacks permission: {action}",
+        )
 
 
 @router.post("/", response_model=ProjectRead, status_code=201)
@@ -569,6 +582,7 @@ async def update_project(
 
     if not existing_project or not await _can_access_project(session, current_user, existing_project):
         raise HTTPException(status_code=404, detail="Project not found")
+    await _require_project_action_permission(current_user, "edit_project")
 
     try:
         project_data = project.model_dump(exclude_unset=True)
@@ -633,10 +647,12 @@ async def delete_project(
     project_id: UUID,
     current_user: CurrentActiveUser,
 ):
+    project: Project | None = None
     try:
         project = (await session.exec(select(Project).where(Project.id == project_id))).first()
         if not project or not await _can_access_project(session, current_user, project):
             raise HTTPException(status_code=404, detail="Project not found")
+        await _require_project_action_permission(current_user, "delete_project")
 
         if _is_admin_role(getattr(current_user, "role", None)):
             agents = (await session.exec(select(Agent).where(Agent.project_id == project_id))).all()
@@ -647,6 +663,10 @@ async def delete_project(
         if len(agents) > 0:
             for agent in agents:
                 await cascade_delete_agent(session, agent.id)
+    except HTTPException:
+        raise
+    except RuntimeError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
 
