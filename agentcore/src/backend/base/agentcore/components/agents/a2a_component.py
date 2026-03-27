@@ -60,6 +60,7 @@ class A2AAgentsComponent(Node):
     first agent and then facilitates the @mention-driven loop.
     """
 
+    trace_type = "agent"
     display_name: str = "A2A Agents"
     description: str = (
         "Visual A2A network hub. Agents communicate independently via @mentions — "

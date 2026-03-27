@@ -407,13 +407,99 @@ def _inject_tool_visualizations(agent_message: Message) -> None:
     agent_message.text = text
 
 
+class AccumulatedUsage:
+    """Accumulates token usage from LLM calls within an agent execution.
+
+    The Langfuse LangChain callback creates its own observations that do not
+    feed into our custom tracer's accumulator.  This class captures tokens
+    from on_chat_model_end / on_llm_end stream events so we can write them
+    to the component's generation span via trace_output_metadata.
+    """
+
+    __slots__ = ("input_tokens", "output_tokens", "model", "_seen_run_ids")
+
+    def __init__(self) -> None:
+        self.input_tokens: int = 0
+        self.output_tokens: int = 0
+        self.model: str = ""
+        self._seen_run_ids: set[str] = set()
+
+    def _extract_from_message(self, msg: Any) -> None:
+        meta = getattr(msg, "response_metadata", None) or {}
+        if not isinstance(meta, dict):
+            meta = {}
+        inp, out = 0, 0
+        model = meta.get("model_name") or meta.get("model") or ""
+
+        tu = meta.get("token_usage")
+        if isinstance(tu, dict):
+            inp = int(tu.get("prompt_tokens") or 0)
+            out = int(tu.get("completion_tokens") or 0)
+        if not (inp or out):
+            usage = meta.get("usage")
+            if isinstance(usage, dict):
+                inp = int(usage.get("input_tokens") or 0)
+                out = int(usage.get("output_tokens") or 0)
+        if not (inp or out):
+            um = getattr(msg, "usage_metadata", None)
+            if isinstance(um, dict):
+                inp = int(um.get("input_tokens") or 0)
+                out = int(um.get("output_tokens") or 0)
+                if not model:
+                    model = um.get("model_name") or ""
+
+        self.input_tokens += inp
+        self.output_tokens += out
+        if model and not self.model:
+            self.model = model
+
+    def add_from_event(self, event: dict[str, Any]) -> None:
+        # Deduplicate: on_chat_model_end and on_llm_end both fire for the
+        # same LLM call with the same run_id.  Only count each call once.
+        run_id = str(event.get("run_id", ""))
+        if run_id and run_id in self._seen_run_ids:
+            return
+        if run_id:
+            self._seen_run_ids.add(run_id)
+
+        output = event.get("data", {}).get("output", None)
+        if output is None:
+            return
+        if hasattr(output, "response_metadata"):
+            self._extract_from_message(output)
+            return
+        generations = getattr(output, "generations", None)
+        if generations:
+            for gen_list in generations:
+                for gen in gen_list:
+                    msg = getattr(gen, "message", None)
+                    if msg is not None:
+                        self._extract_from_message(msg)
+
+    @property
+    def total_tokens(self) -> int:
+        return self.input_tokens + self.output_tokens
+
+    def to_metadata(self) -> dict[str, Any] | None:
+        if not self.total_tokens:
+            return None
+        return {
+            "agentcore_usage": {
+                "input_tokens": self.input_tokens,
+                "output_tokens": self.output_tokens,
+                "total_tokens": self.total_tokens,
+                "model": self.model,
+            }
+        }
+
+
 async def process_agent_events(
     agent_executor: AsyncIterator[dict[str, Any]],
     agent_message: Message,
     send_message_method: SendMessageFunctionType,
     event_manager: "EventManager | None" = None,
-) -> Message:
-    """Process agent events and return the final output.
+) -> tuple[Message, AccumulatedUsage]:
+    """Process agent events and return the final output plus accumulated token usage.
 
     OPTIMIZATION: When event_manager is provided, streaming chunks are sent as 'token' SSE events
     directly to the UI, avoiding DB writes for each chunk. The message is stored to DB only:
@@ -431,12 +517,17 @@ async def process_agent_events(
     # Store the initial message — creates the DB row and gets us an ID for SSE events
     agent_message = await send_message_method(message=agent_message)
 
+    accumulated_usage = AccumulatedUsage()
+
     try:
         # Create a mapping of run_ids to tool contents
         tool_blocks_map: dict[str, ToolContent] = {}
         start_time = perf_counter()
 
         async for event in agent_executor:
+            if event.get("event") in ("on_llm_end", "on_chat_model_end"):
+                accumulated_usage.add_from_event(event)
+
             if event["event"] in TOOL_EVENT_HANDLERS:
                 tool_handler = TOOL_EVENT_HANDLERS[event["event"]]
                 agent_message, start_time = await tool_handler(
@@ -466,4 +557,4 @@ async def process_agent_events(
     except Exception as e:
         raise ExceptionWithMessageError(agent_message, str(e)) from e
 
-    return agent_message
+    return agent_message, accumulated_usage
