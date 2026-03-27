@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import asyncio
-import json as _json
 import json
 import os
 from contextvars import ContextVar
@@ -19,7 +18,7 @@ from fastapi import APIRouter, HTTPException, Query, Request, status
 from loguru import logger
 from pydantic import BaseModel
 from sqlalchemy import func, or_, true
-from sqlmodel import col, select
+from sqlmodel import select
 
 from fastapi.responses import StreamingResponse
 
@@ -40,9 +39,6 @@ from agentcore.services.database.models.agent_publish_recipient.model import (
 )
 from agentcore.services.database.models.department.model import Department
 from agentcore.services.database.models.role.model import Role
-from agentcore.services.database.models.user_department_membership.model import (
-    UserDepartmentMembership,
-)
 from agentcore.services.database.models.user_organization_membership.model import (
     UserOrganizationMembership,
 )
@@ -190,7 +186,7 @@ def _best_from_message(msg: Any) -> str | None:
                 return candidate
         # Recurse into nested dict/list values to handle wrappers like {"result": {message_dict}}
         for value in msg.values():
-            if isinstance(value, dict | list):
+            if isinstance(value, (dict, list)):
                 text = _best_from_message(value)
                 if text:
                     return text
@@ -244,6 +240,43 @@ def _extract_text(payload: Any) -> str:
         return str(payload)
 
 
+def _is_interrupted_payload(payload: Any) -> bool:
+    """Return True when a /run payload indicates a HITL interrupt."""
+    if not isinstance(payload, dict):
+        return False
+
+    if payload.get("interrupted") is True:
+        return True
+
+    outputs = payload.get("outputs")
+    if not isinstance(outputs, list):
+        return False
+
+    for run_output in outputs:
+        if not isinstance(run_output, dict):
+            continue
+
+        # Canonical path for LangGraph RunOutputs metadata.
+        run_meta = run_output.get("metadata")
+        if isinstance(run_meta, dict) and str(run_meta.get("status", "")).lower() == "interrupted":
+            return True
+
+        # Legacy / alternative nested result shapes.
+        for result_entry in run_output.get("outputs") or []:
+            if not isinstance(result_entry, dict):
+                continue
+            result_meta = result_entry.get("metadata")
+            if isinstance(result_meta, dict) and str(result_meta.get("status", "")).lower() == "interrupted":
+                return True
+            nested_results = result_entry.get("results")
+            if isinstance(nested_results, dict):
+                nested_meta = nested_results.get("metadata")
+                if isinstance(nested_meta, dict) and str(nested_meta.get("status", "")).lower() == "interrupted":
+                    return True
+
+    return False
+
+
 async def _orch_call_run_api(
     *,
     agent_id: str,
@@ -254,6 +287,11 @@ async def _orch_call_run_api(
     files: list[str] | None = None,
     stream: bool = False,
     event_manager=None,
+    orch_deployment_id: str | None = None,
+    orch_session_id: str | None = None,
+    orch_org_id: str | None = None,
+    orch_dept_id: str | None = None,
+    orch_user_id: str | None = None,
 ) -> tuple[str, bool, list]:
     """Call POST /api/v1/run/{agent_id} internally with the AGENTCORE_INTERNAL_SECRET header.
 
@@ -276,6 +314,16 @@ async def _orch_call_run_api(
     if files:
         body["files"] = files
     headers = {"X-Internal-Secret": secret, "Content-Type": "application/json"}
+    if orch_deployment_id:
+        headers["X-Orch-Deployment-Id"] = orch_deployment_id
+    if orch_session_id:
+        headers["X-Orch-Session-Id"] = orch_session_id
+    if orch_org_id:
+        headers["X-Orch-Org-Id"] = orch_org_id
+    if orch_dept_id:
+        headers["X-Orch-Dept-Id"] = orch_dept_id
+    if orch_user_id:
+        headers["X-Orch-User-Id"] = orch_user_id
 
     if not stream:
         async with httpx.AsyncClient(timeout=300, verify=False) as client:
@@ -284,11 +332,7 @@ async def _orch_call_run_api(
             resp.raise_for_status()
         payload = resp.json()
         text = _extract_text(payload)
-        interrupted = any(
-            (o.get("outputs") or [{}])[0].get("results", {}).get("metadata", {}).get("status") == "interrupted"
-            for o in (payload.get("outputs") or [])
-            if isinstance(o, dict)
-        )
+        interrupted = _is_interrupted_payload(payload)
         logger.info(f"[ORCH] run API completed | interrupted={interrupted} | response_length={len(text)}")
         return text, interrupted, []
 
@@ -304,7 +348,7 @@ async def _orch_call_run_api(
                 if not line:
                     continue
                 try:
-                    evt = _json.loads(line)
+                    evt = json.loads(line)
                 except Exception:  # noqa: BLE001
                     continue
                 etype = evt.get("event", "")
@@ -315,9 +359,8 @@ async def _orch_call_run_api(
                     event_manager.on_message(data=edata)
                 elif etype == "end":
                     result = edata.get("result", edata)
-                    final_text = _extract_text(result)
-                    if isinstance(result, dict) and result.get("interrupted"):
-                        was_interrupted = True
+                    was_interrupted = _is_interrupted_payload(result)
+                    final_text = "" if was_interrupted else _extract_text(result)
                     logger.info(f"[ORCH] stream ended | interrupted={was_interrupted} | response_length={len(final_text)}")
                 elif etype == "error":
                     raise ValueError(edata.get("error", "Stream error from /run"))
@@ -325,7 +368,7 @@ async def _orch_call_run_api(
     return final_text, was_interrupted, []
 
 
-async def _lookup_agent_project(session, agent_id: UUID) -> tuple[str | None, str | None]:
+async def _lookup_agent_project(session: DbSession, agent_id: UUID) -> tuple[str | None, str | None]:
     """Look up the agent's project_id and project_name for observability metadata."""
     try:
         agent = await session.get(Agent, agent_id)
@@ -357,7 +400,7 @@ def _serialize_content_blocks(content_blocks: list) -> list:
 
 
 async def _resolve_agent(
-    session,
+    session: DbSession,
     current_user: CurrentActiveUser,
     body: OrchChatRequest,
 ) -> tuple[UUID, UUID, AgentDeploymentProd | AgentDeploymentUAT]:
@@ -710,6 +753,11 @@ async def orch_chat(
             input_value=body.input_value,
             session_id=body.session_id,
             files=body.files,
+            orch_deployment_id=str(deployment_id) if deployment_id else None,
+            orch_session_id=body.session_id,
+            orch_org_id=str(deployment.org_id) if deployment.org_id else None,
+            orch_dept_id=str(deployment.dept_id) if deployment.dept_id else None,
+            orch_user_id=str(current_user.id),
         )
 
         if not agent_text or not agent_text.strip():
@@ -851,6 +899,11 @@ async def orch_chat_stream(
                 files=dep_files,
                 stream=True,
                 event_manager=event_manager,
+                orch_deployment_id=str(dep_deployment_id) if dep_deployment_id else None,
+                orch_session_id=chat_session_id,
+                orch_org_id=dep_org_id,
+                orch_dept_id=dep_dept_id,
+                orch_user_id=user_id_str,
             )
 
             # When interrupted (HITL pause), _emit_hitl_pause_event already
@@ -994,7 +1047,7 @@ async def orch_chat_stream(
             "is_prod_deployment": dep_is_prod,
             "project_id": orch_project_id,
             "project_name": orch_project_name,
-            "env": "prod" if dep_is_prod else "uat",
+            "env": "2" if dep_is_prod else "1",
             "version": f"v{deployment.version_number}",
         }
         await rabbitmq_service.publish_orchestrator_job(job_data)

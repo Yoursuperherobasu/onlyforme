@@ -477,6 +477,12 @@ class RabbitMQService(Service):
 
         input_request = SimplifiedAPIRequest(**job_data.get("input_request", {}))
 
+        orch_deployment_id = job_data.get("orch_deployment_id")
+        orch_session_id = job_data.get("orch_session_id")
+        orch_org_id = job_data.get("orch_org_id")
+        orch_dept_id = job_data.get("orch_dept_id")
+        orch_user_id = job_data.get("orch_user_id")
+
         prod_deployment = None
         uat_deployment = None
         if job_data.get("prod_deployment_id"):
@@ -503,6 +509,11 @@ class RabbitMQService(Service):
                     event_manager=event_manager,
                     prod_deployment=prod_deployment,
                     uat_deployment=uat_deployment,
+                    orch_deployment_id=orch_deployment_id,
+                    orch_session_id=orch_session_id,
+                    orch_org_id=orch_org_id,
+                    orch_dept_id=orch_dept_id,
+                    orch_user_id=orch_user_id,
                 )
                 event_manager.on_end(data={"result": result.model_dump()})
             except Exception as exc:
@@ -520,6 +531,11 @@ class RabbitMQService(Service):
                     api_key_user=None,
                     prod_deployment=prod_deployment,
                     uat_deployment=uat_deployment,
+                    orch_deployment_id=orch_deployment_id,
+                    orch_session_id=orch_session_id,
+                    orch_org_id=orch_org_id,
+                    orch_dept_id=orch_dept_id,
+                    orch_user_id=orch_user_id,
                 )
                 result_event = json.dumps({"event": "end", "data": {"result": result.model_dump()}}, default=str) + "\n\n"
                 event_manager.queue.put_nowait(("end", result_event.encode("utf-8"), time.time()))
@@ -560,6 +576,11 @@ class RabbitMQService(Service):
                 files=job_data.get("files"),
                 stream=True,
                 event_manager=event_manager,
+                orch_deployment_id=job_data.get("orch_deployment_id") or str(deployment_id),
+                orch_session_id=job_data.get("orch_session_id") or session_id,
+                orch_org_id=job_data.get("orch_org_id"),
+                orch_dept_id=job_data.get("orch_dept_id"),
+                orch_user_id=job_data.get("user_id"),
             )
 
             if was_interrupted:

@@ -1,4 +1,4 @@
-import { useContext, useState } from "react";
+import { useContext, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import IconComponent from "@/components/common/genericIconComponent";
 import { Button } from "@/components/ui/button";
@@ -419,6 +419,9 @@ export default function HITLApprovalsPage(): JSX.Element {
   );
   const [modalOpen, setModalOpen] = useState(false);
   const [actingThreadId, setActingThreadId] = useState<string | null>(null);
+  const [optimisticStatusByThread, setOptimisticStatusByThread] = useState<
+    Record<string, "approved" | "rejected" | "edited">
+  >({});
 
   const queryStatus = statusFilter === "pending" ? "pending" : "all";
   const { data: allItems = [], isLoading, refetch } = useGetHitlPending(
@@ -430,8 +433,16 @@ export default function HITLApprovalsPage(): JSX.Element {
   const cancelMutation = useCancelHitl();
   const delegateMutation = useDelegateHitl();
 
+  const itemsWithOptimistic = allItems.map((item) => {
+    const optimisticStatus = optimisticStatusByThread[item.thread_id];
+    if (optimisticStatus && item.status === "pending") {
+      return { ...item, status: optimisticStatus };
+    }
+    return item;
+  });
+
   // Client-side filter by status tab and search
-  const filteredItems = allItems.filter((item) => {
+  const filteredItems = itemsWithOptimistic.filter((item) => {
     const matchesStatus =
       statusFilter === "all" ||
       item.status === statusFilter;
@@ -444,29 +455,66 @@ export default function HITLApprovalsPage(): JSX.Element {
     return matchesStatus && matchesSearch;
   });
 
-  const pendingCount = allItems.filter((i) => i.status === "pending").length;
+  const pendingCount = itemsWithOptimistic.filter((i) => i.status === "pending").length;
+
+  // Clear optimistic entries once backend status catches up.
+  useEffect(() => {
+    setOptimisticStatusByThread((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      for (const item of allItems) {
+        if (next[item.thread_id] && item.status !== "pending") {
+          delete next[item.thread_id];
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [allItems]);
 
   const handleAction = (
     threadId: string,
     action: string,
     feedback: string,
   ) => {
-    setActingThreadId(threadId);
+    const actionLower = action.toLowerCase();
+    const optimisticStatus: "approved" | "rejected" | "edited" =
+      actionLower.includes("reject")
+        ? "rejected"
+        : actionLower.includes("edit")
+          ? "edited"
+          : "approved";
+
+    // Optimistically reflect resolution immediately in HITL Approvals UI.
+    setOptimisticStatusByThread((prev) => ({
+      ...prev,
+      [threadId]: optimisticStatus,
+    }));
+    setModalOpen(false);
+    setSelectedItem(null);
+    setSuccessData({ title: t("Decision submitted successfully") });
+
     resumeMutation.mutate(
       { thread_id: threadId, action, feedback },
       {
-        onSuccess: () => {
-          setSuccessData({ title: t("Decision submitted successfully") });
-          setModalOpen(false);
-          setSelectedItem(null);
-        },
+        onSuccess: () => {},
         onError: (err: any) => {
+          // Roll back optimistic state when resume fails.
+          setOptimisticStatusByThread((prev) => {
+            const next = { ...prev };
+            delete next[threadId];
+            return next;
+          });
           setErrorData({
             title: t("Failed to submit decision"),
             list: [err?.response?.data?.detail ?? String(err)],
           });
         },
-        onSettled: () => setActingThreadId(null),
+        onSettled: () => {
+          // Trigger an immediate refresh; backend may still show pending until
+          // resume finishes, optimistic status keeps UI responsive meanwhile.
+          refetch();
+        },
       },
     );
   };

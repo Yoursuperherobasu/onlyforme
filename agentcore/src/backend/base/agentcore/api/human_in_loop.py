@@ -12,11 +12,13 @@ checkpointer, identified by thread_id (== session_id used in arun()).
 
 from __future__ import annotations
 
+import os
 from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Query, status
+import httpx
+from fastapi import APIRouter, HTTPException, Query, Request, status
 from langgraph.types import Command
 from loguru import logger
 from sqlmodel import col, select
@@ -231,12 +233,14 @@ async def resume_hitl(
     body: HITLResumeRequest,
     current_user: CurrentActiveUser,
     session: DbSession,
+    request: Request,
 ) -> dict[str, Any]:
     """Resume a paused graph run with the human's decision.
 
-    The graph is resumed by calling ``compiled_app.ainvoke(Command(resume=...))``.
-    If another HITL node is encountered downstream, the response will contain
-    ``"status": "interrupted"`` with the new ``interrupt_data``.
+    On the backend pod (no AGENTCORE_IS_POD), this forwards the resume to the
+    agent pod via ORCHESTRATOR_BASE_URL so the graph executes on the agent pod.
+    On the agent pod (AGENTCORE_IS_POD=true), or when called internally, this
+    executes the graph locally.
 
     Body:
         action: The action the human chose (must match one of the actions in interrupt_data)
@@ -252,6 +256,125 @@ async def resume_hitl(
             detail=f"Run is not pending — current status: {hitl_req.status.value}",
         )
 
+    # ── Forward to agent pod if we are the backend pod ──────────────────
+    _is_agent_pod = bool(os.environ.get("AGENTCORE_IS_POD"))
+    _internal_secret = os.environ.get("AGENTCORE_INTERNAL_SECRET", "")
+    _is_internal = bool(
+        _internal_secret
+        and request.headers.get("X-Internal-Secret") == _internal_secret
+    )
+
+    if not _is_agent_pod and not _is_internal:
+        base_url = os.environ.get("ORCHESTRATOR_BASE_URL", "")
+        if base_url:
+            return await _forward_resume_to_agent_pod(
+                base_url=base_url,
+                secret=_internal_secret,
+                thread_id=thread_id,
+                body=body,
+                hitl_req=hitl_req,
+                current_user=current_user,
+                session=session,
+            )
+        logger.warning(
+            "[HITL] ORCHESTRATOR_BASE_URL not set — running resume locally on backend pod"
+        )
+
+    # ── Execute locally (agent pod, or fallback) ────────────────────────
+    return await _execute_resume_locally(
+        thread_id=thread_id,
+        body=body,
+        hitl_req=hitl_req,
+        current_user=current_user,
+        session=session,
+    )
+
+
+async def _forward_resume_to_agent_pod(
+    *,
+    base_url: str,
+    secret: str,
+    thread_id: str,
+    body: HITLResumeRequest,
+    hitl_req: HITLRequest,
+    current_user: Any,
+    session: Any,
+) -> dict[str, Any]:
+    """Forward the HITL resume request to the agent pod via HTTP."""
+    url = f"{base_url}/api/v1/hitl/{thread_id}/resume"
+    headers = {
+        "X-Internal-Secret": secret,
+        "Content-Type": "application/json",
+    }
+    payload = body.model_dump()
+    logger.info(f"[HITL] Forwarding resume to agent pod: {url}")
+
+    try:
+        async with httpx.AsyncClient(timeout=300, verify=False) as client:
+            resp = await client.post(url, json=payload, headers=headers)
+
+        if resp.status_code != 200:
+            logger.error(
+                f"[HITL] Agent pod resume failed: status={resp.status_code}, "
+                f"body={resp.text[:500]}"
+            )
+            raise HTTPException(
+                status_code=resp.status_code,
+                detail=f"Agent pod resume failed: {resp.text[:500]}",
+            )
+
+        result = resp.json()
+        logger.info(
+            f"[HITL] Agent pod resume completed for thread_id={thread_id!r}: "
+            f"status={result.get('status')}"
+        )
+
+        # The agent pod handles graph execution, checkpoint, and orch_conversation
+        # storage.  But we still need to update the HITLRequest status and
+        # notification on the backend pod (since we own the DB session).
+        agent_status = result.get("status")
+        decision = {
+            "action": body.action,
+            "feedback": body.feedback or "",
+            "edited_value": body.edited_value or "",
+        }
+
+        if agent_status == "interrupted":
+            # Agent pod hit another HITL interrupt — it already created
+            # a new HITLRequest row.  Just mark the current one resolved.
+            _resolve_request(hitl_req, decision, body.action, current_user.id)
+            session.add(hitl_req)
+            await _mark_hitl_notification_read(
+                session=session,
+                hitl_request_id=str(hitl_req.id),
+                recipient_user_id=hitl_req.assigned_to or current_user.id,
+            )
+            await session.commit()
+        elif agent_status == "completed":
+            # Already resolved by the agent pod's local _execute_resume_locally.
+            # The agent pod updated the HITLRequest and stored orch_conversation.
+            # Just refresh to get latest state.
+            await session.refresh(hitl_req)
+
+        return result
+
+    except httpx.HTTPError as exc:
+        logger.exception(f"[HITL] Failed to forward resume to agent pod: {exc}")
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Failed to reach agent pod for HITL resume: {exc}",
+        ) from exc
+
+
+async def _execute_resume_locally(
+    *,
+    thread_id: str,
+    body: HITLResumeRequest,
+    hitl_req: HITLRequest,
+    current_user: Any,
+    session: Any,
+) -> dict[str, Any]:
+    """Execute the HITL resume locally (on the agent pod or fallback)."""
     decision = {
         "action": body.action,
         "feedback": body.feedback or "",
@@ -443,24 +566,48 @@ async def resume_hitl(
 
         # Determine if this was an orchestrator run (orch metadata attached by nodes.py)
         orch_meta = (hitl_req.interrupt_data or {}).get("_orch_meta")
+        if orch_meta and not orch_meta.get("user_id"):
+            fallback_user_id = hitl_req.user_id or current_user.id
+            if fallback_user_id:
+                orch_meta = dict(orch_meta)
+                orch_meta["user_id"] = str(fallback_user_id)
+                logger.warning(
+                    f"[HITL] orch_meta.user_id missing; using fallback user_id={orch_meta['user_id']} "
+                    f"for thread_id={thread_id!r}"
+                )
+        logger.info(
+            f"[HITL] Resume result — output_text={output_text!r:.200}, "
+            f"orch_meta={orch_meta}, "
+            f"output_stored_by_component={output_stored_by_component}, "
+            f"interrupt_data_keys={list((hitl_req.interrupt_data or {}).keys())}"
+        )
 
         # For orchestrator runs, store the LLM response as a separate
         # orch_conversation message.  ChatOutput stores to the conversation
         # table (Playground), but the Orch page reads from orch_conversation.
         if orch_meta and output_text:
+            # Clean up stale one-word action echoes (e.g. "Approve") that may
+            # have been persisted by older interrupted-run parsing.
+            await _cleanup_stale_orch_action_echo(
+                thread_id=thread_id,
+                action=body.action,
+                orch_meta=orch_meta,
+            )
             await _store_orch_agent_response(
                 agent_id=str(hitl_req.agent_id),
                 output_text=output_text,
                 orch_meta=orch_meta,
             )
-
-        await _store_hitl_confirmation(
-            thread_id=thread_id,
-            agent_id=str(hitl_req.agent_id),
-            action=body.action,
-            output_text=output_text if not output_stored_by_component and not orch_meta else None,
-            orch_meta=orch_meta,
-        )
+        # For orchestrator runs, keep chat output focused on the AI response.
+        # The HITL table is the source of truth for approval status.
+        if not orch_meta:
+            await _store_hitl_confirmation(
+                thread_id=thread_id,
+                agent_id=str(hitl_req.agent_id),
+                action=body.action,
+                output_text=output_text if not output_stored_by_component else None,
+                orch_meta=orch_meta,
+            )
 
         logger.info(f"[HITL] Run {thread_id!r} resumed and completed successfully.")
         return {
@@ -681,9 +828,58 @@ async def _store_orch_agent_response(
                 content_blocks=[],
             )
             await orch_add_message(orch_msg, db)
-        logger.info(f"[HITL] Stored orch agent response ({len(output_text)} chars)")
+        logger.info(
+            f"[HITL] Stored orch agent response ({len(output_text)} chars) "
+            f"session_id={orch_meta.get('session_id')}, "
+            f"deployment_id={orch_meta.get('deployment_id')}, "
+            f"user_id={orch_meta.get('user_id')}"
+        )
     except Exception as _err:
-        logger.warning(f"[HITL] Could not store orch agent response: {_err}")
+        logger.exception(f"[HITL] Could not store orch agent response: {_err}")
+
+
+async def _cleanup_stale_orch_action_echo(
+    *,
+    thread_id: str,
+    action: str,
+    orch_meta: dict,
+) -> None:
+    """Remove stale action-echo messages (plain 'Approve'/'Reject') in orch chat."""
+    try:
+        from sqlalchemy import func
+        from uuid import UUID as _UUID
+        from agentcore.services.database.models.orch_conversation.model import OrchConversationTable
+        from agentcore.services.deps import session_scope
+
+        session_id = orch_meta.get("session_id") or thread_id
+        if not session_id or not action:
+            return
+
+        async with session_scope() as db:
+            stmt = (
+                select(OrchConversationTable)
+                .where(OrchConversationTable.session_id == session_id)
+                .where(OrchConversationTable.sender == "agent")
+                .where(func.lower(OrchConversationTable.text) == action.strip().lower())
+                .order_by(col(OrchConversationTable.timestamp).desc())
+                .limit(1)
+            )
+
+            if orch_meta.get("user_id"):
+                stmt = stmt.where(OrchConversationTable.user_id == _UUID(orch_meta["user_id"]))
+            if orch_meta.get("deployment_id"):
+                stmt = stmt.where(OrchConversationTable.deployment_id == _UUID(orch_meta["deployment_id"]))
+
+            row = (await db.exec(stmt)).first()
+            if row:
+                await db.delete(row)
+                await db.commit()
+                logger.info(
+                    f"[HITL] Removed stale orch action-echo message id={row.id} "
+                    f"session_id={session_id}, action={action!r}"
+                )
+    except Exception as _err:
+        logger.debug(f"[HITL] Could not cleanup stale orch action echo: {_err}")
 
 
 async def _store_hitl_confirmation(

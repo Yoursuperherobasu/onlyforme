@@ -318,6 +318,11 @@ async def simple_run_agent(
     prod_deployment: AgentDeploymentProd | None = None,
     uat_deployment: AgentDeploymentUAT | None = None,
     skip_node_persist: bool = False,
+    orch_deployment_id: str | None = None,
+    orch_session_id: str | None = None,
+    orch_org_id: str | None = None,
+    orch_dept_id: str | None = None,
+    orch_user_id: str | None = None,
 ):
     validate_input_and_tweaks(input_request)
     try:
@@ -325,7 +330,7 @@ async def simple_run_agent(
         from agentcore.services.deps import get_chat_service
 
         task_result: list[RunOutputs] = []
-        user_id = api_key_user.id if api_key_user else None
+        user_id = api_key_user.id if api_key_user else (orch_user_id or None)
         agent_id_str = str(agent.id)
         if agent.data is None:
             msg = f"agent {agent_id_str} has no data"
@@ -358,6 +363,20 @@ async def simple_run_agent(
         if skip_node_persist:
             graph.skip_dev_logging = True
             graph.orch_skip_node_persist = True
+
+        # Set orchestrator context on the graph so HITL can attach orch metadata
+        # to the interrupt data, enabling the resume endpoint to persist the
+        # agent response back to orch_conversation.
+        if orch_deployment_id:
+            graph.orch_deployment_id = orch_deployment_id
+        if orch_session_id:
+            graph.orch_session_id = orch_session_id
+        if orch_org_id:
+            graph.orch_org_id = orch_org_id
+        if orch_dept_id:
+            graph.orch_dept_id = orch_dept_id
+        if orch_user_id:
+            graph.orch_user_id = orch_user_id
 
         inputs = None
         if input_request.input_value is not None:
@@ -467,6 +486,11 @@ async def run_agent_generator(
     prod_deployment: AgentDeploymentProd | None = None,
     uat_deployment: AgentDeploymentUAT | None = None,
     skip_node_persist: bool = False,
+    orch_deployment_id: str | None = None,
+    orch_session_id: str | None = None,
+    orch_org_id: str | None = None,
+    orch_dept_id: str | None = None,
+    orch_user_id: str | None = None,
 ) -> None:
     """Executes a agent asynchronously and manages event streaming to the client.
 
@@ -505,6 +529,11 @@ async def run_agent_generator(
             prod_deployment=prod_deployment,
             uat_deployment=uat_deployment,
             skip_node_persist=skip_node_persist,
+            orch_deployment_id=orch_deployment_id,
+            orch_session_id=orch_session_id,
+            orch_org_id=orch_org_id,
+            orch_dept_id=orch_dept_id,
+            orch_user_id=orch_user_id,
         )
         event_manager.on_end(data={"result": result.model_dump()})
         from agentcore.observability.metrics_registry import record_agent_run
@@ -618,6 +647,16 @@ async def simplified_run_agent(
         _internal_secret
         and request.headers.get("X-Internal-Secret") == _internal_secret
     )
+    # Extract orchestrator context from headers (sent by _orch_call_run_api).
+    # Allow orch headers when the call is internal OR when no secret is configured
+    # (single-pod / dev setup where the orch calls itself on localhost).
+    _trust_orch_headers = _is_internal or not _internal_secret
+    _orch_deployment_id = request.headers.get("X-Orch-Deployment-Id") if _trust_orch_headers else None
+    _orch_session_id = request.headers.get("X-Orch-Session-Id") if _trust_orch_headers else None
+    _orch_org_id = request.headers.get("X-Orch-Org-Id") if _trust_orch_headers else None
+    _orch_dept_id = request.headers.get("X-Orch-Dept-Id") if _trust_orch_headers else None
+    _orch_user_id = request.headers.get("X-Orch-User-Id") if _trust_orch_headers else None
+
     if not _is_internal:
         auto_generated_key = await _enforce_agent_api_key(agent_api_key, agent.id, env, deployment_id, version)
         if auto_generated_key:
@@ -657,6 +696,11 @@ async def simplified_run_agent(
                 "input_request": input_request.model_dump(),
                 "prod_deployment_id": str(prod_deployment.id) if prod_deployment else None,
                 "uat_deployment_id": str(uat_deployment.id) if uat_deployment else None,
+                "orch_deployment_id": _orch_deployment_id,
+                "orch_session_id": _orch_session_id,
+                "orch_org_id": _orch_org_id,
+                "orch_dept_id": _orch_dept_id,
+                "orch_user_id": _orch_user_id,
             }
             await rabbitmq_service.publish_run_job(job_data)
             logger.info(f"Run job {job_id} published to RabbitMQ")
@@ -684,6 +728,11 @@ async def simplified_run_agent(
                 prod_deployment=prod_deployment,
                 uat_deployment=uat_deployment,
                 skip_node_persist=_is_internal,
+                orch_deployment_id=_orch_deployment_id,
+                orch_session_id=_orch_session_id,
+                orch_org_id=_orch_org_id,
+                orch_dept_id=_orch_dept_id,
+                orch_user_id=_orch_user_id,
             )
         )
 
@@ -723,6 +772,11 @@ async def simplified_run_agent(
             "input_request": input_request.model_dump(),
             "prod_deployment_id": str(prod_deployment.id) if prod_deployment else None,
             "uat_deployment_id": str(uat_deployment.id) if uat_deployment else None,
+            "orch_deployment_id": _orch_deployment_id,
+            "orch_session_id": _orch_session_id,
+            "orch_org_id": _orch_org_id,
+            "orch_dept_id": _orch_dept_id,
+            "orch_user_id": _orch_user_id,
         }
         await rabbitmq_service_ns.publish_run_job(job_data)
         logger.info(f"Non-streaming run job {job_id} published to RabbitMQ")
@@ -794,6 +848,11 @@ async def simplified_run_agent(
             prod_deployment=prod_deployment,
             uat_deployment=uat_deployment,
             skip_node_persist=_is_internal,
+            orch_deployment_id=_orch_deployment_id,
+            orch_session_id=_orch_session_id,
+            orch_org_id=_orch_org_id,
+            orch_dept_id=_orch_dept_id,
+            orch_user_id=_orch_user_id,
         )
         end_time = time.perf_counter()
         background_tasks.add_task(

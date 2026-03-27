@@ -97,6 +97,7 @@ class LangGraphAdapter:
         self.orch_deployment_id: str | None = None
         self.orch_org_id: str | None = None
         self.orch_dept_id: str | None = None
+        self.orch_user_id: str | None = None
 
         # PROD deployment context — when set, transactions are also logged
         # to the transaction_prod table (for control-panel metrics).

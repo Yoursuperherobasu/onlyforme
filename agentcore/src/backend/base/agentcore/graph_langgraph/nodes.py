@@ -604,6 +604,8 @@ async def _persist_hitl_request(
         thread_id = getattr(graph, "_session_id", None) or ""
         agent_id_raw = getattr(graph, "agent_id", None)
         user_id_raw = state.get("user_id") if state else None
+        if not user_id_raw:
+            user_id_raw = getattr(graph, "orch_user_id", None)
 
         # Tag orchestrator runs so _store_hitl_confirmation writes to orch_conversation
         orch_deployment_id = getattr(graph, "orch_deployment_id", None)
