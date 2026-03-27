@@ -52,6 +52,7 @@ from agentcore.services.database.models.user.model import User
 from agentcore.services.database.models.agent_api_key.model import AgentApiKey
 from agentcore.services.database.registry_service import sync_agent_registry
 from agentcore.services.auth.utils import generate_agent_api_key
+from agentcore.services.auth.permissions import get_permissions_for_role
 from agentcore.services.approval_notifications import upsert_approval_notification
 from agentcore.services.database.models.agent_bundle.model import DeploymentEnvEnum as BundleDeploymentEnvEnum
 
@@ -270,6 +271,18 @@ async def _department_admin_dept_ids(
         )
     ).all()
     return {r if isinstance(r, UUID) else r[0] for r in rows}
+
+
+async def _require_control_panel_permission(
+    current_user: CurrentActiveUser,
+    permission: str,
+) -> None:
+    current_role = str(getattr(current_user, "role", "")).lower()
+    if current_role == "root":
+        return
+    allowed = await get_permissions_for_role(current_user.role)
+    if permission not in allowed:
+        raise HTTPException(status_code=403, detail=f"You do not have permission: {permission}")
 
 
 def _normalize_email_list(raw_emails: list[str]) -> list[str]:
@@ -799,6 +812,11 @@ async def toggle_agent_field(
         if dep is None:
             raise HTTPException(status_code=404, detail="Deployment not found")
 
+        if body.field == ToggleField.IS_ACTIVE:
+            await _require_control_panel_permission(current_user, "start_stop_agent")
+        elif body.field == ToggleField.IS_ENABLED:
+            await _require_control_panel_permission(current_user, "enable_disable_agent")
+
         # ── Apply the toggle ───────────────────────────────────────
         setattr(dep, body.field.value, body.value)
         dep.updated_at = datetime.now(timezone.utc)
@@ -963,6 +981,7 @@ async def update_agent_sharing_options(
         can_manage = current_role in ADMIN_ROLES or deployment.deployed_by == current_user.id
         if not can_manage:
             raise HTTPException(status_code=403, detail="You do not have permission to update sharing options.")
+        await _require_control_panel_permission(current_user, "share_agent")
 
         dept_id = deployment.dept_id
         if dept_id is None:
@@ -1096,6 +1115,7 @@ async def promote_uat_to_prod(
         ).first()
         if not uat_dep:
             raise HTTPException(status_code=404, detail="UAT deployment not found.")
+        await _require_control_panel_permission(current_user, "move_uat_to_prod")
         if uat_dep.status != DeploymentUATStatusEnum.PUBLISHED:
             raise HTTPException(status_code=400, detail="Only PUBLISHED UAT deployments can be promoted.")
 

@@ -153,7 +153,7 @@ export default function SchedulerPage({
   onRequestClose,
 }: SchedulerPageProps): JSX.Element {
   const { permissions } = useContext(AuthContext);
-  const canAddScheduler = permissions?.includes("add_scheduler");
+  const canAddScheduler = permissions?.includes("view_control_panel");
   const [typeFilter, setTypeFilter] = useState<TriggerTypeFilter>("all");
   const [showModal, setShowModal] = useState(false);
   const [logsTriggerId, setLogsTriggerId] = useState<string | null>(null);

@@ -41,7 +41,7 @@ PERMISSION_ALIASES = {
     "view_approval_page": ["approve_reject_page", "view_hitl_approvals_page"],
     "view_control_panel": ["view_agent_scheduler_page"],
     "view_agent_scheduler_page": ["view_control_panel"],
-    "start_stop_agent": ["add_scheduler"],
+    "add_scheduler": ["start_stop_agent"],
     "view_model_catalogue_page": ["view_models"],
     "view_agent_catalogue_page": ["view_published_agents"],
     "view_mcp_servers_page": ["view_mcp_page"],
@@ -127,7 +127,7 @@ ACTIONS = {
     "HITL_APPROVE": "hitl_approve",
     "HITL_REJECT": "hitl_reject",
     "VIEW_AGENT_SCHEDULER_PAGE": "view_agent_scheduler_page",
-    "ADD_SCHEDULER": "add_scheduler",
+    "MOVE_UAT_TO_PROD": "move_uat_to_prod",
     "VIEW_TIMEOUT_SETTINGS_PAGE": "view_timeout_settings_page",
     "VIEW_WORKAGENTS_PAGE": "view_workflows_page",
     "VIEW_PLAYGROUND_PAGE": "view_playground_page",
@@ -160,7 +160,7 @@ ROLE_PERMISSIONS: Dict[str, List[str]] = {
         "share_agent",
         "start_stop_agent",
         "enable_disable_agent",
-        "add_scheduler",
+        "move_uat_to_prod",
         "view_orchastration_page",
         "interact_agents",
         "view_observability_page",
@@ -213,7 +213,7 @@ ROLE_PERMISSIONS: Dict[str, List[str]] = {
         "share_agent",
         "start_stop_agent",
         "enable_disable_agent",
-        "add_scheduler",
+        "move_uat_to_prod",
         "view_orchastration_page",
         "interact_agents",
         "view_observability_page",
@@ -262,7 +262,7 @@ ROLE_PERMISSIONS: Dict[str, List[str]] = {
         "share_agent",
         "start_stop_agent",
         "enable_disable_agent",
-        "add_scheduler",
+        "move_uat_to_prod",
         "view_orchastration_page",
         "interact_agents",
         "view_observability_page",
@@ -300,6 +300,7 @@ ROLE_PERMISSIONS: Dict[str, List[str]] = {
         "request_new_model",
         "view_control_panel",
         "start_stop_agent",
+        "move_uat_to_prod",
         "view_orchastration_page",
         "interact_agents",
         "view_observability_page",
@@ -330,6 +331,7 @@ ROLE_PERMISSIONS: Dict[str, List[str]] = {
         "request_new_model",
         "view_control_panel",
         "start_stop_agent",
+        "move_uat_to_prod",
         "view_orchastration_page",
         "interact_agents",
         "view_observability_page",
@@ -358,7 +360,7 @@ ROLE_PERMISSIONS: Dict[str, List[str]] = {
     ],
 }
 
-PERMISSION_VERSION = "v21"  # bump when permissions change
+PERMISSION_VERSION = "v22"  # bump when permissions change
 
 
 class PermissionCacheService:

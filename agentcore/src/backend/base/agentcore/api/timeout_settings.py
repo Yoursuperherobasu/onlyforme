@@ -8,6 +8,7 @@ from sqlalchemy import delete
 from sqlmodel import select
 
 from agentcore.api.utils import CurrentActiveUser, DbSession
+from agentcore.services.auth.permissions import get_permissions_for_role
 from agentcore.services.deps import get_cache_service, get_settings_service
 from agentcore.services.database.models.timeout_settings.model import TimeoutSettings
 
@@ -72,6 +73,14 @@ DEFAULT_ORDER = {item["id"]: idx for idx, item in enumerate(DEFAULT_TIMEOUT_SETT
 
 def _is_root_user(current_user: CurrentActiveUser) -> bool:
     return str(getattr(current_user, "role", "")).lower() == "root"
+
+
+async def _require_timeout_permission(current_user: CurrentActiveUser, permission: str) -> None:
+    if _is_root_user(current_user):
+        return
+    user_permissions = await get_permissions_for_role(str(current_user.role))
+    if permission not in user_permissions:
+        raise HTTPException(status_code=403, detail="Missing required permissions.")
 
 
 def _parse_redis_ttl_seconds(value: str | None, unit: str | None) -> int | None:
@@ -145,8 +154,7 @@ async def get_timeout_settings(
     current_user: CurrentActiveUser,
     session: DbSession,
 ) -> list[dict]:
-    if not _is_root_user(current_user):
-        raise HTTPException(status_code=403, detail="Access denied. Root admin only.")
+    await _require_timeout_permission(current_user, "view_platform_configs")
 
     await _ensure_defaults(session, current_user)
     rows = (
@@ -178,8 +186,7 @@ async def update_timeout_settings(
     current_user: CurrentActiveUser,
     session: DbSession,
 ) -> dict:
-    if not _is_root_user(current_user):
-        raise HTTPException(status_code=403, detail="Access denied. Root admin only.")
+    await _require_timeout_permission(current_user, "edit_platform_configs")
 
     now = datetime.now(timezone.utc)
     existing = (

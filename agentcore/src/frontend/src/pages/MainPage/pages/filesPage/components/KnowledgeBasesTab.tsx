@@ -102,10 +102,11 @@ const KnowledgeBasesTab = ({
     setSuccessData: state.setSuccessData,
   }));
 
-  const { role, userData } = useContext(AuthContext);
+  const { role, userData, permissions } = useContext(AuthContext);
   const normalizedRole = (role || userData?.role || "")
     .toLowerCase()
     .replace(/\s+/g, "_");
+  const canAddKnowledge = permissions?.includes("add_new_knowledge") ?? false;
   const showCreatedBy = normalizedRole === "department_admin";
   const showDepartment = normalizedRole === "super_admin";
   const canMultiDept = normalizedRole === "super_admin" || normalizedRole === "root";
@@ -451,6 +452,13 @@ const KnowledgeBasesTab = ({
       public_dept_ids?: string[];
     },
   ) => {
+    if (!canAddKnowledge) {
+      setErrorData({
+        title: t("Access denied"),
+        list: [t("You do not have permission to add knowledge bases.")],
+      });
+      return;
+    }
     try {
       const filesIds = await uploadFile({
         files: uploadFiles,
@@ -472,6 +480,13 @@ const KnowledgeBasesTab = ({
   };
 
   const handleOpenUploadModal = () => {
+    if (!canAddKnowledge) {
+      setErrorData({
+        title: t("Access denied"),
+        list: [t("You do not have permission to add knowledge bases.")],
+      });
+      return;
+    }
     setIsExistingKB(false);
     setKnowledgeBaseName("");
     setVisibilityScope("private");
@@ -483,6 +498,13 @@ const KnowledgeBasesTab = ({
   };
 
   const handleUploadMoreToKB = (kb: KnowledgeBaseInfo) => {
+    if (!canAddKnowledge) {
+      setErrorData({
+        title: t("Access denied"),
+        list: [t("You do not have permission to add knowledge bases.")],
+      });
+      return;
+    }
     setIsExistingKB(true);
     setKnowledgeBaseName(kb.name);
     setSelectedVisibility((kb.visibility as KBVisibility) || "PRIVATE");
@@ -490,6 +512,13 @@ const KnowledgeBasesTab = ({
   };
 
   const handleChooseFiles = async () => {
+    if (!canAddKnowledge) {
+      setErrorData({
+        title: t("Access denied"),
+        list: [t("You do not have permission to add knowledge bases.")],
+      });
+      return;
+    }
     try {
       const selected = await createFileUpload({
         multiple: true,
@@ -662,23 +691,27 @@ const KnowledgeBasesTab = ({
                     </span>
                   </div>
                 </div>
-                <ShadTooltip content={t("Add files to this knowledge base")} side="left">
-                  <button
-                    className="ml-2 flex shrink-0 items-center rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      const kb = knowledgeBases?.find(
-                        (k) => k.id === params.data.id,
-                      );
-                      if (kb) handleUploadMoreToKB(kb);
-                    }}
-                  >
-                    <ForwardedIconComponent
-                      name="Upload"
-                      className="h-3.5 w-3.5"
-                    />
-                  </button>
-                </ShadTooltip>
+                {canAddKnowledge ? (
+                  <ShadTooltip content={t("Add files to this knowledge base")} side="left">
+                    <button
+                      className="ml-2 flex shrink-0 items-center rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        const kb = knowledgeBases?.find(
+                          (k) => k.id === params.data.id,
+                        );
+                        if (kb) handleUploadMoreToKB(kb);
+                      }}
+                    >
+                      <ForwardedIconComponent
+                        name="Upload"
+                        className="h-3.5 w-3.5"
+                      />
+                    </button>
+                  </ShadTooltip>
+                ) : (
+                  <span className="ml-2 h-6 w-6" />
+                )}
               </div>
             );
           }
@@ -1058,6 +1091,7 @@ const KnowledgeBasesTab = ({
                 size="sm"
                 type="button"
                 onClick={handleChooseFiles}
+                disabled={!canAddKnowledge}
               >
                 <ForwardedIconComponent name="Plus" className="mr-1 h-3.5 w-3.5" />
                 {t("Choose Files")}
@@ -1143,6 +1177,7 @@ const KnowledgeBasesTab = ({
           label: isExistingKB ? t("Upload Files") : t("Upload Knowledge Base"),
           dataTestId: "upload-files-with-kb-button",
           disabled:
+            !canAddKnowledge ||
             pendingUploadFiles.length === 0 ||
             !knowledgeBaseName.trim() ||
             (visibilityScope === "organization" && !selectedOrgId) ||
@@ -1207,6 +1242,7 @@ const KnowledgeBasesTab = ({
           <Button
             className="flex items-center gap-2 font-semibold"
             onClick={handleOpenUploadModal}
+            disabled={!canAddKnowledge}
           >
             <ForwardedIconComponent name="Plus" /> {t("Upload Knowledge Base")}
           </Button>

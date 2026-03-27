@@ -35,6 +35,7 @@ from agentcore.services.database.models.user_department_membership.model import 
 from agentcore.services.database.models.approval_notification.model import ApprovalNotification
 from agentcore.services.database.models.user.model import User
 from agentcore.services.approval_notifications import upsert_approval_notification
+from agentcore.services.auth.permissions import get_permissions_for_role
 
 router = APIRouter(prefix="/v1/hitl", tags=["Human-in-the-Loop"])
 
@@ -221,6 +222,7 @@ async def get_hitl_state(
     actions that should be shown to the human reviewer.
     """
     req = await _get_pending_request(thread_id, session)
+    _check_hitl_authorization(req, current_user)
     enriched = await _enrich_with_agent_names([req], session)
     return enriched[0]
 
@@ -245,6 +247,9 @@ async def resume_hitl(
     """
     hitl_req = await _get_pending_request(thread_id, session)
     _check_hitl_authorization(hitl_req, current_user)
+    await _require_hitl_permission(
+        current_user, _permission_for_hitl_action(body.action)
+    )
 
     if hitl_req.status != HITLStatus.PENDING:
         raise HTTPException(
@@ -491,6 +496,7 @@ async def cancel_hitl(
     """
     hitl_req = await _get_pending_request(thread_id, session)
     _check_hitl_authorization(hitl_req, current_user)
+    await _require_hitl_permission(current_user, "hitl_reject")
 
     if hitl_req.status != HITLStatus.PENDING:
         raise HTTPException(
@@ -648,6 +654,19 @@ def _check_hitl_authorization(hitl_req: HITLRequest, current_user) -> None:
             detail="You are not assigned to this approval request",
         )
 
+
+async def _require_hitl_permission(current_user, permission_key: str) -> None:
+    permissions = await get_permissions_for_role(str(current_user.role))
+    if permission_key not in permissions:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Missing required permission: {permission_key}",
+        )
+
+
+def _permission_for_hitl_action(action: str) -> str:
+    return "hitl_reject" if "reject" in action.lower() else "hitl_approve"
+
 async def _store_orch_agent_response(
     agent_id: str,
     output_text: str,
@@ -771,3 +790,4 @@ def _resolve_request(
     req.decision = decision
     req.decided_by_user_id = decided_by
     req.decided_at = datetime.now(timezone.utc)
+

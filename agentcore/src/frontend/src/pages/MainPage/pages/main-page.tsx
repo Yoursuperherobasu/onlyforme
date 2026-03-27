@@ -77,8 +77,15 @@ export default function CollectionPage(): JSX.Element {
           setSuccessData({ title: "Project deleted successfully." });
           navigate("/agents");
         },
-        onError: () => {
-          setErrorData({ title: "Error deleting project." });
+        onError: (error: any) => {
+          const detail =
+            error?.response?.data?.detail ||
+            error?.message ||
+            "Error deleting project.";
+          setErrorData({
+            title: "Error deleting project.",
+            list: detail ? [String(detail)] : undefined,
+          });
         },
       },
     );
@@ -158,10 +165,6 @@ export default function CollectionPage(): JSX.Element {
   const hasRequiredPagePermission =
     !requiredPagePermission || isRootUser || permissions?.includes(requiredPagePermission);
 
-  if (!hasRequiredPagePermission) {
-    return <AccessDeniedPage message={`Missing permission: ${requiredPagePermission}`} />;
-  }
-
   /* ================= SHARED SIDEBAR ================= */
 
   const Sidebar = showSidebar ? (
@@ -186,7 +189,11 @@ export default function CollectionPage(): JSX.Element {
       {Sidebar}
 
       <main className="flex h-full w-full overflow-hidden">
-        {!hasContent ? (
+        {!hasRequiredPagePermission ? (
+          <div className="relative mx-auto flex h-full w-full flex-col overflow-hidden">
+            <AccessDeniedPage message={`Missing permission: ${requiredPagePermission}`} />
+          </div>
+        ) : !hasContent ? (
           <div className="flex h-full w-full items-center justify-center">
             <CustomLoader remSize={30} />
           </div>

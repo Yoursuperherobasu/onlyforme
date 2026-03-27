@@ -187,11 +187,7 @@ export default function ConnectorsCatalogueView(): JSX.Element {
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const { role, permissions, userData } = useContext(AuthContext);
-  const canViewConnectorPage =
-    permissions?.includes("view_connector_page") ||
-    permissions?.includes("connectore_page") ||
-    permissions?.includes("view_connectors_page") ||
-    permissions?.includes("connector_page");
+  const canViewConnectorPage = permissions?.includes("view_connector_page");
   const canAddConnector = permissions?.includes("add_connector");
   const canMultiDept = role === "super_admin" || role === "root";
   const canSeeVisibilityColumn = true;

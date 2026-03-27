@@ -14,7 +14,7 @@ _request_base_url: ContextVar[str | None] = ContextVar("_request_base_url", defa
 
 import httpx
 
-from fastapi import APIRouter, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 
 from loguru import logger
 from pydantic import BaseModel
@@ -24,6 +24,7 @@ from sqlmodel import col, select
 from fastapi.responses import StreamingResponse
 
 from agentcore.api.utils import CurrentActiveUser, DbSession
+from agentcore.services.auth.decorators import PermissionChecker
 from agentcore.services.database.models.agent.model import Agent
 from agentcore.events.event_manager import create_default_event_manager
 from agentcore.services.database.models.agent_deployment_prod.model import (
@@ -645,7 +646,12 @@ async def list_orch_agents(
 
 
 
-@router.post("/chat", response_model=OrchChatResponse, status_code=200)
+@router.post(
+    "/chat",
+    response_model=OrchChatResponse,
+    status_code=200,
+    dependencies=[Depends(PermissionChecker(["interact_agents"]))],
+)
 async def orch_chat(
     *,
     request: Request,
@@ -761,7 +767,11 @@ async def orch_chat(
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
-@router.post("/chat/stream", status_code=200)
+@router.post(
+    "/chat/stream",
+    status_code=200,
+    dependencies=[Depends(PermissionChecker(["interact_agents"]))],
+)
 async def orch_chat_stream(
     *,
     request: Request,

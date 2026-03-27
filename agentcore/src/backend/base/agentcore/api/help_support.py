@@ -5,7 +5,7 @@ from fastapi import APIRouter, HTTPException
 from sqlmodel import select
 
 from agentcore.api.utils import CurrentActiveUser, DbSession
-from agentcore.services.auth.permissions import normalize_role
+from agentcore.services.auth.permissions import get_permissions_for_role, normalize_role
 from agentcore.services.database.models.help_support.model import (
     HelpSupportQuestion,
     HelpSupportQuestionCreate,
@@ -18,9 +18,12 @@ router = APIRouter(prefix="/help-support", tags=["Help & Support"])
 ADMIN_ROLES = {"root", "super_admin", "department_admin"}
 
 
-def _assert_admin_role(role: str) -> None:
-    if normalize_role(role) not in ADMIN_ROLES:
-        raise HTTPException(status_code=403, detail="Insufficient permissions.")
+async def _require_help_support_permission(current_user: CurrentActiveUser, permission: str) -> None:
+    if normalize_role(current_user.role) == "root":
+        return
+    user_permissions = await get_permissions_for_role(str(current_user.role))
+    if permission not in user_permissions:
+        raise HTTPException(status_code=403, detail="Missing required permissions.")
 
 
 @router.get("/questions", response_model=list[HelpSupportQuestionRead])
@@ -43,7 +46,7 @@ async def create_question(
     session: DbSession,
     current_user: CurrentActiveUser,
 ) -> HelpSupportQuestion:
-    _assert_admin_role(current_user.role)
+    await _require_help_support_permission(current_user, "add_faq")
     now = datetime.now(timezone.utc)
     row = HelpSupportQuestion(
         question=payload.question.strip(),
@@ -66,7 +69,7 @@ async def update_question(
     session: DbSession,
     current_user: CurrentActiveUser,
 ) -> HelpSupportQuestion:
-    _assert_admin_role(current_user.role)
+    await _require_help_support_permission(current_user, "add_faq")
     row = await session.get(HelpSupportQuestion, question_id)
     if not row:
         raise HTTPException(status_code=404, detail="Question not found.")
@@ -93,11 +96,10 @@ async def delete_question(
     session: DbSession,
     current_user: CurrentActiveUser,
 ) -> dict:
-    _assert_admin_role(current_user.role)
+    await _require_help_support_permission(current_user, "add_faq")
     row = await session.get(HelpSupportQuestion, question_id)
     if not row:
         raise HTTPException(status_code=404, detail="Question not found.")
     await session.delete(row)
     await session.commit()
     return {"detail": "Question deleted"}
-

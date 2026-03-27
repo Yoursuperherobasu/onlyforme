@@ -199,14 +199,7 @@ const router = createBrowserRouter(
                   <Route
                     path="connectors"
                     element={
-                      <ProtectedPermissionRoute
-                        permissions={[
-                          "view_connector_page",
-                          "connectore_page",
-                          "view_connectors_page",
-                          "connector_page",
-                        ]}
-                      >
+                      <ProtectedPermissionRoute permission="view_connector_page">
                         <ConnectorsCatalogueView />
                       </ProtectedPermissionRoute>
                     }
@@ -230,9 +223,9 @@ const router = createBrowserRouter(
                   <Route
                     path="timeout-settings"
                     element={
-                      <ProtectedAccessControlRoute>
+                      <ProtectedPermissionRoute permission="view_platform_configs">
                         <TimeoutSettings />
-                      </ProtectedAccessControlRoute>
+                      </ProtectedPermissionRoute>
                     }
                   />
                   <Route

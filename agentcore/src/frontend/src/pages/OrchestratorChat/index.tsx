@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { Send, Sparkles, ChevronDown, Plus, MessageSquare, PanelLeftClose, PanelLeft, User, Loader2, Trash2, Check, ImagePlus, X, Clock } from "lucide-react";
 import { useTranslation } from "react-i18next";
@@ -17,6 +17,7 @@ import { usePostUploadFile } from "@/controllers/API/queries/files/use-post-uplo
 import { api, performStreamingRequest } from "@/controllers/API/api";
 import { getURL } from "@/controllers/API/helpers/constants";
 import { BASE_URL_API } from "@/constants/constants";
+import { AuthContext } from "@/contexts/authContext";
 import { MarkdownField } from "@/modals/IOModal/components/chatView/chatMessage/components/edit-message";
 import { ContentBlockDisplay } from "@/components/core/chatComponents/ContentBlockDisplay";
 import type { ContentBlock } from "@/types/chat";
@@ -135,6 +136,7 @@ function groupSessionsByDate(
 
 export default function AgentOrchestrator() {
   const { t } = useTranslation();
+  const { permissions } = useContext(AuthContext);
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [showMentions, setShowMentions] = useState(false);
@@ -227,6 +229,7 @@ export default function AgentOrchestrator() {
     () => agents.find((a) => a.id === selectedModelId) || agents[0],
     [agents, selectedModelId],
   );
+  const canInteract = permissions?.includes("interact_agents") ?? false;
 
   // Load messages when switching to an existing session
   const { data: apiSessionMessages } = useGetOrchMessages(
@@ -444,7 +447,7 @@ export default function AgentOrchestrator() {
 
   const handleSend = useCallback(async () => {
     const hasFiles = uploadFiles.some((f) => f.path && !f.loading && !f.error);
-    if ((!input.trim() && !hasFiles) || isSending || agents.length === 0) return;
+    if (!canInteract || (!input.trim() && !hasFiles) || isSending || agents.length === 0) return;
 
     // Collect uploaded file paths and clear previews
     const filePaths = uploadFiles
@@ -696,7 +699,7 @@ export default function AgentOrchestrator() {
       setStreamingAgentName("");
       setStreamingMsgId(null);
     }
-  }, [input, isSending, agents, selectedAgent, selectedModelId, currentSessionId, refetchSessions]);
+  }, [canInteract, input, isSending, agents, selectedAgent, selectedModelId, currentSessionId, refetchSessions]);
 
   /* ------------------ SESSION MANAGEMENT ------------------ */
 
@@ -1133,22 +1136,28 @@ export default function AgentOrchestrator() {
                 value={input}
                 onChange={(e) => handleInputChange(e.target.value)}
                 onPaste={handlePaste}
-                disabled={isSending}
+                disabled={isSending || !canInteract}
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && !e.shiftKey) {
                     e.preventDefault();
                     handleSend();
                   }
                 }}
-                placeholder={isSending ? t("Waiting for response...") : t("Message agents or type @ to mention...")}
+                placeholder={
+                  !canInteract
+                    ? t("You do not have permission to interact with agents.")
+                    : isSending
+                      ? t("Waiting for response...")
+                      : t("Message agents or type @ to mention...")
+                }
                 rows={1}
-                className={`w-full resize-none border-none bg-transparent px-5 py-4 pr-14 text-[15px] text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-0 ${isSending ? "cursor-not-allowed opacity-50" : ""}`}
+                className={`w-full resize-none border-none bg-transparent px-5 py-4 pr-14 text-[15px] text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-0 ${(isSending || !canInteract) ? "cursor-not-allowed opacity-50" : ""}`}
               />
               <div className="flex items-center justify-between px-3 pb-3">
                 <button
                   onClick={() => fileInputRef.current?.click()}
-                  disabled={isSending}
-                  className={`flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors ${isSending ? "cursor-not-allowed opacity-50" : "hover:bg-accent hover:text-foreground"}`}
+                  disabled={isSending || !canInteract}
+                  className={`flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors ${(isSending || !canInteract) ? "cursor-not-allowed opacity-50" : "hover:bg-accent hover:text-foreground"}`}
                   title={t("Upload image")}
                 >
                   <ImagePlus size={16} />
@@ -1162,9 +1171,9 @@ export default function AgentOrchestrator() {
                 />
                 <button
                   onClick={handleSend}
-                  disabled={(!input.trim() && !uploadFiles.some((f) => f.path)) || isSending}
+                  disabled={(!input.trim() && !uploadFiles.some((f) => f.path)) || isSending || !canInteract}
                   className={`flex h-8 w-8 items-center justify-center rounded-lg transition-colors ${
-                    (input.trim() || uploadFiles.some((f) => f.path)) && !isSending
+                    (input.trim() || uploadFiles.some((f) => f.path)) && !isSending && canInteract
                       ? "bg-foreground text-background hover:opacity-90"
                       : "bg-muted text-muted-foreground"
                   }`}

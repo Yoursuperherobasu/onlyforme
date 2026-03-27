@@ -985,7 +985,8 @@ export default function WorkflowsView({
   const tableColumnCount =
     6 +
     (activeTab === "PROD" ? 1 : 0) +
-    (can("view_project_page") ? (activeTab === "UAT" ? 2 : 1) : 0) +
+    (can("share_agent") ? 1 : 0) +
+    (can("move_uat_to_prod") && activeTab === "UAT" ? 1 : 0) +
     (canViewScheduler ? 1 : 0) +
     (can("start_stop_agent") ? 1 : 0) +
     (can("enable_disable_agent") ? 1 : 0);
@@ -1330,8 +1331,8 @@ export default function WorkflowsView({
               <col className="w-[8.5rem]" />
               {activeTab === "PROD" && <col className="w-[7rem]" />}
               <col className="w-[11rem]" />
-              {can("view_project_page") && <col className="w-[8rem]" />}
-              {can("view_project_page") && activeTab === "UAT" && <col className="w-[8rem]" />}
+              {can("share_agent") && <col className="w-[8rem]" />}
+              {can("move_uat_to_prod") && activeTab === "UAT" && <col className="w-[8rem]" />}
               {canViewScheduler && <col className="w-[7rem]" />}
               {can("start_stop_agent") && <col className="w-[6rem]" />}
               {can("enable_disable_agent") && <col className="w-[7rem]" />}
@@ -1363,12 +1364,12 @@ export default function WorkflowsView({
                   <th className="bg-muted/30 px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                     {t("Created At")}
                   </th>
-                {can("view_project_page") && (
+                {can("share_agent") && (
                   <th className="bg-muted/30 px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                     {t("Sharing Options")}
                   </th>
                 )}
-                {can("view_project_page") && activeTab === "UAT" && (
+                {can("move_uat_to_prod") && activeTab === "UAT" && (
                   <th className="bg-muted/30 px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                     {t("Move UAT to PROD")}
                   </th>
@@ -1500,7 +1501,7 @@ export default function WorkflowsView({
                     <td className="px-4 py-3 text-sm whitespace-nowrap text-muted-foreground">
                       {workflow.created}
                     </td>
-                    {can("view_project_page") && (
+                    {can("share_agent") && (
                       <td className="px-4 py-3 whitespace-nowrap">
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
@@ -1559,7 +1560,7 @@ export default function WorkflowsView({
                         </DropdownMenu>
                       </td>
                     )}
-                    {can("view_project_page") && activeTab === "UAT" && (
+                    {can("move_uat_to_prod") && activeTab === "UAT" && (
                       <td className="px-4 py-3 whitespace-nowrap">
                         <button
                           type="button"
