@@ -554,7 +554,7 @@ async def _create_release(
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
     else:
-        major, minor, patch = 0, 0, 0
+        major, minor, patch = 1, 0, 0
 
     next_major, next_minor, next_patch = _bump(major, minor, patch, bump_type)
     next_version = f"{next_major}.{next_minor}.{next_patch}"
