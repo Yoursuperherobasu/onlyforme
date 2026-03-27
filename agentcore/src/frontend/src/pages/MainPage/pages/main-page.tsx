@@ -1,5 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useContext, useEffect, useMemo, useState } from "react";
 import { Outlet, useLocation } from "react-router-dom";
 
 import SideBarFoldersButtonsComponent from "@/components/core/folderSidebarComponent/components/sideBarFolderButtons";
@@ -7,6 +7,7 @@ import { SidebarProvider } from "@/components/ui/sidebar";
 import CustomEmptyPageCommunity from "@/customization/components/custom-empty-page";
 import CustomLoader from "@/customization/components/custom-loader";
 import { useCustomNavigate } from "@/customization/hooks/use-custom-navigate";
+import AccessDeniedPage from "@/pages/AccessDeniedPage";
 
 import useAlertStore from "@/stores/alertStore";
 import useAgentsManagerStore from "@/stores/agentsManagerStore";
@@ -20,6 +21,7 @@ import {
   useDeleteFolders,
   usePatchFolders,
 } from "@/controllers/API/queries/folders";
+import { AuthContext } from "@/contexts/authContext";
 
 export default function CollectionPage(): JSX.Element {
   /* ================= STATE ================= */
@@ -31,6 +33,7 @@ export default function CollectionPage(): JSX.Element {
   const navigate = useCustomNavigate();
   const location = useLocation();
   const queryClient = useQueryClient();
+  const { permissions, role } = useContext(AuthContext);
 
   /* ================= STORES ================= */
 
@@ -125,6 +128,39 @@ export default function CollectionPage(): JSX.Element {
     location.pathname.startsWith("/agent/") &&
     new URLSearchParams(location.search).get("readonly") === "1";
   const showSidebar = !(isRegistryPreviewRoute || isReadOnlyAgentRoute);
+  const requiredPagePermission = useMemo(() => {
+    const pathname = location.pathname;
+    if (
+      pathname === "/agents" ||
+      pathname === "/agents/" ||
+      pathname.startsWith("/agents/folder/") ||
+      pathname === "/components" ||
+      pathname === "/components/" ||
+      pathname.startsWith("/components/folder/") ||
+      pathname === "/all" ||
+      pathname === "/all/" ||
+      pathname.startsWith("/all/folder/") ||
+      pathname === "/mcp" ||
+      pathname === "/mcp/" ||
+      pathname.startsWith("/mcp/folder/")
+    ) {
+      return "view_projects_page";
+    }
+    if (pathname === "/help-support" || pathname === "/help-support/") {
+      return "view_help_support_page";
+    }
+    if (pathname === "/assets/knowledge-bases" || pathname === "/assets/knowledge-bases/") {
+      return "view_knowledge_base";
+    }
+    return null;
+  }, [location.pathname]);
+  const isRootUser = String(role ?? "").toLowerCase() === "root";
+  const hasRequiredPagePermission =
+    !requiredPagePermission || isRootUser || permissions?.includes(requiredPagePermission);
+
+  if (!hasRequiredPagePermission) {
+    return <AccessDeniedPage message={`Missing permission: ${requiredPagePermission}`} />;
+  }
 
   /* ================= SHARED SIDEBAR ================= */
 

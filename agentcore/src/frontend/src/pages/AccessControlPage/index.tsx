@@ -6,6 +6,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import CustomLoader from "@/customization/components/custom-loader";
 import BaseModal from "@/modals/baseModal";
+import ConfirmationModal from "@/modals/confirmationModal";
 import useAlertStore from "@/stores/alertStore";
 import type { Permission, Role } from "@/types/api";
 import {
@@ -27,6 +28,9 @@ type PermissionPage = {
   name: string;
   sections: PermissionSection[];
 };
+
+const PAGE_ACCESS_TO_ACTIONS = new Map<string, string[]>();
+const ACTION_TO_PAGE_ACCESS = new Map<string, string[]>();
 
 const EXCEL_PERMISSION_STRUCTURE: Array<{
   page: string;
@@ -167,6 +171,23 @@ const EXCEL_PERMISSION_KEYS = new Set(
   EXCEL_PERMISSION_STRUCTURE.flatMap((page) => page.sections.flatMap((section) => section.keys)),
 );
 
+EXCEL_PERMISSION_STRUCTURE.forEach((page) => {
+  const pageAccessKeys = page.sections
+    .filter((section) => section.name === "Page Access")
+    .flatMap((section) => section.keys);
+  const actionKeys = page.sections
+    .filter((section) => section.name !== "Page Access")
+    .flatMap((section) => section.keys);
+
+  pageAccessKeys.forEach((pageAccessKey) => {
+    PAGE_ACCESS_TO_ACTIONS.set(pageAccessKey, actionKeys);
+  });
+
+  actionKeys.forEach((actionKey) => {
+    ACTION_TO_PAGE_ACCESS.set(actionKey, pageAccessKeys);
+  });
+});
+
 const ROLE_DISPLAY_ORDER = [
   "super_admin",
   "leader_executive",
@@ -276,6 +297,8 @@ export default function AccessControlPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [isRestoringSelectedDefaults, setIsRestoringSelectedDefaults] = useState(false);
   const [isRestoringAllDefaults, setIsRestoringAllDefaults] = useState(false);
+  const [isRestoreSelectedModalOpen, setIsRestoreSelectedModalOpen] = useState(false);
+  const [isRestoreAllModalOpen, setIsRestoreAllModalOpen] = useState(false);
   const hasLoadedRef = useRef(false);
 
   const selectedRole = useMemo(
@@ -393,15 +416,31 @@ export default function AccessControlPage() {
   }, [selectedRole, draftPermissions]);
 
   const toggleDraftPermission = (key: string, checked: boolean) => {
-    setDraftPermissions((prev) =>
-      checked ? [...new Set([...prev, key])] : prev.filter((p) => p !== key),
-    );
+    setDraftPermissions((prev) => {
+      const next = new Set(prev);
+      if (checked) {
+        next.add(key);
+        (ACTION_TO_PAGE_ACCESS.get(key) || []).forEach((pageAccessKey) => next.add(pageAccessKey));
+      } else {
+        next.delete(key);
+        (PAGE_ACCESS_TO_ACTIONS.get(key) || []).forEach((actionKey) => next.delete(actionKey));
+      }
+      return Array.from(next);
+    });
   };
 
   const toggleNewRolePermission = (key: string, checked: boolean) => {
-    setNewRolePermissions((prev) =>
-      checked ? [...new Set([...prev, key])] : prev.filter((p) => p !== key),
-    );
+    setNewRolePermissions((prev) => {
+      const next = new Set(prev);
+      if (checked) {
+        next.add(key);
+        (ACTION_TO_PAGE_ACCESS.get(key) || []).forEach((pageAccessKey) => next.add(pageAccessKey));
+      } else {
+        next.delete(key);
+        (PAGE_ACCESS_TO_ACTIONS.get(key) || []).forEach((actionKey) => next.delete(actionKey));
+      }
+      return Array.from(next);
+    });
   };
 
   const handleSavePermissions = () => {
@@ -501,11 +540,6 @@ export default function AccessControlPage() {
 
   const handleRestoreSelectedDefaults = async () => {
     if (!selectedRole) return;
-    if (!confirm(
-      t("Restore default permissions for role \"{{name}}\"? This will overwrite current permissions for this role only.", { name: selectedRole.name }),
-    )) {
-      return;
-    }
     setIsRestoringSelectedDefaults(true);
     try {
       await api.post(`${getURL("ROLES")}/${selectedRole.id}/restore-defaults`);
@@ -522,9 +556,6 @@ export default function AccessControlPage() {
   };
 
   const handleRestoreAllDefaults = async () => {
-    if (!confirm(t("Restore default role permissions for all system roles? This will overwrite current system role mappings."))) {
-      return;
-    }
     setIsRestoringAllDefaults(true);
     try {
       await api.post(`${getURL("ROLES")}/restore-defaults`);
@@ -737,20 +768,77 @@ export default function AccessControlPage() {
                   {t("Permissions for")} {selectedRole?.name || "-"}
                 </div>
                 <div className="flex items-center gap-2">
-                  <Button
-                    variant="outline"
-                    disabled={!canRestoreSelectedRole || isRestoringSelectedDefaults || isRestoringAllDefaults}
-                    onClick={handleRestoreSelectedDefaults}
+                  <ConfirmationModal
+                    size="x-small"
+                    open={isRestoreSelectedModalOpen}
+                    onClose={() => setIsRestoreSelectedModalOpen(false)}
+                    onCancel={() => setIsRestoreSelectedModalOpen(false)}
+                    title={t("Restore Defaults")}
+                    titleHeader={t("Restore Role Defaults")}
+                    modalContentTitle={t("Attention!")}
+                    cancelText={t("Cancel")}
+                    confirmationText={isRestoringSelectedDefaults ? t("Restoring...") : t("Confirm")}
+                    icon="RotateCcw"
+                    loading={isRestoringSelectedDefaults}
+                    confirmDisabled={!canRestoreSelectedRole || isRestoringSelectedDefaults || isRestoringAllDefaults}
+                    onConfirm={() => {
+                      handleRestoreSelectedDefaults();
+                      setIsRestoreSelectedModalOpen(false);
+                    }}
                   >
-                    {isRestoringSelectedDefaults ? t("Restoring...") : t("Restore Role Defaults")}
-                  </Button>
-                  <Button
-                    variant="outline"
-                    disabled={isRestoringAllDefaults || isRestoringSelectedDefaults}
-                    onClick={handleRestoreAllDefaults}
+                    <ConfirmationModal.Content>
+                      <span>
+                        {t(
+                          "Restore default permissions for role \"{{name}}\"? This will overwrite current permissions for this role only.",
+                          { name: selectedRole?.name || "" },
+                        )}
+                      </span>
+                    </ConfirmationModal.Content>
+                    <ConfirmationModal.Trigger>
+                      <Button
+                        variant="outline"
+                        disabled={!canRestoreSelectedRole || isRestoringSelectedDefaults || isRestoringAllDefaults}
+                        onClick={() => setIsRestoreSelectedModalOpen(true)}
+                      >
+                        {isRestoringSelectedDefaults ? t("Restoring...") : t("Restore Role Defaults")}
+                      </Button>
+                    </ConfirmationModal.Trigger>
+                  </ConfirmationModal>
+                  <ConfirmationModal
+                    size="x-small"
+                    open={isRestoreAllModalOpen}
+                    onClose={() => setIsRestoreAllModalOpen(false)}
+                    onCancel={() => setIsRestoreAllModalOpen(false)}
+                    title={t("Restore Defaults")}
+                    titleHeader={t("Restore All Role Defaults")}
+                    modalContentTitle={t("Attention!")}
+                    cancelText={t("Cancel")}
+                    confirmationText={isRestoringAllDefaults ? t("Restoring...") : t("Confirm")}
+                    icon="RotateCcw"
+                    loading={isRestoringAllDefaults}
+                    confirmDisabled={isRestoringAllDefaults || isRestoringSelectedDefaults}
+                    onConfirm={() => {
+                      handleRestoreAllDefaults();
+                      setIsRestoreAllModalOpen(false);
+                    }}
                   >
-                    {isRestoringAllDefaults ? t("Restoring...") : t("Restore All Role Defaults")}
-                  </Button>
+                    <ConfirmationModal.Content>
+                      <span>
+                        {t(
+                          "Restore default role permissions for all system roles? This will overwrite current system role mappings.",
+                        )}
+                      </span>
+                    </ConfirmationModal.Content>
+                    <ConfirmationModal.Trigger>
+                      <Button
+                        variant="outline"
+                        disabled={isRestoringAllDefaults || isRestoringSelectedDefaults}
+                        onClick={() => setIsRestoreAllModalOpen(true)}
+                      >
+                        {isRestoringAllDefaults ? t("Restoring...") : t("Restore All Role Defaults")}
+                      </Button>
+                    </ConfirmationModal.Trigger>
+                  </ConfirmationModal>
                   <Button
                     variant="primary"
                     disabled={!hasChanges || isSaving}

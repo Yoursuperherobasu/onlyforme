@@ -5,12 +5,14 @@ import AccessDeniedPage from "@/pages/AccessDeniedPage";
 export const ProtectedPermissionRoute = ({
   children,
   permission,
+  permissions,
 }: {
   children: JSX.Element;
-  permission: string;
+  permission?: string;
+  permissions?: string[];
 }) => {
   const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
-  const permissions = useAuthStore((state) => state.permissions);
+  const userPermissions = useAuthStore((state) => state.permissions);
   const role = useAuthStore((state) => state.role);
 
   if (!isAuthenticated) {
@@ -21,9 +23,16 @@ export const ProtectedPermissionRoute = ({
     return children;
   }
 
-  if (!permissions.includes(permission)) {
+  const requiredPermissions = permissions?.filter(Boolean) ?? (permission ? [permission] : []);
+  const hasPermission =
+    requiredPermissions.length === 0 ||
+    requiredPermissions.some((requiredPermission) => userPermissions.includes(requiredPermission));
+
+  if (!hasPermission) {
     return (
-      <AccessDeniedPage message={`Missing permission: ${permission}`} />
+      <AccessDeniedPage
+        message={`Missing permission: ${requiredPermissions.join(" or ")}`}
+      />
     );
   }
 

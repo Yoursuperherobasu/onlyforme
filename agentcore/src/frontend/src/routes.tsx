@@ -140,7 +140,14 @@ const router = createBrowserRouter(
                 <Route path="" element={<CustomDashboardWrapperPage />}>
                 <Route path="" element={<CollectionPage />}>
                   <Route index element={<DefaultLandingRedirect />} />
-                  <Route path="help-support" element={<HelpSupportPage />} />
+                  <Route
+                    path="help-support"
+                    element={
+                      <ProtectedPermissionRoute permission="view_help_support_page">
+                        <HelpSupportPage />
+                      </ProtectedPermissionRoute>
+                    }
+                  />
                   <Route
                     path="approval"
                     element={
@@ -160,17 +167,17 @@ const router = createBrowserRouter(
                   <Route
                     path="model-catalogue"
                     element={
-                      
+                      <ProtectedPermissionRoute permission="view_models">
                         <ModelCatalogue />
-                    
+                      </ProtectedPermissionRoute>
                     }
                   />
                   <Route
                     path="orchestrator-chat"
                     element={
-                     
+                      <ProtectedPermissionRoute permission="view_orchastration_page">
                         <AgentOrchestrator />
-                
+                      </ProtectedPermissionRoute>
                     }
                   />
                   <Route
@@ -192,15 +199,24 @@ const router = createBrowserRouter(
                   <Route
                     path="connectors"
                     element={
+                      <ProtectedPermissionRoute
+                        permissions={[
+                          "view_connector_page",
+                          "connectore_page",
+                          "view_connectors_page",
+                          "connector_page",
+                        ]}
+                      >
                         <ConnectorsCatalogueView />
+                      </ProtectedPermissionRoute>
                     }
                   />
                   <Route
                     path="mcp-servers"
                     element={
-
+                      <ProtectedPermissionRoute permission="view_mcp_page">
                         <MCPServersPage />
-                   
+                      </ProtectedPermissionRoute>
                     }
                   />
                   <Route
@@ -221,7 +237,11 @@ const router = createBrowserRouter(
                   />
                   <Route
                     path="packages"
-                    element={<PackagesPage />}
+                    element={
+                      <ProtectedPermissionRoute permission="view_packages_page">
+                        <PackagesPage />
+                      </ProtectedPermissionRoute>
+                    }
                   />
                   <Route
                     path="release-management"
@@ -235,30 +255,34 @@ const router = createBrowserRouter(
                   <Route
                     path="agent-catalogue"
                     element={
-                    
+                      <ProtectedPermissionRoute permission="view_published_agents">
                         <AgentCatalogueView />
-                     
+                      </ProtectedPermissionRoute>
                     }
                   />
                   <Route
                     path="agent-catalogue/:registryId/view"
-                    element={<AgentCataloguePreviewPage />}
+                    element={
+                      <ProtectedPermissionRoute permission="view_published_agents">
+                        <AgentCataloguePreviewPage />
+                      </ProtectedPermissionRoute>
+                    }
                   />
                   <Route
                     path="observability-dashboard"
                     element={
-                     
+                      <ProtectedPermissionRoute permission="view_observability_page">
                         <ObservabilityDashboard />
-               
+                      </ProtectedPermissionRoute>
                     }
                   />
 
                   <Route
                     path="workflows"
                     element={
-                     
+                      <ProtectedPermissionRoute permission="view_control_panel">
                         <WorkflowsView />
-                
+                      </ProtectedPermissionRoute>
                     }
                   />
                   <Route
@@ -287,15 +311,22 @@ const router = createBrowserRouter(
                         <Route
                           path="knowledge-bases"
                           element={
-                            
+                            <ProtectedPermissionRoute permission="view_knowledge_base">
                               <KnowledgePage />
-                      
+                            </ProtectedPermissionRoute>
                           }
                         />
                       
                     </Route>
                   )}
-                  <Route path="agents/">
+                  <Route
+                    path="agents/"
+                    element={
+                      <ProtectedPermissionRoute permission="view_projects_page">
+                        <Outlet />
+                      </ProtectedPermissionRoute>
+                    }
+                  >
                     <Route index element={<CollectionPage />} />
                     <Route
                       path="folder/:folderId"
@@ -304,7 +335,11 @@ const router = createBrowserRouter(
                   </Route>
                   <Route
                     path="components/"
-                    element={<HomePage key="components" type="components" />}
+                    element={
+                      <ProtectedPermissionRoute permission="view_projects_page">
+                        <HomePage key="components" type="components" />
+                      </ProtectedPermissionRoute>
+                    }
                   >
                     <Route
                       path="folder/:folderId"
@@ -313,7 +348,11 @@ const router = createBrowserRouter(
                   </Route>
                   <Route
                     path="all/"
-                    element={<HomePage key="agents" type="agents" />}
+                    element={
+                      <ProtectedPermissionRoute permission="view_projects_page">
+                        <HomePage key="agents" type="agents" />
+                      </ProtectedPermissionRoute>
+                    }
                   >
                     <Route
                       path="folder/:folderId"
@@ -322,7 +361,11 @@ const router = createBrowserRouter(
                   </Route>
                   <Route
                     path="mcp/"
-                    element={<HomePage key="mcp" type="mcp" />}
+                    element={
+                      <ProtectedPermissionRoute permission="view_projects_page">
+                        <HomePage key="mcp" type="mcp" />
+                      </ProtectedPermissionRoute>
+                    }
                   >
                     <Route
                       path="folder/:folderId"
