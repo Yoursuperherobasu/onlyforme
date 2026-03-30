@@ -318,6 +318,7 @@ async def simple_run_agent(
     prod_deployment: AgentDeploymentProd | None = None,
     uat_deployment: AgentDeploymentUAT | None = None,
     skip_node_persist: bool = False,
+    orch_user_id: str | None = None,
 ):
     validate_input_and_tweaks(input_request)
     try:
@@ -339,6 +340,7 @@ async def simple_run_agent(
             user_id=str(user_id) if user_id else None,
             agent_name=agent.name,
             chat_service=get_chat_service(),
+            session_id=input_request.session_id,
         )
 
         # Set PROD deployment context so adapter logs to transaction_prod
@@ -358,6 +360,18 @@ async def simple_run_agent(
         if skip_node_persist:
             graph.skip_dev_logging = True
             graph.orch_skip_node_persist = True
+            # Set orchestrator context so memory/transaction routing uses orch_conversation
+            _orch_dep_id = None
+            if prod_deployment is not None:
+                _orch_dep_id = str(prod_deployment.id)
+            elif uat_deployment is not None:
+                _orch_dep_id = str(uat_deployment.id)
+            if _orch_dep_id:
+                graph.orch_deployment_id = _orch_dep_id
+            if input_request.session_id:
+                graph.orch_session_id = input_request.session_id
+            if orch_user_id:
+                graph.user_id = orch_user_id
 
         inputs = None
         if input_request.input_value is not None:
@@ -467,6 +481,7 @@ async def run_agent_generator(
     prod_deployment: AgentDeploymentProd | None = None,
     uat_deployment: AgentDeploymentUAT | None = None,
     skip_node_persist: bool = False,
+    orch_user_id: str | None = None,
 ) -> None:
     """Executes a agent asynchronously and manages event streaming to the client.
 
@@ -505,6 +520,7 @@ async def run_agent_generator(
             prod_deployment=prod_deployment,
             uat_deployment=uat_deployment,
             skip_node_persist=skip_node_persist,
+            orch_user_id=orch_user_id,
         )
         event_manager.on_end(data={"result": result.model_dump()})
         from agentcore.observability.metrics_registry import record_agent_run
@@ -618,10 +634,23 @@ async def simplified_run_agent(
         _internal_secret
         and request.headers.get("X-Internal-Secret") == _internal_secret
     )
+    _orch_user_id = request.headers.get("X-Orch-User-Id") if _is_internal else None
     if not _is_internal:
         auto_generated_key = await _enforce_agent_api_key(agent_api_key, agent.id, env, deployment_id, version)
         if auto_generated_key:
             response.headers["X-Generated-Api-Key"] = auto_generated_key
+
+    # Resolve the User who created the API key so graph.user_id is set for
+    # direct API calls (PROD/UAT). For orchestrator calls, user_id comes via
+    # X-Orch-User-Id header instead.
+    _api_key_user: User | None = None
+    if agent_api_key and not _is_internal:
+        try:
+            from agentcore.services.deps import session_scope
+            async with session_scope() as _sess:
+                _api_key_user = await _sess.get(User, agent_api_key.created_by)
+        except Exception:  # noqa: BLE001
+            logger.debug("Failed to resolve user from API key created_by")
 
     start_time = time.perf_counter()
     from agentcore.observability.metrics_registry import (
@@ -678,12 +707,13 @@ async def simplified_run_agent(
             run_agent_generator(
                 agent=agent,
                 input_request=input_request,
-                api_key_user=None,  # Disabled for testing
+                api_key_user=_api_key_user,
                 event_manager=event_manager,
                 client_consumed_queue=asyncio_queue_client_consumed,
                 prod_deployment=prod_deployment,
                 uat_deployment=uat_deployment,
                 skip_node_persist=_is_internal,
+                orch_user_id=_orch_user_id,
             )
         )
 
@@ -790,10 +820,11 @@ async def simplified_run_agent(
             agent=agent,
             input_request=input_request,
             stream=stream,
-            api_key_user=None,  # Disabled for testing
+            api_key_user=_api_key_user,
             prod_deployment=prod_deployment,
             uat_deployment=uat_deployment,
             skip_node_persist=_is_internal,
+            orch_user_id=_orch_user_id,
         )
         end_time = time.perf_counter()
         background_tasks.add_task(

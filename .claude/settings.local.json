@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find e:pwc_workaimldevteamagentcoresrcbackendbaseagentcoreservices -type d -name *conversation* -o -type d -name *orch*)",
+      "Bash(find e:pwc_workaimldevteamagentcoresrcbackendbaseagentcore -type f -name *orch*)",
+      "Bash(grep -E \"\\\\.\\(py|txt\\)$\")",
+      "Bash(find /e/pwc_work/aimldevteam -name utils.py -path */api/* -type f)",
+      "Bash(xargs grep:*)",
+      "Bash(find /e/pwc_work/aimldevteam -path *api/run* -name *.py)",
+      "Bash(grep -r graph.user_id /e/pwc_work/aimldevteam/agentcore/src/backend/base/agentcore --include=*.py)"
+    ]
+  }
+}

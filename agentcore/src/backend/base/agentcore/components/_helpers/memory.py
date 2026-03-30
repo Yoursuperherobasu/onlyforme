@@ -271,6 +271,80 @@ class MemoryNode(Node):
             return str(self.graph.agent_id)
         return None
 
+    # ── DB fetch helpers (orch / PROD / UAT) ──────────────────────────────
+
+    async def _fetch_orch_messages(self, session_id: str, limit: int) -> list[Message]:
+        """Fetch messages from orch_conversation table (for deployed agents via orchestrator)."""
+        try:
+            from sqlmodel import col, select
+            from agentcore.services.deps import session_scope
+            from agentcore.services.database.models.orch_conversation.model import OrchConversationTable
+
+            async with session_scope() as session:
+                stmt = (
+                    select(OrchConversationTable)
+                    .where(OrchConversationTable.session_id == str(session_id))
+                    .where(OrchConversationTable.error == False)  # noqa: E712
+                    .order_by(col(OrchConversationTable.timestamp).desc())
+                    .limit(limit)
+                )
+                results = await session.exec(stmt)
+                rows = list(results.all())
+                if rows:
+                    logger.info(f"[STM] Found {len(rows)} messages in orch_conversation for session={session_id}")
+                    return [await Message.create(**r.model_dump()) for r in rows]
+        except Exception as e:
+            logger.debug(f"[STM] orch_conversation fetch failed: {e}")
+        return []
+
+    async def _fetch_prod_messages(self, session_id: str, limit: int) -> list[Message]:
+        """Fetch messages from conversation_prod table (for PROD deployed agents)."""
+        try:
+            from sqlmodel import col, select
+            from agentcore.services.deps import session_scope
+            from agentcore.services.database.models.conversation_prod.model import ConversationProdTable
+
+            async with session_scope() as session:
+                stmt = (
+                    select(ConversationProdTable)
+                    .where(ConversationProdTable.session_id == str(session_id))
+                    .where(ConversationProdTable.error == False)  # noqa: E712
+                    .order_by(col(ConversationProdTable.timestamp).desc())
+                    .limit(limit)
+                )
+                results = await session.exec(stmt)
+                rows = list(results.all())
+                if rows:
+                    logger.info(f"[STM] Found {len(rows)} messages in conversation_prod for session={session_id}")
+                    return [await Message.create(**r.model_dump()) for r in rows]
+        except Exception as e:
+            logger.debug(f"[STM] conversation_prod fetch failed: {e}")
+        return []
+
+    async def _fetch_uat_messages(self, session_id: str, limit: int) -> list[Message]:
+        """Fetch messages from conversation_uat table (for UAT deployed agents)."""
+        try:
+            from sqlmodel import col, select
+            from agentcore.services.deps import session_scope
+            from agentcore.services.database.models.conversation_uat.model import ConversationUATTable
+
+            async with session_scope() as session:
+                stmt = (
+                    select(ConversationUATTable)
+                    .where(ConversationUATTable.session_id == str(session_id))
+                    .where(ConversationUATTable.error == False)  # noqa: E712
+                    .order_by(col(ConversationUATTable.timestamp).desc())
+                    .limit(limit)
+                )
+                results = await session.exec(stmt)
+                rows = list(results.all())
+                if rows:
+                    logger.info(f"[STM] Found {len(rows)} messages in conversation_uat for session={session_id}")
+                    return [await Message.create(**r.model_dump()) for r in rows]
+        except Exception as e:
+            logger.debug(f"[STM] conversation_uat fetch failed: {e}")
+        return []
+
     async def store_message(self) -> Message:
         message = Message(text=self.message) if isinstance(self.message, str) else self.message
 
@@ -418,7 +492,8 @@ class MemoryNode(Node):
                 user_message.sender_name = "User"
                 user_message.session_id = session_id
 
-            if session_id and user_message.sender and user_message.sender_name:
+            _skip_store = getattr(self.graph, "orch_skip_node_persist", False) if hasattr(self, "graph") else False
+            if session_id and user_message.sender and user_message.sender_name and not _skip_store:
                 if self.memory:
                     self.memory.session_id = session_id
                     lc_message = user_message.to_lc_message()
@@ -438,46 +513,72 @@ class MemoryNode(Node):
                 history_messages = history_messages[-n_messages:]
                 history_source = "external_memory"
             else:
-                # Try Redis cache first
-                cached = await self._get_stm_cache(session_id, n_messages)
-                if cached is not None:
-                    history_messages = [
-                        Message(text=m["text"], sender=m.get("sender", ""), sender_name=m.get("sender_name", ""))
-                        for m in cached
-                    ]
-                    # Check if the current user message is already in the cached history
-                    # (ChatInput stored it in DB but cache may not have it yet)
-                    if current_text and already_stored:
-                        last_cached_text = cached[-1]["text"] if cached else ""
-                        if last_cached_text != current_text:
-                            # Append current user message to cached history
-                            user_msg = Message(
-                                text=current_text,
-                                sender=current_input.sender if isinstance(current_input, Message) else MESSAGE_SENDER_USER,
-                                sender_name=current_input.sender_name if isinstance(current_input, Message) else "User",
-                            )
-                            history_messages.append(user_msg)
-                            # Trim to n_messages limit
-                            if len(history_messages) > n_messages:
-                                history_messages = history_messages[-n_messages:]
-                            # Update cache with appended user message
-                            await self._set_stm_cache(session_id, n_messages, history_messages)
-                            logger.info(f"[STM] Appended current user message to cache for session={session_id}")
-                    history_source = "redis_cache"
-                else:
-                    # Cache miss — fetch from DB
-                    history_messages = await aget_messages(
-                        session_id=session_id,
-                        order="DESC",
-                        limit=n_messages,
-                    )
-                    # Reverse to chronological order (oldest first)
-                    history_messages = list(reversed(history_messages))
-                    history_source = "database"
+                # Detect orchestrator mode from graph flags
+                is_orch = (
+                    hasattr(self, "graph")
+                    and getattr(self.graph, "skip_dev_logging", False)
+                    and getattr(self.graph, "orch_deployment_id", None)
+                )
 
-                    # Cache the fresh DB result in Redis for rapid re-fetches
+                if is_orch:
+                    orch_dep_id = getattr(self.graph, "orch_deployment_id", "?")
+                    logger.info(f"[STM] Orchestrator mode detected (deployment_id={orch_dep_id}), reading from orch_conversation")
+                    history_messages = await self._fetch_orch_messages(session_id, n_messages)
+                    history_messages = list(reversed(history_messages))
+                    history_source = "orch_database"
+                else:
+                    # Non-orchestrator: check PROD → UAT → Dev (priority order)
+                    # PROD/UAT always read from DB; playground uses Redis cache
+                    history_messages = await self._fetch_prod_messages(session_id, n_messages)
                     if history_messages:
-                        await self._set_stm_cache(session_id, n_messages, history_messages)
+                        history_source = "prod_database"
+                        history_messages = list(reversed(history_messages))
+                    else:
+                        history_messages = await self._fetch_uat_messages(session_id, n_messages)
+                        if history_messages:
+                            history_source = "uat_database"
+                            history_messages = list(reversed(history_messages))
+                        else:
+                            # Playground — try Redis cache first, fall back to DB
+                            cached = await self._get_stm_cache(session_id, n_messages)
+                            if cached is not None:
+                                history_messages = [
+                                    Message(text=m["text"], sender=m.get("sender", ""), sender_name=m.get("sender_name", ""))
+                                    for m in cached
+                                ]
+                                # Check if the current user message is already in the cached history
+                                # (ChatInput stored it in DB but cache may not have it yet)
+                                if current_text and already_stored:
+                                    last_cached_text = cached[-1]["text"] if cached else ""
+                                    if last_cached_text != current_text:
+                                        # Append current user message to cached history
+                                        user_msg = Message(
+                                            text=current_text,
+                                            sender=current_input.sender if isinstance(current_input, Message) else MESSAGE_SENDER_USER,
+                                            sender_name=current_input.sender_name if isinstance(current_input, Message) else "User",
+                                        )
+                                        history_messages.append(user_msg)
+                                        # Trim to n_messages limit
+                                        if len(history_messages) > n_messages:
+                                            history_messages = history_messages[-n_messages:]
+                                        # Update cache with appended user message
+                                        await self._set_stm_cache(session_id, n_messages, history_messages)
+                                        logger.info(f"[STM] Appended current user message to cache for session={session_id}")
+                                history_source = "redis_cache"
+                            else:
+                                # Cache miss — fetch from DB
+                                history_messages = await aget_messages(
+                                    session_id=session_id,
+                                    order="DESC",
+                                    limit=n_messages,
+                                )
+                                # Reverse to chronological order (oldest first)
+                                history_messages = list(reversed(history_messages))
+                                history_source = "database"
+
+                                # Cache the fresh DB result in Redis for rapid re-fetches
+                                if history_messages:
+                                    await self._set_stm_cache(session_id, n_messages, history_messages)
 
         logger.info(
             f"[STM] Fetched {len(history_messages)} history messages | "
