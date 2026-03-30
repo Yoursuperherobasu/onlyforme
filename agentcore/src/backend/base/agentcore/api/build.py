@@ -24,7 +24,8 @@ from agentcore.events.event_manager import EventManager
 from agentcore.graph_langgraph import LangGraphAdapter
 from agentcore.schema.message import ErrorMessage
 from agentcore.services.database.models.agent.model import Agent
-from agentcore.services.deps import get_chat_service, get_telemetry_service, session_scope
+from agentcore.services.deps import get_chat_service, get_settings_service, get_telemetry_service, session_scope
+from agentcore.services.job_queue.redis_build_events import RedisBuildEventStore, get_redis_build_event_store
 from agentcore.services.job_queue.service import JobQueueNotFoundError, JobQueueService
 from agentcore.services.telemetry.schema import PlaygroundPayload
 
@@ -137,6 +138,64 @@ async def _ensure_hitl_record(
         logger.error(f"[HITL] Could not ensure HITLRequest record: {err}")
 
 
+def _get_build_event_store() -> RedisBuildEventStore | None:
+    try:
+        settings_service = get_settings_service()
+        return get_redis_build_event_store(settings_service)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug(f"Redis build-event store unavailable: {exc}")
+        return None
+
+
+async def _create_redis_events_response(
+    *,
+    job_id: str,
+    event_store: RedisBuildEventStore,
+) -> DisconnectHandlerStreamingResponse:
+    async def consume_and_yield() -> AsyncIterator[str]:
+        cursor = 0
+        while True:
+            try:
+                events = await event_store.get_events_from(job_id, cursor)
+                for payload in events:
+                    yield payload
+                cursor += len(events)
+
+                status = await event_store.get_status(job_id)
+                if status in RedisBuildEventStore.TERMINAL_STATUSES:
+                    total = await event_store.get_events_count(job_id)
+                    if cursor >= total:
+                        break
+                elif not events and status is None and not await event_store.job_exists(job_id):
+                    break
+
+                await asyncio.sleep(0.05)
+            except Exception as exc:  # noqa: BLE001
+                logger.exception(f"Error consuming Redis build events for job {job_id}: {exc}")
+                break
+
+    return DisconnectHandlerStreamingResponse(
+        consume_and_yield(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+        on_disconnect=lambda: None,
+    )
+
+
+async def _get_redis_polling_response(
+    *,
+    job_id: str,
+    event_store: RedisBuildEventStore,
+) -> Response:
+    events = await event_store.claim_poll_events(job_id)
+    content = "\n".join(event.strip() for event in events if event is not None)
+    return Response(content=content, media_type="application/x-ndjson")
+
+
 async def start_agent_build(
     *,
     agent_id: uuid.UUID,
@@ -171,6 +230,15 @@ async def start_agent_build(
         # first-message blank-chat issue caused by the fresh TCP connection
         # delay (~100-400ms) on new browser sessions.
         event_manager._consumer_ready = asyncio.Event()
+
+        # Mirror build events to Redis so /events can be served from any pod.
+        redis_event_store = _get_build_event_store()
+        if redis_event_store is not None:
+            try:
+                await redis_event_store.init_job(job_id)
+                event_manager.configure_redis_mirror(redis_store=redis_event_store, job_id=job_id)
+            except Exception as redis_exc:  # noqa: BLE001
+                logger.warning(f"Failed to initialize Redis build-event mirror for {job_id}: {redis_exc}")
 
         # --- RabbitMQ path (Option A) ---
         from agentcore.services.deps import get_rabbitmq_service
@@ -218,6 +286,11 @@ async def start_agent_build(
             )
             queue_service.start_job(job_id, task_coro)
     except Exception as e:
+        if "redis_event_store" in locals() and redis_event_store is not None:
+            try:
+                await redis_event_store.mark_status(job_id, status="failed", error=str(e))
+            except Exception as redis_exc:  # noqa: BLE001
+                logger.debug(f"Could not mark Redis build job as failed for {job_id}: {redis_exc}")
         logger.exception("Failed to create queue and start task")
         raise HTTPException(status_code=500, detail=str(e)) from e
     return job_id
@@ -292,6 +365,17 @@ async def get_agent_events_response(
             return Response(content="", media_type="application/x-ndjson")  # Return empty response instead of error
 
     except JobQueueNotFoundError as exc:
+        # Fallback for multi-pod deployments: stream from Redis mirror if present.
+        event_store = _get_build_event_store()
+        if event_store is not None:
+            try:
+                if await event_store.job_exists(job_id):
+                    if event_delivery in (EventDeliveryType.STREAMING, EventDeliveryType.DIRECT):
+                        return await _create_redis_events_response(job_id=job_id, event_store=event_store)
+                    return await _get_redis_polling_response(job_id=job_id, event_store=event_store)
+            except Exception as redis_exc:  # noqa: BLE001
+                logger.warning(f"Redis fallback failed for job {job_id}: {redis_exc}")
+
         logger.error(f"Job not found: {job_id}. Error: {exc!s}")
         raise HTTPException(status_code=404, detail=f"Job not found: {exc!s}") from exc
     except Exception as exc:
@@ -508,6 +592,7 @@ async def generate_agent_events(
             exception=e,
         )
         event_manager.on_error(data=error_message.data)
+        await event_manager.finalize_redis_mirror(status="failed", error=str(e))
         raise
 
     event_manager.on_vertices_sorted(data={"ids": ids, "to_run": vertices_to_run})
@@ -522,6 +607,7 @@ async def generate_agent_events(
         logger.error(msg)
         error_message = ErrorMessage(agent_id=agent_id, exception=ValueError(msg))
         event_manager.on_error(data=error_message.data)
+        await event_manager.finalize_redis_mirror(status="failed", error=msg)
         raise ValueError(msg)
 
     logger.info("Executing graph via compiled astream")
@@ -612,6 +698,7 @@ async def generate_agent_events(
         adjust_active_sessions(-1)
         record_session_duration((time.perf_counter() - _session_start) * 1000)
         background_tasks.add_task(graph.end_all_traces_in_context)
+        await event_manager.finalize_redis_mirror(status="cancelled")
         raise
     # NOTE: GraphInterrupt is NOT caught here.
     # When interrupt() is called inside a LangGraph node, LangGraph catches the
@@ -632,6 +719,7 @@ async def generate_agent_events(
             session_id=graph.session_id if hasattr(graph, "session_id") else None,
         )
         event_manager.on_error(data=error_message.data)
+        await event_manager.finalize_redis_mirror(status="failed", error=str(e))
         raise
 
     adjust_active_sessions(-1)
@@ -641,6 +729,7 @@ async def generate_agent_events(
     event_manager.on_end(data={})
     await graph.end_all_traces()
     await event_manager.queue.put((None, None, time.time()))
+    await event_manager.finalize_redis_mirror(status="completed")
 
 
 async def cancel_agent_build(
@@ -662,6 +751,15 @@ async def cancel_agent_build(
         ValueError: If the job doesn't exist
         asyncio.CancelledError: If the task cancellation failed
     """
+    async def _mark_cancelled_in_redis() -> None:
+        event_store = _get_build_event_store()
+        if event_store is None:
+            return
+        try:
+            await event_store.mark_status(job_id, status="cancelled")
+        except Exception as exc:  # noqa: BLE001
+            logger.debug(f"Could not mark Redis build job as cancelled for {job_id}: {exc}")
+
     # Get the event task and event manager for the job
     _, _, event_task, _ = queue_service.get_queue_data(job_id)
 
@@ -683,6 +781,7 @@ async def cancel_agent_build(
         # Check if the task was actually cancelled
         if task_before_cleanup.cancelled():
             logger.info(f"Successfully cancelled agent build for job_id {job_id} (CancelledError caught)")
+            await _mark_cancelled_in_redis()
             return True
         # If the task wasn't cancelled, re-raise the exception
         logger.error(f"CancelledError caught but task for job_id {job_id} was not cancelled")
@@ -692,6 +791,7 @@ async def cancel_agent_build(
     # The task should be done (cancelled) after cleanup
     if task_before_cleanup.cancelled():
         logger.info(f"Successfully cancelled agent build for job_id {job_id}")
+        await _mark_cancelled_in_redis()
         return True
 
     # If we get here, the task wasn't cancelled properly

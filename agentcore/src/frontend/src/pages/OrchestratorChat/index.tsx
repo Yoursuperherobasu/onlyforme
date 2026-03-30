@@ -150,6 +150,16 @@ function mapApiMessages(apiMessages: OrchMessageResponse[]): Message[] {
   });
 }
 
+function hitlStatusLabel(value: string): string {
+  const normalized = (value || "").toLowerCase();
+  if (normalized.includes("reject")) return "Rejected";
+  if (normalized.includes("approve")) return "Approved";
+  if (normalized.includes("edit")) return "Edited";
+  if (normalized.includes("cancel")) return "Cancelled";
+  if (normalized.includes("timeout")) return "Timed out";
+  return "Resolved";
+}
+
 function groupSessionsByDate(
   sessions: OrchSessionSummary[],
   getLabel: (key: string) => string,
@@ -204,6 +214,7 @@ export default function AgentOrchestrator() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const modelPickerRef = useRef<HTMLDivElement>(null);
+  const hitlSessionRef = useRef<string | null>(null);
 
   /* ------------------ FILE UPLOAD ------------------ */
 
@@ -288,38 +299,29 @@ export default function AgentOrchestrator() {
   // Load messages when switching to an existing session
   const { data: apiSessionMessages, refetch: refetchMessages } = useGetOrchMessages(
     { session_id: effectiveSessionId || "" },
-    { enabled: !!effectiveSessionId, refetchOnWindowFocus: true, staleTime: 0, refetchInterval: 5000 },
+    {
+      enabled: !!effectiveSessionId,
+      refetchOnWindowFocus: true,
+      staleTime: 0,
+      // Prevent background polling from clobbering the local streaming placeholder/tokens.
+      refetchInterval: isSending ? false : 5000,
+    },
   );
 
   useEffect(() => {
     if (apiSessionMessages && effectiveSessionId) {
+      // Keep local in-flight stream state intact for the active session.
+      if (isSending && effectiveSessionId === currentSessionId) {
+        return;
+      }
       const mapped = mapApiMessages(apiSessionMessages);
       setMessages(mapped);
       setCurrentSessionId(effectiveSessionId);
-      // Reset HITL state for the new session
-      setHitlDoneMap({});
-      setHitlLoadingId(null);
-
-      // Check if any HITL messages exist — verify they are still pending.
-      // If the request was resolved (via Approvals page or another session),
-      // mark them as done so buttons show as resolved.
-      const hitlMsgs = mapped.filter((m) => m.hitl && m.hitlThreadId);
-      if (hitlMsgs.length > 0) {
-        (async () => {
-          for (const hm of hitlMsgs) {
-            try {
-              await api.get(`${getURL("HITL")}/${hm.hitlThreadId}/state`);
-              // 200 = still pending, buttons stay active
-            } catch (err: any) {
-              const status = err?.response?.status;
-              // 404 = no pending request -> already resolved.
-              // 403 is expected for non-assignees on deployed HITL; keep pending UI.
-              if (status === 404) {
-                setHitlDoneMap((prev) => ({ ...prev, [hm.id]: "Resolved" }));
-              }
-            }
-          }
-        })();
+      // Reset HITL UI state only when switching sessions (not on every poll).
+      if (hitlSessionRef.current !== effectiveSessionId) {
+        setHitlDoneMap({});
+        setHitlLoadingId(null);
+        hitlSessionRef.current = effectiveSessionId;
       }
 
       // Sync selected model with the session's active agent
@@ -332,6 +334,75 @@ export default function AgentOrchestrator() {
       }
     }
   }, [apiSessionMessages, effectiveSessionId, apiSessions, agents]);
+
+  // Keep HITL status in sync when decisions happen on HITL Approvals page.
+  // This lets orchestrator chat hide the pending banner and show final status
+  // (Approved / Rejected / etc.) without requiring a full page reload.
+  useEffect(() => {
+    const hitlMsgs = messages.filter((m) => m.hitl && m.hitlThreadId);
+    if (hitlMsgs.length === 0) return;
+
+    let isMounted = true;
+    const syncStatuses = async () => {
+      try {
+        const res = await api.get(`${getURL("HITL")}/pending`, {
+          params: { status: "all" },
+        });
+        const rows: Array<{ thread_id?: string; status?: string; requested_at?: string }> = Array.isArray(res.data)
+          ? res.data
+          : [];
+
+        // Build per-thread request timelines (oldest -> newest).
+        const reqByThread = new Map<string, Array<{ status: string; requestedAt: number }>>();
+        for (const row of rows) {
+          if (!row?.thread_id || !row?.status) continue;
+          const list = reqByThread.get(row.thread_id) ?? [];
+          list.push({
+            status: row.status,
+            requestedAt: row.requested_at ? Date.parse(row.requested_at) : 0,
+          });
+          reqByThread.set(row.thread_id, list);
+        }
+        for (const list of reqByThread.values()) {
+          list.sort((a, b) => a.requestedAt - b.requestedAt);
+        }
+
+        // Build per-thread HITL message timelines in chat order.
+        const msgByThread = new Map<string, Message[]>();
+        for (const msg of hitlMsgs) {
+          const threadId = msg.hitlThreadId ?? "";
+          const list = msgByThread.get(threadId) ?? [];
+          list.push(msg);
+          msgByThread.set(threadId, list);
+        }
+
+        // Assign status to each HITL message by timeline index in the same thread.
+        const nextMap: Record<string, string> = {};
+        for (const [threadId, threadMsgs] of msgByThread.entries()) {
+          const threadReqs = reqByThread.get(threadId) ?? [];
+          for (let i = 0; i < threadMsgs.length; i++) {
+            const req = threadReqs[i];
+            if (!req) continue;
+            if (req.status.toLowerCase() !== "pending") {
+              nextMap[threadMsgs[i].id] = hitlStatusLabel(req.status);
+            }
+          }
+        }
+
+        if (!isMounted) return;
+        setHitlDoneMap(nextMap);
+      } catch {
+        // Best-effort status sync only; keep existing UI if polling fails.
+      }
+    };
+
+    syncStatuses();
+    const timer = window.setInterval(syncStatuses, 4000);
+    return () => {
+      isMounted = false;
+      window.clearInterval(timer);
+    };
+  }, [messages]);
 
   // Set default selected model when agents load
   useEffect(() => {
@@ -567,6 +638,8 @@ export default function AgentOrchestrator() {
     let rafHandle: number | null = null;
     let pendingContent: string | null = null;
     let hitlPauseReceived = false;
+    let receivedToken = false;
+    let latestAgentAddMessageText = "";
 
     // Flush the latest accumulated content to React state.
     // Called inside a rAF so we update at most once per frame (~60fps),
@@ -699,8 +772,19 @@ export default function AgentOrchestrator() {
                 );
               });
             }
+          } else if (eventType === "add_message" && (data?.text || data?.message) && !hitlPauseReceived) {
+            // Keep add_message text as a fallback, but don't immediately overwrite
+            // the thinking bubble. Some graphs emit user/input-node add_message
+            // events before AI tokens; rendering those here causes echo + no stream UX.
+            const sender = String(data?.sender || data?.sender_name || "").toLowerCase();
+            const isUserMessage = sender.includes("user");
+            const addMessageText = String(data.text || data.message || "");
+            if (!isUserMessage && addMessageText.trim()) {
+              latestAgentAddMessageText = addMessageText;
+            }
           } else if (eventType === "token" && data?.chunk) {
             // Progressive streaming — append each token chunk (throttled)
+            receivedToken = true;
             accumulated += data.chunk;
             updateAgentMsg(accumulated);
           } else if (eventType === "error") {
@@ -712,6 +796,10 @@ export default function AgentOrchestrator() {
             // message with agent_text — the action buttons must stay visible.
             if (data?.agent_text && !hitlPauseReceived) {
               updateAgentMsg(data.agent_text, true);
+            } else if (!hitlPauseReceived && !receivedToken && latestAgentAddMessageText.trim()) {
+              // Fallback for non-token flows where response text came only via
+              // add_message and end has no agent_text payload.
+              updateAgentMsg(latestAgentAddMessageText, true);
             }
             // Mark content blocks as fully finished
             if (!hitlPauseReceived) {
@@ -724,6 +812,11 @@ export default function AgentOrchestrator() {
               );
             }
             refetchSessions();
+            // Force a fast message sync for existing sessions so local streamed
+            // content is not replaced by stale polled data.
+            if (effectiveSessionId) {
+              refetchMessages();
+            }
             return false;
           }
           return true;
@@ -752,12 +845,19 @@ export default function AgentOrchestrator() {
             m.id === agentMsgId ? { ...m, content: finalContent } : m,
           ),
         );
+      } else if (!hitlPauseReceived && !receivedToken && latestAgentAddMessageText.trim()) {
+        // Defensive fallback if stream closes before we get a parsable end event.
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === agentMsgId ? { ...m, content: latestAgentAddMessageText } : m,
+          ),
+        );
       }
       setIsSending(false);
       setStreamingAgentName("");
       setStreamingMsgId(null);
     }
-  }, [canInteract, input, isSending, agents, selectedAgent, selectedModelId, currentSessionId, refetchSessions]);
+  }, [canInteract, input, isSending, agents, selectedAgent, selectedModelId, currentSessionId, effectiveSessionId, refetchSessions, refetchMessages]);
 
   /* ------------------ SESSION MANAGEMENT ------------------ */
 
@@ -994,7 +1094,12 @@ export default function AgentOrchestrator() {
                     !nextMsg.hitl &&
                     (!!nextMsg.content?.trim() || !!nextMsg.contentBlocks?.length),
                 );
-              const hitlResolved = !!hitlDoneMap[msg.id] || hasFollowupAgentReply;
+              const explicitHitlStatus = hitlDoneMap[msg.id];
+              const hitlResolved = msg.hitlIsDeployed
+                ? !!explicitHitlStatus
+                : (!!explicitHitlStatus || hasFollowupAgentReply);
+              const resolvedLabel = explicitHitlStatus || (!msg.hitlIsDeployed && hasFollowupAgentReply ? "Completed" : "");
+              const isRejectedResolution = resolvedLabel.toLowerCase().includes("reject");
               return (
                 <div key={msg.id} className="flex items-start gap-4 py-5">
                   {/* Avatar */}
@@ -1060,7 +1165,19 @@ export default function AgentOrchestrator() {
                         {msg.hitl && (
                           msg.hitlIsDeployed ? (
                             /* Deployed runs: approval goes to dept admin via HITL page */
-                            hitlResolved ? null : (
+                            hitlResolved ? (
+                              <div
+                                className={[
+                                  "mt-3 flex items-center gap-2 rounded-md border px-4 py-2.5 text-sm",
+                                  isRejectedResolution
+                                    ? "border-red-300 bg-red-50 text-red-700 dark:border-red-700 dark:bg-red-950/30 dark:text-red-300"
+                                    : "border-green-300 bg-green-50 text-green-700 dark:border-green-700 dark:bg-green-950/30 dark:text-green-300",
+                                ].join(" ")}
+                              >
+                                <span className="font-medium">Human review status:</span>
+                                <span>{resolvedLabel}</span>
+                              </div>
+                            ) : (
                               <div className="mt-3 flex items-center gap-2 rounded-md border border-amber-300 bg-amber-50 px-4 py-2.5 text-sm dark:border-amber-700 dark:bg-amber-950/30">
                                 <Clock size={16} className="shrink-0 text-amber-600 dark:text-amber-400" />
                                 <span className="text-amber-700 dark:text-amber-300">

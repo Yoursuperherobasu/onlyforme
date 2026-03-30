@@ -615,6 +615,30 @@ async def _persist_hitl_request(
                 "user_id": str(user_id_raw) if user_id_raw else None,
                 "session_id": getattr(graph, "orch_session_id", None),
             }
+        deploy_meta: dict[str, str] = {}
+        prod_deployment_id = getattr(graph, "prod_deployment_id", None)
+        uat_deployment_id = getattr(graph, "uat_deployment_id", None)
+        if prod_deployment_id:
+            deploy_meta["env"] = "2"
+            deploy_meta["deployment_id"] = str(prod_deployment_id)
+            prod_ver = getattr(graph, "prod_version_number", None)
+            if prod_ver is not None:
+                deploy_meta["version"] = f"v{prod_ver}"
+        elif uat_deployment_id:
+            deploy_meta["env"] = "1"
+            deploy_meta["deployment_id"] = str(uat_deployment_id)
+            uat_ver = getattr(graph, "uat_version_number", None)
+            if uat_ver is not None:
+                deploy_meta["version"] = f"v{uat_ver}"
+        elif not (
+            orch_deployment_id
+            or getattr(graph, "prod_deployment_id", None)
+            or getattr(graph, "uat_deployment_id", None)
+        ):
+            deploy_meta["env"] = "0"
+            deploy_meta["version"] = "v1"
+        if deploy_meta:
+            interrupt_value["_deploy_meta"] = deploy_meta
 
         # ── Determine if this is a published/deployed run ──
         # Any of the three deployment context fields being set means the agent

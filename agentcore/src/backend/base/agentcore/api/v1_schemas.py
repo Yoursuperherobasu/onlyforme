@@ -399,6 +399,10 @@ class SimplifiedAPIRequest(BaseModel):
     tweaks: Tweaks | None = Field(default=None, description="The tweaks")
     session_id: str | None = Field(default=None, description="The session id")
     files: list[str] | None = Field(default=None, description="List of file paths for uploaded files")
+    # Internal-only HITL resume payload (used by /api/run resume mode).
+    hitl_action: str | None = Field(default=None, description="HITL action name for resume mode")
+    hitl_feedback: str | None = Field(default=None, description="Optional HITL feedback for resume mode")
+    hitl_edited_value: str | None = Field(default=None, description="Optional edited value for resume mode")
 
 
 # (alias) type ReactFlowJsonObject<NodeData = any, EdgeData = any> = {
@@ -456,5 +460,4 @@ class CancelAgentResponse(BaseModel):
 
     success: bool
     message: str
-
 
