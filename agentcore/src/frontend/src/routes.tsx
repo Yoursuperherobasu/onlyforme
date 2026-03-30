@@ -52,7 +52,6 @@ import EvaluationPage from "./pages/EvaluationPage";
 import GuardrailsView from "./pages/GuardrailsCatalogue";
 import VectorDBView from "./pages/VectorDbPage";
 import ConnectorsCatalogueView from "./pages/ConnectorsCatalogue";
-import AutomationsPage from "./pages/AutomationsPage";
 import HITLApprovalsPage from "./pages/HITLApprovalsPage";
 import useAuthStore from "./stores/authStore";
 

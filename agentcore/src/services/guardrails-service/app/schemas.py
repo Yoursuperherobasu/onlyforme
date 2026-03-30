@@ -46,6 +46,13 @@ class ActiveGuardrailItem(BaseModel):
     id: str
     name: str
     runtime_ready: bool
+    # Tenancy fields — used by agentcore for RBAC filtering
+    visibility: str | None = None
+    org_id: str | None = None
+    dept_id: str | None = None
+    created_by: str | None = None
+    public_scope: str | None = None
+    public_dept_ids: list[str] | None = None
 
 
 class ActiveGuardrailsResponse(BaseModel):

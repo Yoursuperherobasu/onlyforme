@@ -241,10 +241,16 @@ async def get_guardrail_sync_status_via_service(
 # ---------------------------------------------------------------------------
 
 
-async def list_active_guardrails_via_service() -> list[dict[str, Any]]:
+async def list_active_guardrails_via_service(
+    user_id: str | None = None,
+) -> list[dict[str, Any]]:
     """Fetch the list of active NeMo guardrails from the microservice.
 
-    Each item has: id (str UUID), name (str), runtime_ready (bool).
+    Each item has: id (str UUID), name (str), runtime_ready (bool),
+    plus tenancy fields for RBAC filtering.
+
+    When *user_id* is provided, results are filtered by the user's
+    org/department memberships (same logic as the Guardrails Catalogue page).
     """
     url, api_key = _get_guardrails_service_settings()
     async with httpx.AsyncClient(timeout=30.0) as client:
@@ -254,7 +260,14 @@ async def list_active_guardrails_via_service() -> list[dict[str, Any]]:
         )
         resp.raise_for_status()
         data = resp.json()
-        return data.get("guardrails", [])
+        items = data.get("guardrails", [])
+
+    if user_id:
+        from agentcore.components.models._rbac_helpers import filter_guardrails_by_rbac
+
+        items = filter_guardrails_by_rbac(items, user_id)
+
+    return items
 
 
 # ---------------------------------------------------------------------------

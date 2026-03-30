@@ -111,6 +111,12 @@ async def list_active_guardrails(
                 id=str(g.id),
                 name=g.name,
                 runtime_ready=runtime_ready,
+                visibility=g.visibility,
+                org_id=str(g.org_id) if g.org_id else None,
+                dept_id=str(g.dept_id) if g.dept_id else None,
+                created_by=str(g.created_by) if g.created_by else None,
+                public_scope=g.public_scope,
+                public_dept_ids=g.public_dept_ids,
             )
         )
 

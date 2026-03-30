@@ -9,6 +9,7 @@ from agentcore.custom.custom_node.node import Node
 from agentcore.inputs.inputs import BoolInput, MessageTextInput, MultilineInput
 from agentcore.io import DropdownInput, Output
 from agentcore.schema.message import Message
+from agentcore.components.models._rbac_helpers import resolve_user_id
 from agentcore.services.guardrail_service_client import (
     apply_nemo_guardrail_via_service,
     list_active_guardrails_via_service,
@@ -25,10 +26,10 @@ def _run_async(coro):
         return asyncio.run(coro)
 
 
-def _fetch_active_guardrail_options() -> list[str]:
+def _fetch_active_guardrail_options(user_id: str | None = None) -> list[str]:
     async def _query() -> list[str]:
         try:
-            items = await list_active_guardrails_via_service()
+            items = await list_active_guardrails_via_service(user_id=user_id)
         except Exception:  # noqa: BLE001
             logger.exception("NeMo guardrail dropdown options query failed (service unavailable).")
             return []
@@ -134,7 +135,8 @@ class NemoGuardrailComponent(Node):
 
     def update_build_config(self, build_config: dict, field_value: str, field_name: str | None = None):  # noqa: ARG002
         if field_name in {"guardrail_id", None}:
-            options = _fetch_active_guardrail_options()
+            current_user_id = resolve_user_id(self)
+            options = _fetch_active_guardrail_options(user_id=current_user_id)
             build_config["guardrail_id"]["options"] = options
             current_value = build_config["guardrail_id"].get("value", "")
             if options and current_value not in options:

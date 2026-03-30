@@ -315,6 +315,64 @@ def can_access_server_dict(
 
 
 # ---------------------------------------------------------------------------
+# RBAC checks — guardrail dicts
+# ---------------------------------------------------------------------------
+
+
+def can_access_guardrail_dict(
+    d: dict,
+    role: str,
+    user_id_str: str,
+    username: str,
+    org_ids: set[UUID],
+    dept_ids: set[UUID],
+) -> bool:
+    """Check if user can access a guardrail dict based on RBAC rules.
+
+    Mirrors ``_can_access_guardrail()`` in ``api/guardrails_catalogue.py`` but
+    operates on plain dicts (from microservice JSON responses).
+    """
+    row_org_id = _parse_uuid(d.get("org_id"))
+    row_dept_id = _parse_uuid(d.get("dept_id"))
+    row_created_by = str(d.get("created_by") or "")
+    visibility = (d.get("visibility") or "private").strip().lower()
+    public_scope = d.get("public_scope")
+    public_dept_ids = set(d.get("public_dept_ids") or [])
+    dept_id_strs = {str(v) for v in dept_ids}
+
+    # Root user: only own guardrails without org/dept scope
+    if role == "root":
+        return (
+            row_created_by == user_id_str
+            and row_org_id is None
+            and row_dept_id is None
+        )
+
+    # Super-admin: all guardrails in their org
+    if role == "super_admin" and row_org_id and row_org_id in org_ids:
+        return True
+
+    # Private guardrails
+    if visibility == "private":
+        if role == "department_admin":
+            return bool(row_dept_id and str(row_dept_id) in dept_id_strs)
+        return row_created_by == user_id_str
+
+    # Public — organization scope
+    if public_scope == "organization":
+        return bool(row_org_id and row_org_id in org_ids)
+
+    # Public — department scope
+    if public_scope == "department":
+        dept_candidates = set(public_dept_ids)
+        if row_dept_id:
+            dept_candidates.add(str(row_dept_id))
+        return bool(dept_candidates.intersection(dept_id_strs))
+
+    return False
+
+
+# ---------------------------------------------------------------------------
 # Convenience wrappers
 # ---------------------------------------------------------------------------
 
@@ -343,6 +401,30 @@ def filter_models_by_rbac(models: list[dict], user_id_str: str | None) -> list[d
         m
         for m in models
         if can_access_model_dict(m, role, user_id_str, username, org_ids, dept_ids)
+    ]
+
+
+def filter_guardrails_by_rbac(guardrails: list[dict], user_id_str: str | None) -> list[dict]:
+    """Filter a list of guardrail dicts by RBAC rules for the given user.
+
+    Uses async DB query (via ``_run_async``) to fetch user memberships.
+    Suitable for ``update_build_config()`` (dropdown population).
+    """
+    if not user_id_str:
+        return guardrails
+
+    try:
+        role, username, org_ids, dept_ids = _run_async(
+            get_user_memberships_async(user_id_str)
+        )
+    except Exception as e:
+        logger.warning(f"Failed to get user memberships for guardrail RBAC filtering: {e}")
+        return guardrails
+
+    return [
+        g
+        for g in guardrails
+        if can_access_guardrail_dict(g, role, user_id_str, username, org_ids, dept_ids)
     ]
 
 
