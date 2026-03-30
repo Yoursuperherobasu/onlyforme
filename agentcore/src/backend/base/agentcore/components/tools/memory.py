@@ -544,7 +544,8 @@ class MemoryComponent(Node):
                 user_message.sender_name = "User"
                 user_message.session_id = session_id
 
-            if session_id and user_message.sender and user_message.sender_name:
+            _skip_store = getattr(self.graph, "orch_skip_node_persist", False) if hasattr(self, "graph") else False
+            if session_id and user_message.sender and user_message.sender_name and not _skip_store:
                 if self.memory:
                     self.memory.session_id = session_id
                     lc_message = user_message.to_lc_message()
