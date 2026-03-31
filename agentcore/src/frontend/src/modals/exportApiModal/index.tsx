@@ -88,35 +88,46 @@ export default function ExportApiModal({
   --header 'Content-Type: application/json' \\
   --header 'x-api-key: ${displayKey}' \\
   --data '{
-    "input_value": "Hello!"
+    "input_value": "Hello!",
+    "session_id": "YOUR_SESSION_ID_HERE"
   }'`;
 
   const pythonCode = `import requests
+import uuid
 
 url = "${runUrl}"
 headers = {
     "Content-Type": "application/json",
     "x-api-key": "${displayKey}"
 }
+# Use one session_id per conversation and reuse it for follow-up calls.
+session_id = str(uuid.uuid4())
 payload = {
-    "input_value": "Hello!"
+    "input_value": "Hello!",
+    "session_id": session_id
 }
 
 response = requests.post(url, json=payload, headers=headers)
+print("session_id:", response.headers.get("X-Session-Id", session_id))
 print(response.json())`;
 
-  const jsCode = `const response = await fetch("${runUrl}", {
+  const jsCode = `// Use one session_id per conversation and reuse it for follow-up calls.
+const sessionId = crypto.randomUUID();
+
+const response = await fetch("${runUrl}", {
   method: "POST",
   headers: {
     "Content-Type": "application/json",
     "x-api-key": "${displayKey}"
   },
   body: JSON.stringify({
-    input_value: "Hello!"
+    input_value: "Hello!",
+    session_id: sessionId
   })
 });
 
 const data = await response.json();
+console.log("session_id:", response.headers.get("X-Session-Id") || sessionId);
 console.log(data);`;
 
   const tabs: { title: TabType; icon: string; language: string; code: string }[] = [
