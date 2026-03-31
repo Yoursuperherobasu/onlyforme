@@ -56,6 +56,8 @@ from agentcore.services.database.models.orch_conversation.crud import (
 from agentcore.services.database.models.orch_transaction.crud import (
     orch_delete_session_transactions,
 )
+from agentcore.services.deps import get_settings_service
+from agentcore.services.job_queue.redis_build_events import RedisBuildEventStore, get_redis_job_event_store
 router = APIRouter(prefix="/orchestrator", tags=["Orchestrator"])
 
 
@@ -278,6 +280,52 @@ def _is_interrupted_payload(payload: Any) -> bool:
     return False
 
 
+def _get_orchestrator_event_store() -> RedisBuildEventStore | None:
+    try:
+        settings_service = get_settings_service()
+        return get_redis_job_event_store(settings_service, namespace="orchestrator_events")
+    except Exception as exc:  # noqa: BLE001
+        logger.debug(f"Orchestrator Redis event store unavailable: {exc}")
+        return None
+
+
+async def _create_orchestrator_redis_response(
+    *,
+    job_id: str,
+    event_store: RedisBuildEventStore,
+) -> StreamingResponse:
+    async def consume_and_yield():
+        cursor = 0
+        while True:
+            try:
+                events = await event_store.get_events_from(job_id, cursor)
+                for payload in events:
+                    yield payload
+                cursor += len(events)
+
+                status = await event_store.get_status(job_id)
+                if status in RedisBuildEventStore.TERMINAL_STATUSES:
+                    total = await event_store.get_events_count(job_id)
+                    if cursor >= total:
+                        break
+                elif not events and status is None and not await event_store.job_exists(job_id):
+                    break
+
+                await asyncio.sleep(0.05)
+            except Exception as exc:  # noqa: BLE001
+                logger.exception(f"[ORCH-STREAM] Error streaming Redis events for job {job_id}: {exc}")
+                break
+
+    return StreamingResponse(
+        consume_and_yield(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
 async def _orch_call_run_api(
     *,
     agent_id: str,
@@ -301,10 +349,12 @@ async def _orch_call_run_api(
     For streaming, SSE token/add_message events are forwarded to event_manager;
     the function waits for the 'end' event to obtain the final text.
     """
-    base_url = (
-        os.environ.get("ORCHESTRATOR_BASE_URL")
-        or _request_base_url.get()
-    )
+    base_url = os.environ.get("ORCHESTRATOR_BASE_URL") or _request_base_url.get()
+    if not base_url:
+        raise RuntimeError(
+            "Orchestrator base URL is not configured. "
+            "Set ORCHESTRATOR_BASE_URL."
+        )
     logger.info(f"[ORCH] base_url resolved to: {base_url}")
     secret = os.environ.get("AGENTCORE_INTERNAL_SECRET", "")
     url = (
@@ -878,16 +928,12 @@ async def orch_chat_stream(
     await orch_add_message(user_msg, session)
 
     # -- 4. Set up streaming queue + event manager -----------------------
-    # Look up project info for observability metadata before entering background task
-    orch_project_id, orch_project_name = await _lookup_agent_project(session, agent_id)
-
     queue: asyncio.Queue = asyncio.Queue()
     event_manager = create_default_event_manager(queue)
 
     # Capture values needed by the background coroutine
     agent_id_str = str(agent_id)
     agent_name = deployment.agent_name
-    snapshot = deployment.agent_snapshot
     input_value = body.input_value
     chat_session_id = body.session_id
     user_id_str = str(current_user.id)
@@ -1035,63 +1081,45 @@ async def orch_chat_stream(
             queue.put_nowait((None, None, None))
 
     # -- 4. Start background task and return streaming response ----------
-    # --- RabbitMQ path (Option A) ---
     from agentcore.services.deps import get_rabbitmq_service
 
     rabbitmq_service = get_rabbitmq_service()
     if rabbitmq_service.is_enabled():
-        from agentcore.services.deps import get_queue_service
-
-        queue_service = get_queue_service()
-        job_id = str(uuid4())
-        # Register the queue so the RabbitMQ consumer can find it
-        queue_service._queues[job_id] = (queue, event_manager, None, None)
-
-        job_data = {
-            "job_id": job_id,
-            "agent_id": agent_id_str,
-            "agent_name": agent_name,
-            "snapshot": snapshot,
-            "input_value": input_value,
-            "session_id": chat_session_id,
-            "user_id": user_id_str,
-            "files": dep_files,
-            "deployment_id": str(dep_deployment_id),
-            "org_id": dep_org_id,
-            "dept_id": dep_dept_id,
-            "is_prod_deployment": dep_is_prod,
-            "project_id": orch_project_id,
-            "project_name": orch_project_name,
-            "env": "2" if dep_is_prod else "1",
-            "version": f"v{deployment.version_number}",
-        }
-        await rabbitmq_service.publish_orchestrator_job(job_data)
-        logger.info(f"Orchestrator job {job_id} published to RabbitMQ")
-
-        async def _consume_rmq():
-            while True:
+        event_store = _get_orchestrator_event_store()
+        if event_store is None:
+            logger.warning("[ORCH-STREAM] Redis event store unavailable; falling back to in-process execution")
+        else:
+            job_id = str(uuid4())
+            try:
+                await event_store.init_job(job_id)
+                job_data = {
+                    "job_id": job_id,
+                    "agent_id": agent_id_str,
+                    "agent_name": agent_name,
+                    "input_value": input_value,
+                    "session_id": chat_session_id,
+                    "user_id": user_id_str,
+                    "files": dep_files,
+                    "deployment_id": str(dep_deployment_id) if dep_deployment_id else None,
+                    "env": "2" if dep_is_prod else "1",
+                    "version": f"v{deployment.version_number}",
+                    "orch_deployment_id": str(dep_deployment_id) if dep_deployment_id else None,
+                    "orch_session_id": chat_session_id,
+                    "orch_org_id": dep_org_id,
+                    "orch_dept_id": dep_dept_id,
+                }
+                await rabbitmq_service.publish_orchestrator_job(job_data)
+                logger.info(f"[ORCH-STREAM] Published RabbitMQ job {job_id}; streaming from Redis backplane")
+                return await _create_orchestrator_redis_response(job_id=job_id, event_store=event_store)
+            except Exception as exc:
+                logger.exception(f"[ORCH-STREAM] Failed to start RabbitMQ+Redis stream job: {exc}")
                 try:
-                    _event_id, value, _ = await queue.get()
-                    if value is None:
-                        break
-                    yield value
+                    await event_store.mark_status(job_id, status="failed", error=str(exc))
                 except Exception:
-                    break
+                    pass
+                raise HTTPException(status_code=500, detail="Failed to start orchestrator stream") from exc
 
-        async def _on_disconnect_rmq():
-            await queue_service.cleanup_job(job_id)
-
-        return StreamingResponse(
-            _consume_rmq(),
-            media_type="text/event-stream",
-            headers={
-                "Cache-Control": "no-cache",
-                "X-Accel-Buffering": "no",
-            },
-            background=_on_disconnect_rmq,
-        )
-
-    # --- Direct path (no RabbitMQ) ---
+    # --- Direct fallback path ---
     run_task = asyncio.create_task(_run_and_persist())
 
     async def _consume():
