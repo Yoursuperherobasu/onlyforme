@@ -424,6 +424,9 @@ async def simple_run_agent(
         task_result: list[RunOutputs] = []
         user_id = api_key_user.id if api_key_user else (orch_user_id or None)
         agent_id_str = str(agent.id)
+        # Keep session IDs unique for API-triggered runs when caller omits session_id.
+        # This avoids defaulting to agent_id and collapsing distinct conversations.
+        effective_session_id = input_request.session_id or str(uuid.uuid4())
         if agent.data is None:
             msg = f"agent {agent_id_str} has no data"
             raise ValueError(msg)
@@ -436,7 +439,7 @@ async def simple_run_agent(
             user_id=str(user_id) if user_id else None,
             agent_name=agent.name,
             chat_service=get_chat_service(),
-            session_id=input_request.session_id,
+            session_id=effective_session_id,
         )
 
         # Set environment context so downstream components (Memory, LTM) know the env.
@@ -475,8 +478,8 @@ async def simple_run_agent(
                 _orch_dep_id = str(uat_deployment.id)
             if _orch_dep_id:
                 graph.orch_deployment_id = _orch_dep_id
-            if input_request.session_id:
-                graph.orch_session_id = input_request.session_id
+            if effective_session_id:
+                graph.orch_session_id = effective_session_id
             if orch_user_id:
                 graph.user_id = orch_user_id
 
@@ -518,7 +521,7 @@ async def simple_run_agent(
         task_result, session_id = await run_graph_internal(
             graph=graph,
             agent_id=agent_id_str,
-            session_id=input_request.session_id,
+            session_id=effective_session_id,
             inputs=inputs,
             outputs=outputs,
             stream=stream,
@@ -721,6 +724,9 @@ async def simplified_run_agent(
     """
     telemetry_service = get_telemetry_service()
     input_request = input_request if input_request is not None else SimplifiedAPIRequest()
+    if not input_request.session_id:
+        input_request.session_id = str(uuid.uuid4())
+    response.headers["X-Session-Id"] = input_request.session_id
 
     # --- If env vars are set, use them; otherwise keep the values from the API request ---
     env_agent = os.environ.get("AGENTCORE_AGENT_ID") or os.environ.get("AGENTCORE_AGENT_NAME")
@@ -882,6 +888,7 @@ async def simplified_run_agent(
                 consume_and_yield(asyncio_queue, asyncio_queue_client_consumed),
                 background=on_disconnect_rmq,
                 media_type="text/event-stream",
+                headers={"X-Session-Id": input_request.session_id},
             )
 
         # --- Direct path (no RabbitMQ) ---
@@ -913,6 +920,7 @@ async def simplified_run_agent(
             consume_and_yield(asyncio_queue, asyncio_queue_client_consumed),
             background=on_disconnect,
             media_type="text/event-stream",
+            headers={"X-Session-Id": input_request.session_id},
         )
 
     # --- RabbitMQ path for non-streaming ---
