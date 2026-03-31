@@ -43,7 +43,7 @@ async def retrieve_from_pinecone(query: str, session_id: str, top_k: int = 5, en
         if not query_embedding:
             return []
 
-        # Namespace by session + environment — each session is fully isolated
+        # Namespace by session_id — data isolation is per session
         namespace = f"{session_id}"
 
         logger.info(f"[LTM] Pinecone query: namespace={namespace}, top_k={top_k}")
@@ -84,7 +84,7 @@ async def retrieve_from_neo4j(query: str, session_id: str, top_k: int = 5, env: 
         logger.debug("[LTM] LTM_NEO4J_URI not configured, skipping Neo4j retrieval")
         return []
 
-    # Namespace by session + environment
+    # Namespace by session_id — data isolation is per session
     graph_kb_id = f"{settings.ltm_neo4j_graph_kb_id}_{session_id}"
 
     try:
@@ -202,8 +202,8 @@ async def _get_orch_sessions(user_id: str, agent_id: str) -> list[str]:
         return []
 
 
-async def _get_uat_api_sessions(deployment_id: str) -> list[str]:
-    """Get all distinct session_ids for a UAT deployment from conversation_uat.
+async def _get_uat_api_sessions(agent_id: str) -> list[str]:
+    """Get all distinct session_ids for an agent from conversation_uat.
 
     Used for cross-session LTM when a UAT agent is called via direct API.
     """
@@ -218,22 +218,22 @@ async def _get_uat_api_sessions(deployment_id: str) -> list[str]:
         async with session_scope() as session:
             stmt = (
                 select(ConversationUATTable.session_id)
-                .where(ConversationUATTable.deployment_id == UUID(deployment_id))
+                .where(ConversationUATTable.agent_id == UUID(agent_id))
                 .group_by(ConversationUATTable.session_id)
                 .order_by(func.max(ConversationUATTable.timestamp).desc())
                 .limit(50)
             )
             results = await session.exec(stmt)
             sessions = [r for r in results.all()]
-            logger.info(f"[LTM] Found {len(sessions)} UAT API sessions for deployment={deployment_id}")
+            logger.info(f"[LTM] Found {len(sessions)} UAT API sessions for agent={agent_id}")
             return sessions
     except Exception as e:
         logger.error(f"[LTM] Failed to get UAT API sessions: {e}")
         return []
 
 
-async def _get_prod_api_sessions(deployment_id: str) -> list[str]:
-    """Get all distinct session_ids for a PROD deployment from conversation_prod.
+async def _get_prod_api_sessions(agent_id: str) -> list[str]:
+    """Get all distinct session_ids for an agent from conversation_prod.
 
     Used for cross-session LTM when a PROD agent is called via direct API.
     """
@@ -248,14 +248,14 @@ async def _get_prod_api_sessions(deployment_id: str) -> list[str]:
         async with session_scope() as session:
             stmt = (
                 select(ConversationProdTable.session_id)
-                .where(ConversationProdTable.deployment_id == UUID(deployment_id))
+                .where(ConversationProdTable.agent_id == UUID(agent_id))
                 .group_by(ConversationProdTable.session_id)
                 .order_by(func.max(ConversationProdTable.timestamp).desc())
                 .limit(50)
             )
             results = await session.exec(stmt)
             sessions = [r for r in results.all()]
-            logger.info(f"[LTM] Found {len(sessions)} PROD API sessions for deployment={deployment_id}")
+            logger.info(f"[LTM] Found {len(sessions)} PROD API sessions for agent={agent_id}")
             return sessions
     except Exception as e:
         logger.error(f"[LTM] Failed to get PROD API sessions: {e}")
@@ -353,51 +353,6 @@ async def retrieve_cross_session(
     return result
 
 
-async def _detect_environment(session_id: str) -> str:
-    """Detect which environment has conversations for this session.
-
-    Checks orch_conversation first (deployed agents), then dev.
-    For orch, resolves PROD vs UAT via deployment_id lookup.
-    """
-    from sqlmodel import select
-    from agentcore.services.deps import session_scope
-
-    # 1. Check orch_conversation (deployed agents)
-    try:
-        from agentcore.services.database.models.orch_conversation.model import OrchConversationTable
-
-        async with session_scope() as session:
-            stmt = (
-                select(OrchConversationTable.deployment_id)
-                .where(OrchConversationTable.session_id == session_id)
-                .where(OrchConversationTable.deployment_id.isnot(None))
-                .limit(1)
-            )
-            result = await session.exec(stmt)
-            deployment_id = result.first()
-
-            if deployment_id:
-                try:
-                    from agentcore.services.database.models.agent_deployment_prod.model import AgentDeploymentProd
-                    prod = await session.get(AgentDeploymentProd, deployment_id)
-                    if prod:
-                        return "PROD"
-                except Exception:
-                    pass
-                try:
-                    from agentcore.services.database.models.agent_deployment_uat.model import AgentDeploymentUAT
-                    uat = await session.get(AgentDeploymentUAT, deployment_id)
-                    if uat:
-                        return "UAT"
-                except Exception:
-                    pass
-                return "Orchestrator"
-    except Exception:
-        pass
-
-    return "Dev"
-
-
 async def retrieve(
     query: str,
     session_id: str,
@@ -431,9 +386,6 @@ async def retrieve(
         pinecone_top_k = top_k
         neo4j_top_k = top_k
 
-    # Use provided env or detect from conversation tables
-    if not env:
-        env = await _detect_environment(session_id)
     logger.info(f"[LTM] Retrieval environment={env} for session={session_id}")
 
     parts = []

@@ -5,7 +5,7 @@ from loguru import logger
 
 from agentcore.custom.custom_node.node import Node
 from agentcore.helpers.data import data_to_text
-from agentcore.inputs.inputs import BoolInput, DropdownInput, HandleInput, IntInput, MessageTextInput, MultilineInput
+from agentcore.inputs.inputs import BoolInput, DropdownInput, HandleInput, IntInput, MessageTextInput, MultilineInput, TabInput
 from agentcore.memory import aget_messages, astore_message
 from agentcore.schema.data import Data
 from agentcore.schema.dataframe import DataFrame
@@ -15,26 +15,23 @@ from agentcore.template.field.base import Output
 from agentcore.utils.component_utils import set_current_fields, set_field_display
 from agentcore.utils.constants import MESSAGE_SENDER_AI, MESSAGE_SENDER_NAME_AI, MESSAGE_SENDER_USER
 
-# STM Redis cache settings
+# STM Redis cache - used for playground mode only (orch/PROD/UAT always read from DB)
 STM_CACHE_PREFIX = "stm:history:"
-# LTM Redis cache settings
-LTM_CACHE_PREFIX = "ltm:context:"
 
 
-class MemoryNode(Node):
-    display_name = "Message History"
-    description = "Stores or retrieves stored chat messages from agentCore tables or an external memory."
-    icon = "message-square-more"
+class MemoryComponent(Node):
+    display_name = "Memory"
+    description = "Stores or retrieves stored chat messages"
     name = "Memory"
     default_keys = ["mode", "memory"]
     mode_config = {
-        "Store": ["message", "sender", "sender_name", "session_id"],
-        "Retrieve": ["order", "template", "n_messages"],
-        "Short Term Memory": ["input_value", "n_messages", "session_id", "enable_ltm", "ltm_retrieval_mode", "template"],
+        "Store": ["message", "memory", "sender", "sender_name", "session_id"],
+        "Retrieve": ["n_messages", "order", "template", "memory"],
+        "Short Term Memory": ["input_value", "n_messages", "session_id", "enable_ltm", "ltm_share_across_sessions", "ltm_retrieval_mode", "ltm_max_summary_tokens", "ltm_max_context_chars", "ltm_pinecone_top_k", "ltm_neo4j_top_k", "template", "memory"],
     }
 
     inputs = [
-        DropdownInput(
+        TabInput(
             name="mode",
             display_name="Mode",
             options=["Retrieve", "Store", "Short Term Memory"],
@@ -62,7 +59,7 @@ class MemoryNode(Node):
             name="memory",
             display_name="External Memory",
             input_types=["Memory"],
-            info="Retrieve messages from an external memory. If empty, it will use the Agentcore tables.",
+            info="Retrieve messages from an external memory. If empty, it will use the AgentCore tables.",
             advanced=True,
             show=True,
         ),
@@ -71,6 +68,14 @@ class MemoryNode(Node):
             display_name="Enable Long Term Memory",
             value=False,
             info="When enabled, cross-session memory from Pinecone/Neo4j is also included alongside session history.",
+            show=False,
+            real_time_refresh=True,
+        ),
+        BoolInput(
+            name="ltm_share_across_sessions",
+            display_name="Share LTM Across Sessions",
+            value=False,
+            info="When enabled, LTM retrieval includes summaries from all of this user's past sessions (not just the current one). Storage remains per-session.",
             show=False,
         ),
         HandleInput(
@@ -141,6 +146,38 @@ class MemoryNode(Node):
             info="How to retrieve long-term memory: semantic search (Pinecone), graph search (Neo4j), or both.",
             show=False,
         ),
+        IntInput(
+            name="ltm_max_summary_tokens",
+            display_name="LTM Max Summary Tokens",
+            value=500,
+            info="Maximum tokens for LLM-generated conversation summaries stored in Pinecone.",
+            show=False,
+            advanced=True,
+        ),
+        IntInput(
+            name="ltm_max_context_chars",
+            display_name="LTM Max Context Characters",
+            value=2000,
+            info="Maximum characters of LTM context (summaries + facts) prepended to the user message.",
+            show=False,
+            advanced=True,
+        ),
+        IntInput(
+            name="ltm_pinecone_top_k",
+            display_name="LTM Pinecone Top K",
+            value=5,
+            info="Number of most relevant summaries to retrieve from Pinecone.",
+            show=False,
+            advanced=True,
+        ),
+        IntInput(
+            name="ltm_neo4j_top_k",
+            display_name="LTM Neo4j Top K",
+            value=10,
+            info="Maximum number of entities/relationships to retrieve from Neo4j knowledge graph.",
+            show=False,
+            advanced=True,
+        ),
         MultilineInput(
             name="template",
             display_name="Template",
@@ -153,45 +190,64 @@ class MemoryNode(Node):
     ]
 
     outputs = [
-        Output(display_name="Message", name="messages_text", method="retrieve_messages_as_text", dynamic=True),
-        Output(display_name="Dataframe", name="dataframe", method="retrieve_messages_dataframe", dynamic=True),
-        Output(display_name="Enriched Message", name="enriched_message", method="short_term_memory", dynamic=True),
+        Output(display_name="Message", name="messages_text", method="retrieve_messages_as_text", types=["Message"], selected="Message", dynamic=True),
+        Output(display_name="Dataframe", name="dataframe", method="retrieve_messages_dataframe", types=["DataFrame"], selected="DataFrame", dynamic=True),
+        Output(display_name="Enriched Message", name="enriched_message", method="short_term_memory", types=["Message"], selected="Message", dynamic=True),
     ]
 
     def update_outputs(self, frontend_node: dict, field_name: str, field_value: Any) -> dict:
-        """Dynamically show only the relevant output based on the selected output type."""
+        """Dynamically show only the relevant output based on the selected mode.
+
+        Always applies mode-based output filtering regardless of which field
+        triggered the update, so that backend refreshes (e.g. for n_messages)
+        don't reset the outputs to the class-level defaults.
+        """
+        # Determine the current mode value
         if field_name == "mode":
-            # Start with empty outputs
-            frontend_node["outputs"] = []
-            if field_value == "Store":
-                frontend_node["outputs"] = [
-                    Output(
-                        display_name="Stored Messages",
-                        name="stored_messages",
-                        method="store_message",
-                        hidden=True,
-                        dynamic=True,
-                    )
-                ]
-            if field_value == "Retrieve":
-                frontend_node["outputs"] = [
-                    Output(
-                        display_name="Messages", name="messages_text", method="retrieve_messages_as_text", dynamic=True
-                    ),
-                    Output(
-                        display_name="Dataframe", name="dataframe", method="retrieve_messages_dataframe", dynamic=True
-                    ),
-                ]
-            if field_value == "Short Term Memory":
-                frontend_node["outputs"] = [
-                    Output(
-                        display_name="Enriched Message",
-                        name="enriched_message",
-                        method="short_term_memory",
-                        dynamic=True,
-                    ),
-                ]
+            mode = field_value
+        else:
+            # Read mode from the frontend_node template
+            mode_field = frontend_node.get("template", {}).get("mode", {})
+            mode = mode_field.get("value", "Retrieve") if isinstance(mode_field, dict) else "Retrieve"
+
+        frontend_node["outputs"] = []
+        if mode == "Store":
+            frontend_node["outputs"] = [
+                Output(
+                    display_name="Stored Messages",
+                    name="stored_messages",
+                    method="store_message",
+                    types=["Message"],
+                    selected="Message",
+                    hidden=True,
+                    dynamic=True,
+                )
+            ]
+        elif mode == "Retrieve":
+            frontend_node["outputs"] = [
+                Output(
+                    display_name="Messages", name="messages_text", method="retrieve_messages_as_text",
+                    types=["Message"], selected="Message", dynamic=True,
+                ),
+                Output(
+                    display_name="Dataframe", name="dataframe", method="retrieve_messages_dataframe",
+                    types=["DataFrame"], selected="DataFrame", dynamic=True,
+                ),
+            ]
+        elif mode == "Short Term Memory":
+            frontend_node["outputs"] = [
+                Output(
+                    display_name="Enriched Message",
+                    name="enriched_message",
+                    method="short_term_memory",
+                    types=["Message"],
+                    selected="Message",
+                    dynamic=True,
+                ),
+            ]
         return frontend_node
+
+    # ── Redis STM cache (playground only) ──────────────────────────────
 
     def _get_redis_client_and_ttl(self):
         """Get the Redis client and STM TTL from settings. Returns (None, 300) if Redis is unavailable."""
@@ -208,7 +264,7 @@ class MemoryNode(Node):
         return None, 300
 
     async def _get_stm_cache(self, session_id: str, n_messages: int) -> list[dict] | None:
-        """Try to get cached STM history from Redis."""
+        """Try to get cached STM history from Redis (playground only)."""
         redis, _ = self._get_redis_client_and_ttl()
         if not redis:
             return None
@@ -224,54 +280,33 @@ class MemoryNode(Node):
         return None
 
     async def _set_stm_cache(self, session_id: str, n_messages: int, messages: list[Message]) -> None:
-        """Cache STM history in Redis with TTL from settings (STM_CACHE_TTL env var)."""
+        """Cache STM history in Redis (playground only)."""
         redis, ttl = self._get_redis_client_and_ttl()
         if not redis:
             return
         try:
             cache_key = f"{STM_CACHE_PREFIX}{session_id}:{n_messages}"
-            # Serialize messages to dicts for JSON storage
-            data = [{"text": m.text or "", "sender": m.sender or "", "sender_name": m.sender_name or ""} for m in messages]
+            data = []
+            for m in messages:
+                entry = {
+                    "text": m.text or "",
+                    "sender": m.sender or "",
+                    "sender_name": m.sender_name or "",
+                    "files": [str(f.path) if hasattr(f, "path") else str(f) for f in (m.files or [])],
+                }
+                if m.content_blocks:
+                    from agentcore.schema.content_block import ContentBlock
+                    entry["content_blocks"] = [
+                        cb.model_dump() if hasattr(cb, "model_dump") else cb
+                        for cb in m.content_blocks
+                    ]
+                data.append(entry)
             await redis.setex(cache_key, ttl, json.dumps(data))
             logger.debug(f"[STM] Cached {len(messages)} messages for session={session_id}, ttl={ttl}s")
         except Exception as e:
             logger.warning(f"[STM] Redis cache write failed: {e}")
 
-    async def _invalidate_stm_cache(self, session_id: str) -> None:
-        """Invalidate all STM cache entries for a session (any n_messages value)."""
-        redis, _ = self._get_redis_client_and_ttl()
-        if not redis:
-            return
-        try:
-            # Delete all keys matching stm:history:{session_id}:*
-            pattern = f"{STM_CACHE_PREFIX}{session_id}:*"
-            keys = []
-            async for key in redis.scan_iter(match=pattern, count=100):
-                keys.append(key)
-            if keys:
-                await redis.delete(*keys)
-                logger.debug(f"[STM] Invalidated {len(keys)} cache entries for session={session_id}")
-        except Exception as e:
-            logger.warning(f"[STM] Redis cache invalidation failed: {e}")
-
-    def _effective_session_id(self) -> str | None:
-        """Return the session_id to use: explicit input field → graph session → None."""
-        sid = self.session_id
-        if sid:
-            return sid
-        if hasattr(self, "_session_id") and self._session_id:
-            return self._session_id
-        if hasattr(self, "graph") and getattr(self.graph, "session_id", None):
-            return self.graph.session_id
-        return None
-
-    def _effective_agent_id(self) -> str | None:
-        """Return the agent_id to use: graph agent_id → None."""
-        if hasattr(self, "graph") and getattr(self.graph, "agent_id", None):
-            return str(self.graph.agent_id)
-        return None
-
-    # ── DB fetch helpers (orch / PROD / UAT) ──────────────────────────────
+    # ── DB fetch helpers ───────────────────────────────────────────────
 
     async def _fetch_orch_messages(self, session_id: str, limit: int) -> list[Message]:
         """Fetch messages from orch_conversation table (for deployed agents via orchestrator)."""
@@ -344,6 +379,23 @@ class MemoryNode(Node):
         except Exception as e:
             logger.debug(f"[STM] conversation_uat fetch failed: {e}")
         return []
+
+    def _effective_session_id(self) -> str | None:
+        """Return the session_id to use: explicit input field → graph session → None."""
+        sid = self.session_id
+        if sid:
+            return sid
+        if hasattr(self, "_session_id") and self._session_id:
+            return self._session_id
+        if hasattr(self, "graph") and getattr(self.graph, "session_id", None):
+            return self.graph.session_id
+        return None
+
+    def _effective_agent_id(self) -> str | None:
+        """Return the agent_id to use: graph agent_id → None."""
+        if hasattr(self, "graph") and getattr(self.graph, "agent_id", None):
+            return str(self.graph.agent_id)
+        return None
 
     async def store_message(self) -> Message:
         message = Message(text=self.message) if isinstance(self.message, str) else self.message
@@ -501,12 +553,12 @@ class MemoryNode(Node):
                 else:
                     await astore_message(user_message, agent_id=self.graph.agent_id if hasattr(self, "graph") else None)
 
-        # Fetch the top K latest messages — try Redis cache first, fall back to DB
+        # Fetch the top K latest messages — always from DB (no Redis cache)
         history_messages: list[Message] = []
         history_source = "none"
         if session_id:
             if self.memory:
-                # External memory — always fetch directly, no Redis caching
+                # External memory — fetch directly
                 self.memory.session_id = session_id
                 lc_messages = await self.memory.aget_messages()
                 history_messages = [Message.from_lc_message(m) for m in lc_messages] if lc_messages else []
@@ -533,10 +585,21 @@ class MemoryNode(Node):
                     # Dev/playground — try Redis cache first, fall back to DB
                     cached = await self._get_stm_cache(session_id, n_messages)
                     if cached is not None:
-                        history_messages = [
-                            Message(text=m["text"], sender=m.get("sender", ""), sender_name=m.get("sender_name", ""))
-                            for m in cached
-                        ]
+                        from agentcore.schema.content_block import ContentBlock
+                        history_messages = []
+                        for m in cached:
+                            msg = Message(
+                                text=m["text"],
+                                sender=m.get("sender", ""),
+                                sender_name=m.get("sender_name", ""),
+                                files=m.get("files") or [],
+                            )
+                            if m.get("content_blocks"):
+                                msg.content_blocks = [
+                                    ContentBlock(**cb) for cb in m["content_blocks"]
+                                ]
+                            history_messages.append(msg)
+                        # Append current user message if not in cache yet
                         if current_text and already_stored:
                             last_cached_text = cached[-1]["text"] if cached else ""
                             if last_cached_text != current_text:
@@ -544,6 +607,7 @@ class MemoryNode(Node):
                                     text=current_text,
                                     sender=current_input.sender if isinstance(current_input, Message) else MESSAGE_SENDER_USER,
                                     sender_name=current_input.sender_name if isinstance(current_input, Message) else "User",
+                                    files=current_input.files if isinstance(current_input, Message) else [],
                                 )
                                 history_messages.append(user_msg)
                                 if len(history_messages) > n_messages:
@@ -552,19 +616,24 @@ class MemoryNode(Node):
                                 logger.info(f"[STM] Appended current user message to cache for session={session_id}")
                         history_source = "redis_cache"
                     else:
-                        # Cache miss — fetch from DB
+                        # Cache miss — fetch from Dev DB
                         history_messages = await aget_messages(
                             session_id=session_id,
                             order="DESC",
                             limit=n_messages,
                         )
-                        # Reverse to chronological order (oldest first)
                         history_messages = list(reversed(history_messages))
-                        history_source = "database"
-
-                        # Cache the fresh DB result in Redis for rapid re-fetches
+                        # Cache for next request
                         if history_messages:
                             await self._set_stm_cache(session_id, n_messages, history_messages)
+                        history_source = "database"
+
+        # Log file info for each history message to trace image flow
+        for i, msg in enumerate(history_messages):
+            file_count = len(msg.files) if msg.files else 0
+            if file_count > 0:
+                file_paths = [str(f.path) if hasattr(f, "path") else str(f) for f in msg.files]
+                logger.info(f"[STM] History msg[{i}] has {file_count} files: {file_paths}")
 
         logger.info(
             f"[STM] Fetched {len(history_messages)} history messages | "
@@ -578,7 +647,8 @@ class MemoryNode(Node):
         else:
             conversation_history = ""
 
-        # Build the enriched text: LTM context (if enabled) + history + current input
+        # Build the enriched text: history + current input
+        # If LTM is enabled, also fetch cross-session context from Pinecone/Neo4j
         ltm_context = ""
         enable_ltm = getattr(self, "enable_ltm", False)
         connected_llm = getattr(self, "llm", None)
@@ -587,16 +657,68 @@ class MemoryNode(Node):
         # Get env from graph (set by API endpoint / build handler)
         env_override = getattr(self.graph, "env", None) if hasattr(self, "graph") else None
 
-        if enable_ltm and agent_id and current_text:
+        if enable_ltm and agent_id and current_text and session_id:
+            ltm_share = getattr(self, "ltm_share_across_sessions", False)
+            logger.info(f"[LTM] LTM enabled | session={session_id} | agent={agent_id} | cross_session={ltm_share} | env={env_override}")
             try:
+                from agentcore.services.ltm import LTM_DEFAULTS
                 retrieval_mode = getattr(self, "ltm_retrieval_mode", "Both") or "Both"
-                from agentcore.services.ltm.retriever import retrieve
-                ltm_context = await retrieve(
-                    query=current_text, session_id=session_id, mode=retrieval_mode,
-                    top_k=n_messages, env=env_override,
-                )
+                pinecone_top_k = getattr(self, "ltm_pinecone_top_k", LTM_DEFAULTS["pinecone_top_k"]) or LTM_DEFAULTS["pinecone_top_k"]
+                neo4j_top_k = getattr(self, "ltm_neo4j_top_k", LTM_DEFAULTS["neo4j_top_k"]) or LTM_DEFAULTS["neo4j_top_k"]
+                max_context_chars = getattr(self, "ltm_max_context_chars", LTM_DEFAULTS["max_context_chars"]) or LTM_DEFAULTS["max_context_chars"]
+
+                if ltm_share:
+                    # Cross-session: query all of this user's past sessions
+                    from agentcore.services.ltm.retriever import (
+                        retrieve_cross_session, _get_playground_sessions,
+                        _get_orch_sessions, _get_uat_api_sessions,
+                        _get_prod_api_sessions,
+                    )
+
+                    # Use graph.env to query the correct conversation table for session IDs
+                    graph = self.graph if hasattr(self, "graph") else None
+                    user_id = getattr(graph, "user_id", None) if graph else None
+
+                    if env_override == "orch":
+                        session_ids = await _get_orch_sessions(str(user_id), str(agent_id))
+                    elif env_override == "prod":
+                        session_ids = await _get_prod_api_sessions(str(agent_id))
+                    elif env_override == "uat":
+                        session_ids = await _get_uat_api_sessions(str(agent_id))
+                    else:
+                        session_ids = await _get_playground_sessions(str(agent_id))
+
+                    # Always include current session
+                    if session_id not in session_ids:
+                        session_ids.insert(0, session_id)
+
+                    logger.info(f"[LTM] Cross-session: {len(session_ids)} sessions")
+
+                    ltm_context = await retrieve_cross_session(
+                        query=current_text,
+                        session_ids=session_ids,
+                        mode=retrieval_mode,
+                        pinecone_top_k=pinecone_top_k,
+                        neo4j_top_k=neo4j_top_k,
+                        env=env_override,
+                    )
+                else:
+                    # Single session: current behavior
+                    from agentcore.services.ltm.retriever import retrieve
+                    ltm_context = await retrieve(
+                        query=current_text,
+                        session_id=session_id,
+                        mode=retrieval_mode,
+                        pinecone_top_k=pinecone_top_k,
+                        neo4j_top_k=neo4j_top_k,
+                        env=env_override,
+                    )
+
+                # Truncate LTM context to max chars
+                if ltm_context and len(ltm_context) > max_context_chars:
+                    ltm_context = ltm_context[:max_context_chars] + "\n... (truncated)"
                 if ltm_context:
-                    logger.info(f"[LTM] Retrieved {len(ltm_context)} chars of cross-session context")
+                    logger.info(f"[LTM] Retrieved {len(ltm_context)} chars of LTM context for session={session_id}")
             except Exception as e:
                 logger.error(f"[LTM] Retrieval failed: {e}")
 
@@ -608,15 +730,52 @@ class MemoryNode(Node):
         parts.append(f"Current Message:\n{current_text}")
         enriched_text = "\n\n".join(parts)
 
+        # Collect all files from history messages and current input
+        # Ensure every image path is an Image object so resolve_images() can
+        # download it from Azure blob and cache the base64 data for the LLM.
+        from agentcore.schema.image import Image, is_image_file
+
+        all_files: list[str | Image] = []
+        for msg in history_messages:
+            if msg.files:
+                for f in msg.files:
+                    if isinstance(f, Image):
+                        all_files.append(f)
+                    elif isinstance(f, str) and is_image_file(f):
+                        all_files.append(Image(path=f))
+                    else:
+                        all_files.append(f)
+        current_files = []
+        if isinstance(current_input, Message) and current_input.files:
+            current_files = current_input.files
+        all_files.extend(current_files)
+
         # Create a new message with the enriched text, preserving original message properties
         enriched_message = Message(text=enriched_text)
         if isinstance(current_input, Message):
             enriched_message.sender = current_input.sender
             enriched_message.sender_name = current_input.sender_name
             enriched_message.session_id = current_input.session_id or session_id
-            enriched_message.files = current_input.files
         else:
             enriched_message.session_id = session_id
+        enriched_message.files = all_files if all_files else []
+
+        # Log current input files
+        if current_files:
+            logger.info(f"[STM] Current input has {len(current_files)} files: {[str(f.path) if hasattr(f, 'path') else str(f) for f in current_files]}")
+        logger.info(f"[STM] Enriched message total files: {len(all_files)}")
+
+        # Pre-fetch image data from Azure blob storage so downstream
+        # to_lc_message() can build multimodal content synchronously.
+        # Each Image.resolve() downloads from blob → base64 → _base64_cache.
+        for f in enriched_message.files or []:
+            if isinstance(f, Image):
+                try:
+                    await f.resolve()
+                    resolved = f._base64_cache is not None
+                    logger.info(f"[STM] Image resolve {'OK' if resolved else 'EMPTY'}: path={f.path}")
+                except Exception as e:
+                    logger.error(f"[STM] Image resolve FAILED: path={f.path}, error={e}")
 
         logger.info(
             f"[STM] session_id={session_id} | "
@@ -639,6 +798,12 @@ class MemoryNode(Node):
         self.status = enriched_message
         return enriched_message
 
+    # Fields that only show when "Enable Long Term Memory" is toggled ON
+    _ltm_only_fields = [
+        "ltm_retrieval_mode", "ltm_max_summary_tokens", "ltm_max_context_chars",
+        "ltm_pinecone_top_k", "ltm_neo4j_top_k",
+    ]
+
     def update_build_config(
         self,
         build_config: dotdict,
@@ -660,5 +825,11 @@ class MemoryNode(Node):
         if selected_mode in self.mode_config:
             for field in self.mode_config[selected_mode]:
                 build_config = set_field_display(build_config, field, True)
+
+        # Show LTM-specific controls only when "Enable Long Term Memory" is ON
+        if selected_mode == "Short Term Memory":
+            enable_ltm = build_config.get("enable_ltm", {}).get("value", False)
+            for field in self._ltm_only_fields:
+                build_config = set_field_display(build_config, field, bool(enable_ltm))
 
         return build_config
