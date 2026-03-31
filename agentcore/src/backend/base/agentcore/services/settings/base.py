@@ -440,12 +440,14 @@ class Settings(BaseSettings):
     @field_validator("event_delivery", mode="before")
     @classmethod
     def set_event_delivery(cls, value, info):
-        # If workers > 1, we need to use direct delivery
-        # because polling and streaming are not supported
-        # in multi-worker environments
-        if info.data.get("workers", 1) > 1:
-            logger.warning("Multi-worker environment detected, using direct event delivery")
+        workers = int(info.data.get("workers", 1) or 1)
+
+        # If workers > 1, we need direct delivery because polling/streaming
+        # rely on in-process state and are not safe across workers.
+        if workers > 1:
+            logger.warning("Multi-worker environment detected; forcing direct event delivery")
             return "direct"
+
         return value
 
     @field_validator("dev")

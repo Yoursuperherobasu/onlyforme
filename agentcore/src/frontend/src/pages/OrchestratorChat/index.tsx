@@ -13,7 +13,7 @@ import type {
   OrchSessionSummary,
   OrchMessageResponse,
 } from "@/controllers/API/queries/orchestrator";
-import { usePostUploadFile } from "@/controllers/API/queries/files/use-post-upload-file";
+import { usePostUploadFileV2 } from "@/controllers/API/queries/file-management/use-post-upload-file";
 import { api, performStreamingRequest } from "@/controllers/API/api";
 import { getURL } from "@/controllers/API/helpers/constants";
 import { BASE_URL_API } from "@/constants/constants";
@@ -86,23 +86,78 @@ function mapApiAgents(apiAgents: OrchAgentSummary[]): Agent[] {
   }));
 }
 
+function inferHitlFromText(text: string): boolean {
+  if (!text) return false;
+  const normalized = text.toLowerCase();
+  return (
+    normalized.includes("waiting for human review") &&
+    normalized.includes("available actions")
+  );
+}
+
+function extractHitlActions(text: string): string[] {
+  if (!text) return [];
+  const out = new Set<string>();
+
+  for (const line of text.split(/\r?\n/)) {
+    const m = line.match(/^[\s>*•-]*([A-Za-z][A-Za-z ]*[A-Za-z])\s*$/);
+    if (!m?.[1]) continue;
+    const action = m[1].trim();
+    if (/approve|reject|edit|cancel/i.test(action)) {
+      out.add(action);
+    }
+  }
+
+  // Fallback for inline formats like "Available actions: • Approve • Reject"
+  if (out.size === 0) {
+    const inline = text.match(/approve|reject|edit|cancel/gi) ?? [];
+    for (const action of inline) {
+      out.add(action.charAt(0).toUpperCase() + action.slice(1).toLowerCase());
+    }
+  }
+
+  return Array.from(out);
+}
+
 function mapApiMessages(apiMessages: OrchMessageResponse[]): Message[] {
-  return apiMessages.map((m) => ({
-    id: m.id,
-    sender: m.sender as "user" | "agent" | "system",
-    agentName: m.sender === "agent" ? m.sender_name : undefined,
-    content: m.text,
-    timestamp: m.timestamp
-      ? new Date(m.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
-      : "",
-    category: m.category || "message",
-    files: m.files && m.files.length > 0 ? m.files : undefined,
-    // Restore HITL metadata from persisted properties
-    hitl: !!m.properties?.hitl,
-    hitlActions: m.properties?.hitl ? (m.properties.actions ?? []) : undefined,
-    hitlThreadId: m.properties?.hitl ? (m.properties.thread_id ?? "") : undefined,
-    hitlIsDeployed: m.properties?.hitl ? !!(m.properties as any).is_deployed_run : undefined,
-  }));
+  return apiMessages.map((m) => {
+    const props = (m.properties || {}) as Record<string, any>;
+    const isHitl = !!props.hitl || inferHitlFromText(m.text || "");
+    const parsedActions = Array.isArray(props.actions)
+      ? props.actions
+      : extractHitlActions(m.text || "");
+
+    return {
+      id: m.id,
+      sender: m.sender as "user" | "agent" | "system",
+      agentName: m.sender === "agent" ? m.sender_name : undefined,
+      content: m.text,
+      timestamp: m.timestamp
+        ? new Date(m.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+        : "",
+      category: m.category || "message",
+      files: m.files && m.files.length > 0 ? m.files : undefined,
+      // Restore HITL metadata from persisted properties.
+      // Fallback to text inference because some interrupted rows may miss fields.
+      hitl: isHitl,
+      hitlActions: isHitl ? parsedActions : undefined,
+      hitlThreadId: isHitl ? (props.thread_id ?? m.session_id ?? "") : undefined,
+      // Orchestrator chat runs deployed agents; default true when missing.
+      hitlIsDeployed: isHitl
+        ? (props.is_deployed_run !== undefined ? !!props.is_deployed_run : true)
+        : undefined,
+    };
+  });
+}
+
+function hitlStatusLabel(value: string): string {
+  const normalized = (value || "").toLowerCase();
+  if (normalized.includes("reject")) return "Rejected";
+  if (normalized.includes("approve")) return "Approved";
+  if (normalized.includes("edit")) return "Edited";
+  if (normalized.includes("cancel")) return "Cancelled";
+  if (normalized.includes("timeout")) return "Timed out";
+  return "Resolved";
 }
 
 function groupSessionsByDate(
@@ -159,10 +214,11 @@ export default function AgentOrchestrator() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const modelPickerRef = useRef<HTMLDivElement>(null);
+  const hitlSessionRef = useRef<string | null>(null);
 
   /* ------------------ FILE UPLOAD ------------------ */
 
-  const { mutate: uploadFileMutate } = usePostUploadFile();
+  const { mutate: uploadFileMutate } = usePostUploadFileV2();
   const ALLOWED_EXTENSIONS = ["png", "jpg", "jpeg"];
 
   const uploadFile = (file: File) => {
@@ -172,9 +228,8 @@ export default function AgentOrchestrator() {
     const id = crypto.randomUUID().slice(0, 10);
     setUploadFiles((prev) => [...prev, { id, file, loading: true, error: false }]);
 
-    const agentId = selectedAgent?.agent_id || "";
     uploadFileMutate(
-      { file, id: agentId },
+      { file },
       {
         onSuccess: (data: any) => {
           setUploadFiles((prev) =>
@@ -231,41 +286,46 @@ export default function AgentOrchestrator() {
   );
   const canInteract = permissions?.includes("interact_agents") ?? false;
 
+  // The effective session ID for fetching messages: activeSessionId is set
+  // when the user clicks a session in the sidebar.  When null (e.g. after
+  // streaming created a new session), fall back to currentSessionId if it
+  // exists in the sessions list (meaning it was persisted to the DB).
+  const effectiveSessionId = useMemo(() => {
+    if (activeSessionId) return activeSessionId;
+    if (apiSessions?.some((s) => s.session_id === currentSessionId)) return currentSessionId;
+    return null;
+  }, [activeSessionId, currentSessionId, apiSessions]);
+
   // Load messages when switching to an existing session
-  const { data: apiSessionMessages } = useGetOrchMessages(
-    { session_id: activeSessionId || "" },
-    { enabled: !!activeSessionId },
+  const { data: apiSessionMessages, refetch: refetchMessages } = useGetOrchMessages(
+    { session_id: effectiveSessionId || "" },
+    {
+      enabled: !!effectiveSessionId,
+      refetchOnWindowFocus: true,
+      staleTime: 0,
+      // Prevent background polling from clobbering the local streaming placeholder/tokens.
+      refetchInterval: isSending ? false : 5000,
+    },
   );
 
   useEffect(() => {
-    if (apiSessionMessages && activeSessionId) {
+    if (apiSessionMessages && effectiveSessionId) {
+      // Keep local in-flight stream state intact for the active session.
+      if (isSending && effectiveSessionId === currentSessionId) {
+        return;
+      }
       const mapped = mapApiMessages(apiSessionMessages);
       setMessages(mapped);
-      setCurrentSessionId(activeSessionId);
-      // Reset HITL state for the new session
-      setHitlDoneMap({});
-      setHitlLoadingId(null);
-
-      // Check if any HITL messages exist — verify they are still pending.
-      // If the request was resolved (via Approvals page or another session),
-      // mark them as done so buttons show as resolved.
-      const hitlMsgs = mapped.filter((m) => m.hitl && m.hitlThreadId);
-      if (hitlMsgs.length > 0) {
-        (async () => {
-          for (const hm of hitlMsgs) {
-            try {
-              await api.get(`${getURL("HITL")}/${hm.hitlThreadId}/state`);
-              // 200 = still pending, buttons stay active
-            } catch {
-              // 404 = no pending request → already resolved
-              setHitlDoneMap((prev) => ({ ...prev, [hm.id]: "Resolved" }));
-            }
-          }
-        })();
+      setCurrentSessionId(effectiveSessionId);
+      // Reset HITL UI state only when switching sessions (not on every poll).
+      if (hitlSessionRef.current !== effectiveSessionId) {
+        setHitlDoneMap({});
+        setHitlLoadingId(null);
+        hitlSessionRef.current = effectiveSessionId;
       }
 
       // Sync selected model with the session's active agent
-      const sessionInfo = apiSessions?.find((s) => s.session_id === activeSessionId);
+      const sessionInfo = apiSessions?.find((s) => s.session_id === effectiveSessionId);
       if (sessionInfo?.active_agent_name) {
         const activeAgent = agents.find((a) => a.name === sessionInfo.active_agent_name);
         if (activeAgent) {
@@ -273,7 +333,76 @@ export default function AgentOrchestrator() {
         }
       }
     }
-  }, [apiSessionMessages, activeSessionId, apiSessions, agents]);
+  }, [apiSessionMessages, effectiveSessionId, apiSessions, agents]);
+
+  // Keep HITL status in sync when decisions happen on HITL Approvals page.
+  // This lets orchestrator chat hide the pending banner and show final status
+  // (Approved / Rejected / etc.) without requiring a full page reload.
+  useEffect(() => {
+    const hitlMsgs = messages.filter((m) => m.hitl && m.hitlThreadId);
+    if (hitlMsgs.length === 0) return;
+
+    let isMounted = true;
+    const syncStatuses = async () => {
+      try {
+        const res = await api.get(`${getURL("HITL")}/pending`, {
+          params: { status: "all" },
+        });
+        const rows: Array<{ thread_id?: string; status?: string; requested_at?: string }> = Array.isArray(res.data)
+          ? res.data
+          : [];
+
+        // Build per-thread request timelines (oldest -> newest).
+        const reqByThread = new Map<string, Array<{ status: string; requestedAt: number }>>();
+        for (const row of rows) {
+          if (!row?.thread_id || !row?.status) continue;
+          const list = reqByThread.get(row.thread_id) ?? [];
+          list.push({
+            status: row.status,
+            requestedAt: row.requested_at ? Date.parse(row.requested_at) : 0,
+          });
+          reqByThread.set(row.thread_id, list);
+        }
+        for (const list of reqByThread.values()) {
+          list.sort((a, b) => a.requestedAt - b.requestedAt);
+        }
+
+        // Build per-thread HITL message timelines in chat order.
+        const msgByThread = new Map<string, Message[]>();
+        for (const msg of hitlMsgs) {
+          const threadId = msg.hitlThreadId ?? "";
+          const list = msgByThread.get(threadId) ?? [];
+          list.push(msg);
+          msgByThread.set(threadId, list);
+        }
+
+        // Assign status to each HITL message by timeline index in the same thread.
+        const nextMap: Record<string, string> = {};
+        for (const [threadId, threadMsgs] of msgByThread.entries()) {
+          const threadReqs = reqByThread.get(threadId) ?? [];
+          for (let i = 0; i < threadMsgs.length; i++) {
+            const req = threadReqs[i];
+            if (!req) continue;
+            if (req.status.toLowerCase() !== "pending") {
+              nextMap[threadMsgs[i].id] = hitlStatusLabel(req.status);
+            }
+          }
+        }
+
+        if (!isMounted) return;
+        setHitlDoneMap(nextMap);
+      } catch {
+        // Best-effort status sync only; keep existing UI if polling fails.
+      }
+    };
+
+    syncStatuses();
+    const timer = window.setInterval(syncStatuses, 4000);
+    return () => {
+      isMounted = false;
+      window.clearInterval(timer);
+    };
+  }, [messages]);
 
   // Set default selected model when agents load
   useEffect(() => {
@@ -383,33 +512,24 @@ export default function AgentOrchestrator() {
             },
           ]);
         } else if (resData?.status === "completed") {
-          // Graph finished — show confirmation + agent output (matches playground)
-          const icon = action.toLowerCase().includes("reject") ? "✗" : "✓";
+          // Graph finished — show only resumed AI output in orchestrator chat.
           setMessages((prev) => {
             const name = prev.find((m) => m.id === msgId)?.agentName;
-            const newMsgs = [
+            if (!resData.output_text) return prev;
+            return [
               ...prev,
               {
                 id: crypto.randomUUID(),
                 sender: "agent" as const,
                 agentName: name,
-                content: `${icon} **${action}** — Human review completed`,
+                content: resData.output_text,
                 timestamp: timeNow(),
               },
             ];
-            // If the backend returned actual agent output, show it as a
-            // separate message — same echo behavior as the playground.
-            if (resData.output_text) {
-              newMsgs.push({
-                id: crypto.randomUUID(),
-                sender: "agent" as const,
-                agentName: name,
-                content: resData.output_text,
-                timestamp: timeNow(),
-              });
-            }
-            return newMsgs;
           });
+          // Refetch messages from DB so the persisted orch_conversation
+          // response is available if user reloads or navigates away.
+          refetchMessages();
         }
       } catch (_err) {
         // leave buttons enabled so user can retry
@@ -418,7 +538,7 @@ export default function AgentOrchestrator() {
         setHitlLoadingAction(null);
       }
     },
-    [hitlDoneMap, hitlLoadingId, timeNow],
+    [hitlDoneMap, hitlLoadingId, timeNow, refetchMessages],
   );
 
   /* ------------------ INPUT HANDLING ------------------ */
@@ -518,6 +638,8 @@ export default function AgentOrchestrator() {
     let rafHandle: number | null = null;
     let pendingContent: string | null = null;
     let hitlPauseReceived = false;
+    let receivedToken = false;
+    let latestAgentAddMessageText = "";
 
     // Flush the latest accumulated content to React state.
     // Called inside a rAF so we update at most once per frame (~60fps),
@@ -587,14 +709,23 @@ export default function AgentOrchestrator() {
           const eventType: string = event?.event;
           const data: any = event?.data;
 
-          if (eventType === "add_message" && data?.properties?.hitl) {
+          const isHitlEvent =
+            eventType === "add_message" &&
+            (
+              !!data?.properties?.hitl ||
+              inferHitlFromText(String(data?.text || data?.message || ""))
+            );
+
+          if (isHitlEvent) {
             // HITL pause event — update agent message with HITL metadata
             // so the UI renders approval action buttons.
             hitlPauseReceived = true;
-            const actions: string[] = data.properties.actions ?? [];
-            const threadId: string = data.properties.thread_id ?? "";
+            const actions: string[] = Array.isArray(data?.properties?.actions)
+              ? data.properties.actions
+              : extractHitlActions(String(data?.text || data?.message || ""));
+            const threadId: string = data?.properties?.thread_id ?? currentSessionId ?? "";
             const hitlText: string = data.text || data.message || "";
-            const isDeployedRun: boolean = data.properties.is_deployed_run ?? false;
+            const isDeployedRun: boolean = data?.properties?.is_deployed_run ?? true;
             flushSync(() => {
               setStreamingAgentName("");
               setMessages((prev) =>
@@ -641,8 +772,19 @@ export default function AgentOrchestrator() {
                 );
               });
             }
+          } else if (eventType === "add_message" && (data?.text || data?.message) && !hitlPauseReceived) {
+            // Keep add_message text as a fallback, but don't immediately overwrite
+            // the thinking bubble. Some graphs emit user/input-node add_message
+            // events before AI tokens; rendering those here causes echo + no stream UX.
+            const sender = String(data?.sender || data?.sender_name || "").toLowerCase();
+            const isUserMessage = sender.includes("user");
+            const addMessageText = String(data.text || data.message || "");
+            if (!isUserMessage && addMessageText.trim()) {
+              latestAgentAddMessageText = addMessageText;
+            }
           } else if (eventType === "token" && data?.chunk) {
             // Progressive streaming — append each token chunk (throttled)
+            receivedToken = true;
             accumulated += data.chunk;
             updateAgentMsg(accumulated);
           } else if (eventType === "error") {
@@ -654,6 +796,10 @@ export default function AgentOrchestrator() {
             // message with agent_text — the action buttons must stay visible.
             if (data?.agent_text && !hitlPauseReceived) {
               updateAgentMsg(data.agent_text, true);
+            } else if (!hitlPauseReceived && !receivedToken && latestAgentAddMessageText.trim()) {
+              // Fallback for non-token flows where response text came only via
+              // add_message and end has no agent_text payload.
+              updateAgentMsg(latestAgentAddMessageText, true);
             }
             // Mark content blocks as fully finished
             if (!hitlPauseReceived) {
@@ -666,6 +812,11 @@ export default function AgentOrchestrator() {
               );
             }
             refetchSessions();
+            // Force a fast message sync for existing sessions so local streamed
+            // content is not replaced by stale polled data.
+            if (effectiveSessionId) {
+              refetchMessages();
+            }
             return false;
           }
           return true;
@@ -694,12 +845,19 @@ export default function AgentOrchestrator() {
             m.id === agentMsgId ? { ...m, content: finalContent } : m,
           ),
         );
+      } else if (!hitlPauseReceived && !receivedToken && latestAgentAddMessageText.trim()) {
+        // Defensive fallback if stream closes before we get a parsable end event.
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === agentMsgId ? { ...m, content: latestAgentAddMessageText } : m,
+          ),
+        );
       }
       setIsSending(false);
       setStreamingAgentName("");
       setStreamingMsgId(null);
     }
-  }, [canInteract, input, isSending, agents, selectedAgent, selectedModelId, currentSessionId, refetchSessions]);
+  }, [canInteract, input, isSending, agents, selectedAgent, selectedModelId, currentSessionId, effectiveSessionId, refetchSessions, refetchMessages]);
 
   /* ------------------ SESSION MANAGEMENT ------------------ */
 
@@ -912,7 +1070,7 @@ export default function AgentOrchestrator() {
         {/* ================ MESSAGES ================ */}
         <div className="flex flex-1 flex-col items-center overflow-y-auto">
           <div className="w-full max-w-3xl px-6 pb-44 pt-6">
-            {messages.map((msg) => {
+            {messages.map((msg, idx) => {
               // Context reset divider
               if (msg.category === "context_reset") {
                 return (
@@ -928,6 +1086,20 @@ export default function AgentOrchestrator() {
 
               const isUser = msg.sender === "user";
               const isThinking = msg.sender === "agent" && msg.content === "" && isSending;
+              const hasFollowupAgentReply = messages
+                .slice(idx + 1)
+                .some(
+                  (nextMsg) =>
+                    nextMsg.sender === "agent" &&
+                    !nextMsg.hitl &&
+                    (!!nextMsg.content?.trim() || !!nextMsg.contentBlocks?.length),
+                );
+              const explicitHitlStatus = hitlDoneMap[msg.id];
+              const hitlResolved = msg.hitlIsDeployed
+                ? !!explicitHitlStatus
+                : (!!explicitHitlStatus || hasFollowupAgentReply);
+              const resolvedLabel = explicitHitlStatus || (!msg.hitlIsDeployed && hasFollowupAgentReply ? "Completed" : "");
+              const isRejectedResolution = resolvedLabel.toLowerCase().includes("reject");
               return (
                 <div key={msg.id} className="flex items-start gap-4 py-5">
                   {/* Avatar */}
@@ -990,23 +1162,38 @@ export default function AgentOrchestrator() {
                           editedFlag={null}
                         />
                         {/* HITL action buttons */}
-                        {msg.hitl && msg.hitlActions && msg.hitlActions.length > 0 && (
+                        {msg.hitl && (
                           msg.hitlIsDeployed ? (
                             /* Deployed runs: approval goes to dept admin via HITL page */
-                            <div className="mt-3 flex items-center gap-2 rounded-md border border-amber-300 bg-amber-50 px-4 py-2.5 text-sm dark:border-amber-700 dark:bg-amber-950/30">
-                              <Clock size={16} className="shrink-0 text-amber-600 dark:text-amber-400" />
-                              <span className="text-amber-700 dark:text-amber-300">
-                                Pending department admin approval. The assigned admin can approve or reject from the{" "}
-                                <a
-                                  href="/hitl-approvals"
-                                  className="font-medium underline hover:text-amber-900 dark:hover:text-amber-100"
-                                >
-                                  HITL Approvals
-                                </a>{" "}
-                                page.
-                              </span>
-                            </div>
+                            hitlResolved ? (
+                              <div
+                                className={[
+                                  "mt-3 flex items-center gap-2 rounded-md border px-4 py-2.5 text-sm",
+                                  isRejectedResolution
+                                    ? "border-red-300 bg-red-50 text-red-700 dark:border-red-700 dark:bg-red-950/30 dark:text-red-300"
+                                    : "border-green-300 bg-green-50 text-green-700 dark:border-green-700 dark:bg-green-950/30 dark:text-green-300",
+                                ].join(" ")}
+                              >
+                                <span className="font-medium">Human review status:</span>
+                                <span>{resolvedLabel}</span>
+                              </div>
+                            ) : (
+                              <div className="mt-3 flex items-center gap-2 rounded-md border border-amber-300 bg-amber-50 px-4 py-2.5 text-sm dark:border-amber-700 dark:bg-amber-950/30">
+                                <Clock size={16} className="shrink-0 text-amber-600 dark:text-amber-400" />
+                                <span className="text-amber-700 dark:text-amber-300">
+                                  Pending department admin approval. The assigned admin can approve or reject from the{" "}
+                                  <a
+                                    href="/hitl-approvals"
+                                    className="font-medium underline hover:text-amber-900 dark:hover:text-amber-100"
+                                  >
+                                    HITL Approvals
+                                  </a>{" "}
+                                  page.
+                                </span>
+                              </div>
+                            )
                           ) : (
+                          (msg.hitlActions && msg.hitlActions.length > 0) ? (
                           <div className="mt-3 flex flex-col gap-2.5">
                             <div className="flex flex-wrap gap-2">
                             {msg.hitlActions.map((action) => {
@@ -1058,6 +1245,7 @@ export default function AgentOrchestrator() {
                               </span>
                             )}
                           </div>
+                          ) : null
                           )
                         )}
                       </div>

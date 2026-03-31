@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import asyncio
-import json as _json
 import json
 import os
 from contextvars import ContextVar
@@ -19,7 +18,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from loguru import logger
 from pydantic import BaseModel
 from sqlalchemy import func, or_, true
-from sqlmodel import col, select
+from sqlmodel import select
 
 from fastapi.responses import StreamingResponse
 
@@ -41,9 +40,6 @@ from agentcore.services.database.models.agent_publish_recipient.model import (
 )
 from agentcore.services.database.models.department.model import Department
 from agentcore.services.database.models.role.model import Role
-from agentcore.services.database.models.user_department_membership.model import (
-    UserDepartmentMembership,
-)
 from agentcore.services.database.models.user_organization_membership.model import (
     UserOrganizationMembership,
 )
@@ -60,6 +56,8 @@ from agentcore.services.database.models.orch_conversation.crud import (
 from agentcore.services.database.models.orch_transaction.crud import (
     orch_delete_session_transactions,
 )
+from agentcore.services.deps import get_settings_service
+from agentcore.services.job_queue.redis_build_events import RedisBuildEventStore, get_redis_job_event_store
 router = APIRouter(prefix="/orchestrator", tags=["Orchestrator"])
 
 
@@ -191,7 +189,7 @@ def _best_from_message(msg: Any) -> str | None:
                 return candidate
         # Recurse into nested dict/list values to handle wrappers like {"result": {message_dict}}
         for value in msg.values():
-            if isinstance(value, dict | list):
+            if isinstance(value, (dict, list)):
                 text = _best_from_message(value)
                 if text:
                     return text
@@ -245,6 +243,89 @@ def _extract_text(payload: Any) -> str:
         return str(payload)
 
 
+def _is_interrupted_payload(payload: Any) -> bool:
+    """Return True when a /run payload indicates a HITL interrupt."""
+    if not isinstance(payload, dict):
+        return False
+
+    if payload.get("interrupted") is True:
+        return True
+
+    outputs = payload.get("outputs")
+    if not isinstance(outputs, list):
+        return False
+
+    for run_output in outputs:
+        if not isinstance(run_output, dict):
+            continue
+
+        # Canonical path for LangGraph RunOutputs metadata.
+        run_meta = run_output.get("metadata")
+        if isinstance(run_meta, dict) and str(run_meta.get("status", "")).lower() == "interrupted":
+            return True
+
+        # Legacy / alternative nested result shapes.
+        for result_entry in run_output.get("outputs") or []:
+            if not isinstance(result_entry, dict):
+                continue
+            result_meta = result_entry.get("metadata")
+            if isinstance(result_meta, dict) and str(result_meta.get("status", "")).lower() == "interrupted":
+                return True
+            nested_results = result_entry.get("results")
+            if isinstance(nested_results, dict):
+                nested_meta = nested_results.get("metadata")
+                if isinstance(nested_meta, dict) and str(nested_meta.get("status", "")).lower() == "interrupted":
+                    return True
+
+    return False
+
+
+def _get_orchestrator_event_store() -> RedisBuildEventStore | None:
+    try:
+        settings_service = get_settings_service()
+        return get_redis_job_event_store(settings_service, namespace="orchestrator_events")
+    except Exception as exc:  # noqa: BLE001
+        logger.debug(f"Orchestrator Redis event store unavailable: {exc}")
+        return None
+
+
+async def _create_orchestrator_redis_response(
+    *,
+    job_id: str,
+    event_store: RedisBuildEventStore,
+) -> StreamingResponse:
+    async def consume_and_yield():
+        cursor = 0
+        while True:
+            try:
+                events = await event_store.get_events_from(job_id, cursor)
+                for payload in events:
+                    yield payload
+                cursor += len(events)
+
+                status = await event_store.get_status(job_id)
+                if status in RedisBuildEventStore.TERMINAL_STATUSES:
+                    total = await event_store.get_events_count(job_id)
+                    if cursor >= total:
+                        break
+                elif not events and status is None and not await event_store.job_exists(job_id):
+                    break
+
+                await asyncio.sleep(0.05)
+            except Exception as exc:  # noqa: BLE001
+                logger.exception(f"[ORCH-STREAM] Error streaming Redis events for job {job_id}: {exc}")
+                break
+
+    return StreamingResponse(
+        consume_and_yield(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
 async def _orch_call_run_api(
     *,
     agent_id: str,
@@ -255,6 +336,11 @@ async def _orch_call_run_api(
     files: list[str] | None = None,
     stream: bool = False,
     event_manager=None,
+    orch_deployment_id: str | None = None,
+    orch_session_id: str | None = None,
+    orch_org_id: str | None = None,
+    orch_dept_id: str | None = None,
+    orch_user_id: str | None = None,
     user_id: str | None = None,
 ) -> tuple[str, bool, list]:
     """Call POST /api/v1/run/{agent_id} internally with the AGENTCORE_INTERNAL_SECRET header.
@@ -263,10 +349,12 @@ async def _orch_call_run_api(
     For streaming, SSE token/add_message events are forwarded to event_manager;
     the function waits for the 'end' event to obtain the final text.
     """
-    base_url = (
-        os.environ.get("ORCHESTRATOR_BASE_URL")
-        or _request_base_url.get()
-    )
+    base_url = os.environ.get("ORCHESTRATOR_BASE_URL") or _request_base_url.get()
+    if not base_url:
+        raise RuntimeError(
+            "Orchestrator base URL is not configured. "
+            "Set ORCHESTRATOR_BASE_URL."
+        )
     logger.info(f"[ORCH] base_url resolved to: {base_url}")
     secret = os.environ.get("AGENTCORE_INTERNAL_SECRET", "")
     url = (
@@ -278,6 +366,16 @@ async def _orch_call_run_api(
     if files:
         body["files"] = files
     headers = {"X-Internal-Secret": secret, "Content-Type": "application/json"}
+    if orch_deployment_id:
+        headers["X-Orch-Deployment-Id"] = orch_deployment_id
+    if orch_session_id:
+        headers["X-Orch-Session-Id"] = orch_session_id
+    if orch_org_id:
+        headers["X-Orch-Org-Id"] = orch_org_id
+    if orch_dept_id:
+        headers["X-Orch-Dept-Id"] = orch_dept_id
+    if orch_user_id:
+        headers["X-Orch-User-Id"] = orch_user_id
     if user_id:
         headers["X-Orch-User-Id"] = user_id
 
@@ -288,11 +386,7 @@ async def _orch_call_run_api(
             resp.raise_for_status()
         payload = resp.json()
         text = _extract_text(payload)
-        interrupted = any(
-            (o.get("outputs") or [{}])[0].get("results", {}).get("metadata", {}).get("status") == "interrupted"
-            for o in (payload.get("outputs") or [])
-            if isinstance(o, dict)
-        )
+        interrupted = _is_interrupted_payload(payload)
         logger.info(f"[ORCH] run API completed | interrupted={interrupted} | response_length={len(text)}")
         return text, interrupted, []
 
@@ -308,7 +402,7 @@ async def _orch_call_run_api(
                 if not line:
                     continue
                 try:
-                    evt = _json.loads(line)
+                    evt = json.loads(line)
                 except Exception:  # noqa: BLE001
                     continue
                 etype = evt.get("event", "")
@@ -319,9 +413,8 @@ async def _orch_call_run_api(
                     event_manager.on_message(data=edata)
                 elif etype == "end":
                     result = edata.get("result", edata)
-                    final_text = _extract_text(result)
-                    if isinstance(result, dict) and result.get("interrupted"):
-                        was_interrupted = True
+                    was_interrupted = _is_interrupted_payload(result)
+                    final_text = "" if was_interrupted else _extract_text(result)
                     logger.info(f"[ORCH] stream ended | interrupted={was_interrupted} | response_length={len(final_text)}")
                 elif etype == "error":
                     raise ValueError(edata.get("error", "Stream error from /run"))
@@ -329,7 +422,7 @@ async def _orch_call_run_api(
     return final_text, was_interrupted, []
 
 
-async def _lookup_agent_project(session, agent_id: UUID) -> tuple[str | None, str | None]:
+async def _lookup_agent_project(session: DbSession, agent_id: UUID) -> tuple[str | None, str | None]:
     """Look up the agent's project_id and project_name for observability metadata."""
     try:
         agent = await session.get(Agent, agent_id)
@@ -361,7 +454,7 @@ def _serialize_content_blocks(content_blocks: list) -> list:
 
 
 async def _resolve_agent(
-    session,
+    session: DbSession,
     current_user: CurrentActiveUser,
     body: OrchChatRequest,
 ) -> tuple[UUID, UUID, AgentDeploymentProd | AgentDeploymentUAT]:
@@ -719,6 +812,11 @@ async def orch_chat(
             input_value=body.input_value,
             session_id=body.session_id,
             files=body.files,
+            orch_deployment_id=str(deployment_id) if deployment_id else None,
+            orch_session_id=body.session_id,
+            orch_org_id=str(deployment.org_id) if deployment.org_id else None,
+            orch_dept_id=str(deployment.dept_id) if deployment.dept_id else None,
+            orch_user_id=str(current_user.id),
             user_id=str(current_user.id),
         )
 
@@ -830,16 +928,12 @@ async def orch_chat_stream(
     await orch_add_message(user_msg, session)
 
     # -- 4. Set up streaming queue + event manager -----------------------
-    # Look up project info for observability metadata before entering background task
-    orch_project_id, orch_project_name = await _lookup_agent_project(session, agent_id)
-
     queue: asyncio.Queue = asyncio.Queue()
     event_manager = create_default_event_manager(queue)
 
     # Capture values needed by the background coroutine
     agent_id_str = str(agent_id)
     agent_name = deployment.agent_name
-    snapshot = deployment.agent_snapshot
     input_value = body.input_value
     chat_session_id = body.session_id
     user_id_str = str(current_user.id)
@@ -865,6 +959,11 @@ async def orch_chat_stream(
                 files=dep_files,
                 stream=True,
                 event_manager=event_manager,
+                orch_deployment_id=str(dep_deployment_id) if dep_deployment_id else None,
+                orch_session_id=chat_session_id,
+                orch_org_id=dep_org_id,
+                orch_dept_id=dep_dept_id,
+                orch_user_id=user_id_str,
                 user_id=user_id_str,
             )
 
@@ -982,63 +1081,45 @@ async def orch_chat_stream(
             queue.put_nowait((None, None, None))
 
     # -- 4. Start background task and return streaming response ----------
-    # --- RabbitMQ path (Option A) ---
     from agentcore.services.deps import get_rabbitmq_service
 
     rabbitmq_service = get_rabbitmq_service()
     if rabbitmq_service.is_enabled():
-        from agentcore.services.deps import get_queue_service
-
-        queue_service = get_queue_service()
-        job_id = str(uuid4())
-        # Register the queue so the RabbitMQ consumer can find it
-        queue_service._queues[job_id] = (queue, event_manager, None, None)
-
-        job_data = {
-            "job_id": job_id,
-            "agent_id": agent_id_str,
-            "agent_name": agent_name,
-            "snapshot": snapshot,
-            "input_value": input_value,
-            "session_id": chat_session_id,
-            "user_id": user_id_str,
-            "files": dep_files,
-            "deployment_id": str(dep_deployment_id),
-            "org_id": dep_org_id,
-            "dept_id": dep_dept_id,
-            "is_prod_deployment": dep_is_prod,
-            "project_id": orch_project_id,
-            "project_name": orch_project_name,
-            "env": "prod" if dep_is_prod else "uat",
-            "version": f"v{deployment.version_number}",
-        }
-        await rabbitmq_service.publish_orchestrator_job(job_data)
-        logger.info(f"Orchestrator job {job_id} published to RabbitMQ")
-
-        async def _consume_rmq():
-            while True:
+        event_store = _get_orchestrator_event_store()
+        if event_store is None:
+            logger.warning("[ORCH-STREAM] Redis event store unavailable; falling back to in-process execution")
+        else:
+            job_id = str(uuid4())
+            try:
+                await event_store.init_job(job_id)
+                job_data = {
+                    "job_id": job_id,
+                    "agent_id": agent_id_str,
+                    "agent_name": agent_name,
+                    "input_value": input_value,
+                    "session_id": chat_session_id,
+                    "user_id": user_id_str,
+                    "files": dep_files,
+                    "deployment_id": str(dep_deployment_id) if dep_deployment_id else None,
+                    "env": "2" if dep_is_prod else "1",
+                    "version": f"v{deployment.version_number}",
+                    "orch_deployment_id": str(dep_deployment_id) if dep_deployment_id else None,
+                    "orch_session_id": chat_session_id,
+                    "orch_org_id": dep_org_id,
+                    "orch_dept_id": dep_dept_id,
+                }
+                await rabbitmq_service.publish_orchestrator_job(job_data)
+                logger.info(f"[ORCH-STREAM] Published RabbitMQ job {job_id}; streaming from Redis backplane")
+                return await _create_orchestrator_redis_response(job_id=job_id, event_store=event_store)
+            except Exception as exc:
+                logger.exception(f"[ORCH-STREAM] Failed to start RabbitMQ+Redis stream job: {exc}")
                 try:
-                    _event_id, value, _ = await queue.get()
-                    if value is None:
-                        break
-                    yield value
+                    await event_store.mark_status(job_id, status="failed", error=str(exc))
                 except Exception:
-                    break
+                    pass
+                raise HTTPException(status_code=500, detail="Failed to start orchestrator stream") from exc
 
-        async def _on_disconnect_rmq():
-            await queue_service.cleanup_job(job_id)
-
-        return StreamingResponse(
-            _consume_rmq(),
-            media_type="text/event-stream",
-            headers={
-                "Cache-Control": "no-cache",
-                "X-Accel-Buffering": "no",
-            },
-            background=_on_disconnect_rmq,
-        )
-
-    # --- Direct path (no RabbitMQ) ---
+    # --- Direct fallback path ---
     run_task = asyncio.create_task(_run_and_persist())
 
     async def _consume():
