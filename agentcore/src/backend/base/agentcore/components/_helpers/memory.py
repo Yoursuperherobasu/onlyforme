@@ -558,13 +558,13 @@ class MemoryNode(Node):
                             order="DESC",
                             limit=n_messages,
                         )
-                                # Reverse to chronological order (oldest first)
-                                history_messages = list(reversed(history_messages))
-                                history_source = "database"
+                        # Reverse to chronological order (oldest first)
+                        history_messages = list(reversed(history_messages))
+                        history_source = "database"
 
-                                # Cache the fresh DB result in Redis for rapid re-fetches
-                                if history_messages:
-                                    await self._set_stm_cache(session_id, n_messages, history_messages)
+                        # Cache the fresh DB result in Redis for rapid re-fetches
+                        if history_messages:
+                            await self._set_stm_cache(session_id, n_messages, history_messages)
 
         logger.info(
             f"[STM] Fetched {len(history_messages)} history messages | "
