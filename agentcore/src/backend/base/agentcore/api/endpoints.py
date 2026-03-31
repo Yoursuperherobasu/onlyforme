@@ -410,13 +410,10 @@ async def simple_run_agent(
     prod_deployment: AgentDeploymentProd | None = None,
     uat_deployment: AgentDeploymentUAT | None = None,
     skip_node_persist: bool = False,
-<<<<<<< HEAD
     orch_deployment_id: str | None = None,
     orch_session_id: str | None = None,
     orch_org_id: str | None = None,
     orch_dept_id: str | None = None,
-=======
->>>>>>> origin/new_agentcore_final_publish
     orch_user_id: str | None = None,
 ):
     validate_input_and_tweaks(input_request)
@@ -596,13 +593,10 @@ async def run_agent_generator(
     prod_deployment: AgentDeploymentProd | None = None,
     uat_deployment: AgentDeploymentUAT | None = None,
     skip_node_persist: bool = False,
-<<<<<<< HEAD
     orch_deployment_id: str | None = None,
     orch_session_id: str | None = None,
     orch_org_id: str | None = None,
     orch_dept_id: str | None = None,
-=======
->>>>>>> origin/new_agentcore_final_publish
     orch_user_id: str | None = None,
 ) -> None:
     """Executes a agent asynchronously and manages event streaming to the client.
@@ -642,13 +636,10 @@ async def run_agent_generator(
             prod_deployment=prod_deployment,
             uat_deployment=uat_deployment,
             skip_node_persist=skip_node_persist,
-<<<<<<< HEAD
             orch_deployment_id=orch_deployment_id,
             orch_session_id=orch_session_id,
             orch_org_id=orch_org_id,
             orch_dept_id=orch_dept_id,
-=======
->>>>>>> origin/new_agentcore_final_publish
             orch_user_id=orch_user_id,
         )
         event_manager.on_end(data={"result": result.model_dump()})
@@ -895,13 +886,10 @@ async def simplified_run_agent(
                 prod_deployment=prod_deployment,
                 uat_deployment=uat_deployment,
                 skip_node_persist=_is_internal,
-<<<<<<< HEAD
                 orch_deployment_id=_orch_deployment_id,
                 orch_session_id=_orch_session_id,
                 orch_org_id=_orch_org_id,
                 orch_dept_id=_orch_dept_id,
-=======
->>>>>>> origin/new_agentcore_final_publish
                 orch_user_id=_orch_user_id,
             )
         )
@@ -1018,13 +1006,10 @@ async def simplified_run_agent(
             prod_deployment=prod_deployment,
             uat_deployment=uat_deployment,
             skip_node_persist=_is_internal,
-<<<<<<< HEAD
             orch_deployment_id=_orch_deployment_id,
             orch_session_id=_orch_session_id,
             orch_org_id=_orch_org_id,
             orch_dept_id=_orch_dept_id,
-=======
->>>>>>> origin/new_agentcore_final_publish
             orch_user_id=_orch_user_id,
         )
         end_time = time.perf_counter()
