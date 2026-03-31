@@ -439,6 +439,15 @@ async def simple_run_agent(
             session_id=input_request.session_id,
         )
 
+        # Set environment context so downstream components (Memory, LTM) know the env.
+        # Prefer explicit env from request body; fall back to deployment-derived env.
+        graph.env = getattr(input_request, "env", None) or (
+            "orch" if skip_node_persist else
+            "prod" if prod_deployment else
+            "uat" if uat_deployment else
+            "dev"
+        )
+
         # Set PROD deployment context so adapter logs to transaction_prod
         if prod_deployment is not None:
             graph.prod_deployment_id = str(prod_deployment.id)

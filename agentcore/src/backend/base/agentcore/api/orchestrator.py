@@ -141,6 +141,7 @@ class OrchChatRequest(BaseModel):
     deployment_id: UUID | None = None
     input_value: str
     version_number: int | None = None
+    env: str | None = None  # "uat" or "prod"
     files: list[str] | None = None
 
 
