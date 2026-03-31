@@ -293,6 +293,7 @@ async def _orch_call_run_api(
     orch_org_id: str | None = None,
     orch_dept_id: str | None = None,
     orch_user_id: str | None = None,
+    user_id: str | None = None,
 ) -> tuple[str, bool, list]:
     """Call POST /api/v1/run/{agent_id} internally with the AGENTCORE_INTERNAL_SECRET header.
 
@@ -325,6 +326,8 @@ async def _orch_call_run_api(
         headers["X-Orch-Dept-Id"] = orch_dept_id
     if orch_user_id:
         headers["X-Orch-User-Id"] = orch_user_id
+    if user_id:
+        headers["X-Orch-User-Id"] = user_id
 
     if not stream:
         async with httpx.AsyncClient(timeout=300, verify=False) as client:
@@ -764,6 +767,7 @@ async def orch_chat(
             orch_org_id=str(deployment.org_id) if deployment.org_id else None,
             orch_dept_id=str(deployment.dept_id) if deployment.dept_id else None,
             orch_user_id=str(current_user.id),
+            user_id=str(current_user.id),
         )
 
         if not agent_text or not agent_text.strip():
@@ -914,6 +918,7 @@ async def orch_chat_stream(
                 orch_org_id=dep_org_id,
                 orch_dept_id=dep_dept_id,
                 orch_user_id=user_id_str,
+                user_id=user_id_str,
             )
 
             # When interrupted (HITL pause), _emit_hitl_pause_event already
