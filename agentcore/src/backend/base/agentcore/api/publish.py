@@ -507,6 +507,39 @@ async def _current_user_org_ids(session: DbSession, user_id: UUID) -> set[UUID]:
     return set(rows)
 
 
+async def _resolve_publish_lookup_org_id(
+    session: DbSession,
+    *,
+    current_user: CurrentActiveUser,
+    agent: Agent,
+) -> UUID | None:
+    if agent.org_id:
+        return agent.org_id
+
+    current_user_org_ids = await _current_user_org_ids(session, current_user.id)
+    if not current_user_org_ids:
+        return None
+
+    return sorted(current_user_org_ids, key=str)[0]
+
+
+async def _resolve_default_department_id_for_org(
+    session: DbSession,
+    org_id: UUID | None,
+) -> UUID | None:
+    if not org_id:
+        return None
+
+    department = (
+        await session.exec(
+            select(Department)
+            .where(Department.org_id == org_id)
+            .order_by(col(Department.id).asc())
+        )
+    ).first()
+    return department.id if department else None
+
+
 async def _resolve_publish_scope(
     session: DbSession,
     *,
@@ -761,16 +794,42 @@ async def _validate_and_store_publish_recipients(
         )
 
     recipient_user_ids = {matched_users_by_email[email].id for email in recipient_emails}
-    memberships = (
-        await session.exec(
-            select(UserDepartmentMembership).where(
-                UserDepartmentMembership.user_id.in_(list(recipient_user_ids)),
-                UserDepartmentMembership.department_id == department_id,
-                UserDepartmentMembership.status == "active",
-            )
+    current_role = str(getattr(current_user, "role", "")).lower()
+    if current_role == "super_admin":
+        org_id = await _resolve_publish_lookup_org_id(
+            session,
+            current_user=current_user,
+            agent=agent,
         )
-    ).all()
-    allowed_user_ids = {membership.user_id for membership in memberships}
+        if not org_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Unable to resolve organization for super admin recipient validation.",
+            )
+
+        memberships = (
+            await session.exec(
+                select(UserOrganizationMembership.user_id).where(
+                    UserOrganizationMembership.user_id.in_(list(recipient_user_ids)),
+                    UserOrganizationMembership.org_id == org_id,
+                    UserOrganizationMembership.status.in_(["accepted", "active"]),
+                )
+            )
+        ).all()
+        allowed_user_ids = set(memberships)
+        invalid_membership_message = "Users not in your organization"
+    else:
+        memberships = (
+            await session.exec(
+                select(UserDepartmentMembership.user_id).where(
+                    UserDepartmentMembership.user_id.in_(list(recipient_user_ids)),
+                    UserDepartmentMembership.department_id == department_id,
+                    UserDepartmentMembership.status == "active",
+                )
+            )
+        ).all()
+        allowed_user_ids = set(memberships)
+        invalid_membership_message = "Some emails are not active members of this department"
 
     not_in_department = sorted(
         {
@@ -782,10 +841,7 @@ async def _validate_and_store_publish_recipients(
     if not_in_department:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=(
-                "Some emails are not active members of this department: "
-                f"{', '.join(not_in_department)}"
-            ),
+            detail=f"{invalid_membership_message}: {', '.join(not_in_department)}",
         )
 
     now = datetime.now(timezone.utc)
@@ -833,7 +889,7 @@ async def validate_publish_email(
     session: DbSession,
     current_user: CurrentActiveUser,
 ) -> ValidatePublishEmailResponse:
-    """Validate that an email exists in the same department(s) as the current user."""
+    """Validate that an email exists in the user's publish scope."""
     normalized_email = str(email).strip().lower()
     if "@" not in normalized_email:
         raise HTTPException(status_code=400, detail="Invalid email format.")
@@ -842,15 +898,18 @@ async def validate_publish_email(
     if not agent or agent.user_id != current_user.id:
         raise HTTPException(status_code=404, detail="Agent not found.")
 
-    current_user_dept_ids = await _current_user_department_ids(session, current_user.id)
-    if not current_user_dept_ids:
-        return ValidatePublishEmailResponse(
-            agent_id=agent_id,
-            email=normalized_email,
-            department_id=None,
-            exists_in_department=False,
-            message="Current user has no active department mapping.",
-        )
+    current_role = str(getattr(current_user, "role", "")).lower()
+    current_user_dept_ids: set[UUID] = set()
+    if current_role != "super_admin":
+        current_user_dept_ids = await _current_user_department_ids(session, current_user.id)
+        if not current_user_dept_ids:
+            return ValidatePublishEmailResponse(
+                agent_id=agent_id,
+                email=normalized_email,
+                department_id=None,
+                exists_in_department=False,
+                message="Current user has no active department mapping.",
+            )
 
     user = (
         await session.exec(
@@ -864,9 +923,54 @@ async def validate_publish_email(
         return ValidatePublishEmailResponse(
             agent_id=agent_id,
             email=normalized_email,
-            department_id=next(iter(current_user_dept_ids)),
+            department_id=None if current_role == "super_admin" else next(iter(current_user_dept_ids)),
             exists_in_department=False,
-            message="Email not found in user table for this department.",
+            message=(
+                "Email not found in user table for this organization."
+                if current_role == "super_admin"
+                else "Email not found in user table for this department."
+            ),
+        )
+
+    if current_role == "super_admin":
+        org_id = await _resolve_publish_lookup_org_id(
+            session,
+            current_user=current_user,
+            agent=agent,
+        )
+        fallback_department_id = agent.dept_id or await _resolve_default_department_id_for_org(
+            session,
+            org_id,
+        )
+        if not org_id:
+            return ValidatePublishEmailResponse(
+                agent_id=agent_id,
+                email=normalized_email,
+                department_id=fallback_department_id,
+                exists_in_department=False,
+                message="Current super admin user has no active organization mapping.",
+            )
+
+        org_membership = (
+            await session.exec(
+                select(UserOrganizationMembership).where(
+                    UserOrganizationMembership.user_id == user.id,
+                    UserOrganizationMembership.org_id == org_id,
+                    UserOrganizationMembership.status.in_(["accepted", "active"]),
+                )
+            )
+        ).first()
+
+        return ValidatePublishEmailResponse(
+            agent_id=agent_id,
+            email=normalized_email,
+            department_id=fallback_department_id,
+            exists_in_department=org_membership is not None,
+            message=(
+                "Email found in your organization."
+                if org_membership
+                else "Email exists, but not in your organization."
+            ),
         )
 
     memberships = (
@@ -903,7 +1007,7 @@ async def get_publish_email_suggestions(
     limit: int = Query(default=8, ge=1, le=25),
     current_user: CurrentActiveUser,
 ) -> list[PublishEmailSuggestion]:
-    """Return recipient suggestions scoped to current user's departments.
+    """Return recipient suggestions scoped to the current user's publish scope.
 
     Results are ranked with previously selected recipients first, then
     department directory matches from the user table.
@@ -913,21 +1017,72 @@ async def get_publish_email_suggestions(
         return []
 
     agent = await _get_agent_or_404(session, agent_id, current_user.id)
-    current_user_dept_ids = await _current_user_department_ids(session, current_user.id)
-    if not current_user_dept_ids:
-        return []
-
-    recent_stmt = (
-        select(AgentPublishRecipient, User)
-        .join(User, User.id == AgentPublishRecipient.recipient_user_id)
-        .where(
-            AgentPublishRecipient.agent_id == agent.id,
-            AgentPublishRecipient.dept_id.in_(list(current_user_dept_ids)),
-            func.lower(AgentPublishRecipient.recipient_email).like(f"%{query_text}%"),
+    current_role = str(getattr(current_user, "role", "")).lower()
+    if current_role == "super_admin":
+        org_id = await _resolve_publish_lookup_org_id(
+            session,
+            current_user=current_user,
+            agent=agent,
         )
-        .order_by(col(AgentPublishRecipient.updated_at).desc())
-        .limit(limit)
-    )
+        if not org_id:
+            return []
+
+        recent_stmt = (
+            select(AgentPublishRecipient, User)
+            .join(User, User.id == AgentPublishRecipient.recipient_user_id)
+            .where(
+                AgentPublishRecipient.agent_id == agent.id,
+                AgentPublishRecipient.org_id == org_id,
+                func.lower(AgentPublishRecipient.recipient_email).like(f"%{query_text}%"),
+            )
+            .order_by(col(AgentPublishRecipient.updated_at).desc())
+            .limit(limit)
+        )
+        directory_stmt = (
+            select(User)
+            .join(UserOrganizationMembership, UserOrganizationMembership.user_id == User.id)
+            .where(
+                UserOrganizationMembership.org_id == org_id,
+                UserOrganizationMembership.status.in_(["accepted", "active"]),
+                or_(
+                    func.lower(User.username).like(f"%{query_text}%"),
+                    and_(User.email.is_not(None), func.lower(User.email).like(f"%{query_text}%")),
+                ),
+            )
+            .order_by(col(User.display_name), col(User.username))
+            .limit(max(limit * 2, 16))
+        )
+    else:
+        current_user_dept_ids = await _current_user_department_ids(session, current_user.id)
+        if not current_user_dept_ids:
+            return []
+
+        recent_stmt = (
+            select(AgentPublishRecipient, User)
+            .join(User, User.id == AgentPublishRecipient.recipient_user_id)
+            .where(
+                AgentPublishRecipient.agent_id == agent.id,
+                AgentPublishRecipient.dept_id.in_(list(current_user_dept_ids)),
+                func.lower(AgentPublishRecipient.recipient_email).like(f"%{query_text}%"),
+            )
+            .order_by(col(AgentPublishRecipient.updated_at).desc())
+            .limit(limit)
+        )
+        directory_stmt = (
+            select(User)
+            .join(UserDepartmentMembership, UserDepartmentMembership.user_id == User.id)
+            .where(
+                UserDepartmentMembership.department_id.in_(list(current_user_dept_ids)),
+                UserDepartmentMembership.status == "active",
+                or_(
+                    func.lower(User.username).like(f"%{query_text}%"),
+                    and_(User.email.is_not(None), func.lower(User.email).like(f"%{query_text}%")),
+                ),
+            )
+            .order_by(col(User.display_name), col(User.username))
+            .limit(max(limit * 2, 16))
+        )
+
     recent_rows = (await session.exec(recent_stmt)).all()
     suggestions: list[PublishEmailSuggestion] = []
     seen: set[str] = set()
@@ -946,21 +1101,6 @@ async def get_publish_email_suggestions(
     if len(suggestions) >= limit:
         return suggestions[:limit]
 
-    directory_limit = max(limit * 2, 16)
-    directory_stmt = (
-        select(User)
-        .join(UserDepartmentMembership, UserDepartmentMembership.user_id == User.id)
-        .where(
-            UserDepartmentMembership.department_id.in_(list(current_user_dept_ids)),
-            UserDepartmentMembership.status == "active",
-            or_(
-                func.lower(User.username).like(f"%{query_text}%"),
-                and_(User.email.is_not(None), func.lower(User.email).like(f"%{query_text}%")),
-            ),
-        )
-        .order_by(col(User.display_name), col(User.username))
-        .limit(directory_limit)
-    )
     directory_users = (await session.exec(directory_stmt)).all()
     for user in directory_users:
         email_candidate = str(user.email or user.username or "").strip().lower()

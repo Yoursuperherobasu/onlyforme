@@ -84,6 +84,7 @@ const DisabledButton = () => (
 const PublishButton = ({}: PublishButtonProps) => {
   const { permissions, userData } = useContext(AuthContext);
   const currentRole = String(userData?.role ?? "").toLowerCase();
+  const isSuperAdmin = currentRole === "super_admin";
   const canDepartmentlessPrivatePublish =
     currentRole === "root" || currentRole === "super_admin" || currentRole === "admin";
   const can = (permissionKey: string) => permissions?.includes(permissionKey);
@@ -449,7 +450,9 @@ const PublishButton = ({}: PublishButtonProps) => {
 
       if (missingEmails.length > 0) {
         setErrorData({
-          title: "Some emails are not available in this department.",
+          title: isSuperAdmin
+            ? "Some emails are not available in your organization."
+            : "Some emails are not available in this department.",
           list: missingEmails,
         });
         return;
@@ -710,15 +713,18 @@ const PublishButton = ({}: PublishButtonProps) => {
                     </div>
                   ) : (
                     <div className="px-3 py-2 text-xs text-muted-foreground">
-                      No department suggestions found.
+                      {isSuperAdmin
+                        ? "No users found in your organization."
+                        : "No department suggestions found."}
                     </div>
                   )}
                 </div>
               )}
             </div>
             <span className="text-xs text-muted-foreground">
-              Outlook-style recipients. Suggestions come from saved department
-              emails for this agent.
+              {isSuperAdmin
+                ? "Outlook-style recipients. Suggestions come from saved organization emails for this agent."
+                : "Outlook-style recipients. Suggestions come from saved department emails for this agent."}
             </span>
             {validationInProgress && (
               <div className="text-xs text-muted-foreground">
