@@ -231,12 +231,14 @@ export default function ApprovalPage() {
                   <SelectValue placeholder={t("Select region")} />
                 </SelectTrigger>
                 <SelectContent>
-                  {regions.map((region) => (
-                    <SelectItem key={region.code} value={region.code}>
-                      {region.name}
-                      {region.is_hub ? ` (${t("Hub")})` : ""}
-                    </SelectItem>
-                  ))}
+                  {regions
+                    .filter((region) => region.code)
+                    .map((region) => (
+                      <SelectItem key={region.code} value={region.code}>
+                        {region.name}
+                        {region.is_hub ? ` (${t("Hub")})` : ""}
+                      </SelectItem>
+                    ))}
                 </SelectContent>
               </Select>
             </div>

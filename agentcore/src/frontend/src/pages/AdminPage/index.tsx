@@ -10,6 +10,8 @@ import {
   useGetUsers,
   useUpdateUser,
 } from "@/controllers/API/queries/auth";
+import { customGetAccessToken } from "@/customization/utils/custom-get-access-token";
+import { BASE_URL_API } from "@/constants/constants";
 import CustomLoader from "@/customization/components/custom-loader";
 import IconComponent from "../../components/common/genericIconComponent";
 import ShadTooltip from "../../components/common/shadTooltipComponent";
@@ -512,6 +514,40 @@ export default function AdminPage() {
     }
   }
 
+  async function handleDownloadCSV() {
+    try {
+      const params = new URLSearchParams();
+      if (inputValue) params.set("q", inputValue);
+      if (selectedOrganizationId) params.set("organization_id", selectedOrganizationId);
+      if (selectedDepartmentId) params.set("department_id", selectedDepartmentId);
+      if (sortBy) params.set("sort_by", sortBy);
+      if (sortOrder) params.set("sort_order", sortOrder);
+
+      const token = customGetAccessToken();
+      const res = await fetch(
+        `${BASE_URL_API}users/export-csv${params.toString() ? `?${params.toString()}` : ""}`,
+        {
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+        },
+      );
+      if (!res.ok) {
+        setErrorData({ title: t("Failed to download CSV") });
+        return;
+      }
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "users_export.csv";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+    } catch {
+      setErrorData({ title: t("Failed to download CSV") });
+    }
+  }
+
   // Helper function to format role for display
   function formatRole(role: string) {
     if (!role) return t("N/A");
@@ -568,7 +604,11 @@ export default function AdminPage() {
                 {t("Filters")}
               </Button>
             </div>
-            <div>
+            <div className="flex items-center gap-2">
+              <Button variant="outline" onClick={handleDownloadCSV}>
+                <IconComponent name="Download" className="mr-2 h-4 w-4" />
+                {t("Download CSV")}
+              </Button>
               <UserManagementModal
                 title={t("New User")}
                 titleHeader={t("Add a new user")}
