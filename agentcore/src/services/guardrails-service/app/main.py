@@ -1,6 +1,32 @@
 import logging
 from contextlib import asynccontextmanager
 
+import spacy
+import spacy.util
+
+# Always redirect en_core_web_lg -> en_core_web_sm to save Docker image size.
+# NeMo/Presidio internally hardcode en_core_web_lg; this patch ensures en_core_web_sm is used.
+_original_is_package = spacy.util.is_package
+_original_load = spacy.load
+_spacy_logger = logging.getLogger("spacy.model_redirect")
+
+
+def _patched_is_package(name):
+    if name == "en_core_web_lg":
+        return _original_is_package("en_core_web_sm")
+    return _original_is_package(name)
+spacy.util.is_package = _patched_is_package
+
+
+def _patched_load(name, **kwargs):
+    if name == "en_core_web_lg":
+        _spacy_logger.info("Spacy model redirected: en_core_web_lg -> en_core_web_sm")
+        name = "en_core_web_sm"
+    else:
+        _spacy_logger.info("Spacy model loaded: %s", name)
+    return _original_load(name, **kwargs)
+spacy.load = _patched_load
+
 import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware

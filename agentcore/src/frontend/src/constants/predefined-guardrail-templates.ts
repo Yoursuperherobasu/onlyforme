@@ -131,9 +131,43 @@ export const PREDEFINED_GUARDRAIL_TEMPLATES: PredefinedGuardrailTemplate[] = [
     stage: "input/output",
     name: "PII Masking",
     category: "pii-masking",
-    configYml: `rails:
+    configYml: `# PII Detection Mode (optional)
+# Options: presidio (default), llm, hybrid
+# - presidio: Uses Presidio + spaCy NER only (fast, no LLM tokens consumed)
+# - llm: Uses LLM only for PII masking (better for regional/non-standard PII like Aadhaar, PAN)
+# - hybrid: Runs Presidio first, then LLM on Presidio's output to catch remaining PII (most thorough)
+pii_detection_mode: presidio
+
+# Score threshold: Lower values catch more PII but may increase false positives (default: 0.4)
+
+rails:
   config:
     sensitive_data_detection:
+      recognizers:
+        - name: IN_AADHAAR_Recognizer
+          supported_language: en
+          supported_entity: IN_AADHAAR
+          patterns:
+            - name: aadhaar_spaced
+              regex: "\\\\b\\\\d{4}[\\\\s-]\\\\d{4}[\\\\s-]\\\\d{4}\\\\b"
+              score: 0.85
+            - name: aadhaar_compact
+              regex: "\\\\b\\\\d{12}\\\\b"
+              score: 0.5
+        - name: IN_PAN_Recognizer
+          supported_language: en
+          supported_entity: IN_PAN
+          patterns:
+            - name: pan
+              regex: "\\\\b[A-Z]{5}\\\\d{4}[A-Z]\\\\b"
+              score: 0.85
+        - name: IN_IFSC_Recognizer
+          supported_language: en
+          supported_entity: IN_IFSC
+          patterns:
+            - name: ifsc
+              regex: "\\\\b[A-Z]{4}0[A-Z0-9]{6}\\\\b"
+              score: 0.85
       input:
         score_threshold: 0.4
         entities:
@@ -143,6 +177,9 @@ export const PREDEFINED_GUARDRAIL_TEMPLATES: PredefinedGuardrailTemplate[] = [
           - CREDIT_CARD
           - US_SSN
           - LOCATION
+          - IN_AADHAAR
+          - IN_PAN
+          - IN_IFSC
       output:
         score_threshold: 0.4
         entities:
@@ -152,6 +189,9 @@ export const PREDEFINED_GUARDRAIL_TEMPLATES: PredefinedGuardrailTemplate[] = [
           - CREDIT_CARD
           - US_SSN
           - LOCATION
+          - IN_AADHAAR
+          - IN_PAN
+          - IN_IFSC
   input:
     flows:
       - mask sensitive data on input

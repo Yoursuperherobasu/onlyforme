@@ -230,3 +230,5 @@ all.env
 scripts/keyvault_master.env
 scripts/compare_keyvault_secrets.py
 docs
+agentcore/src/services/guardrails-service/E2E_TEST_REPORT.md
+agentcore/src/services/guardrails-service/PII_MASKING_TEST_REPORT.md

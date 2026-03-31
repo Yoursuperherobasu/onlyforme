@@ -609,6 +609,11 @@ def _build_effective_runtime_config(
 
     parsed["models"] = [model_block, *preserved_models]
 
+    # Always use en_core_web_sm to keep Docker image small.
+    parsed.setdefault("lowest_nlu", {})
+    if isinstance(parsed["lowest_nlu"], dict):
+        parsed["lowest_nlu"]["spacy_model"] = "en_core_web_sm"
+
     effective = dict(runtime_config)
     effective["config_yml"] = yaml.safe_dump(parsed, sort_keys=False)
     logger.info(
@@ -1113,8 +1118,39 @@ def _extract_pii_llm_prompt(runtime_config: dict[str, Any] | None) -> str | None
     return None
 
 
-async def _llm_pii_mask(rails: Any, text: str, prompt_template: str) -> str:
-    """Use the guardrail's configured LLM to mask PII that presidio missed."""
+def _extract_pii_detection_mode(runtime_config: dict[str, Any] | None) -> str:
+    """Extract pii_detection_mode from config_yml. Returns 'presidio', 'llm', or 'hybrid'. Default: 'presidio'."""
+    if not runtime_config:
+        return "presidio"
+
+    config_yml = runtime_config.get("config_yml", "")
+    if not isinstance(config_yml, str) or not config_yml.strip():
+        return "presidio"
+
+    try:
+        parsed = yaml.safe_load(config_yml)
+        if isinstance(parsed, dict):
+            mode = str(parsed.get("pii_detection_mode", "presidio")).strip().lower()
+            if mode in ("presidio", "llm", "hybrid"):
+                return mode
+            logger.warning(f"Invalid pii_detection_mode '{mode}', defaulting to 'presidio'")
+    except Exception:  # noqa: BLE001
+        logger.debug("Failed to parse config_yml for pii_detection_mode")
+
+    return "presidio"
+
+
+@dataclass(slots=True)
+class _LlmPiiResult:
+    text: str
+    input_tokens: int = 0
+    output_tokens: int = 0
+    total_tokens: int = 0
+    llm_calls_count: int = 0
+
+
+async def _llm_pii_mask(rails: Any, text: str, prompt_template: str) -> _LlmPiiResult:
+    """Use the guardrail's configured LLM to mask PII. Returns masked text and token usage."""
     try:
         prompt = prompt_template.replace("{{ user_input }}", text)
         response = await rails.llm.ainvoke(prompt)
@@ -1123,11 +1159,56 @@ async def _llm_pii_mask(rails: Any, text: str, prompt_template: str) -> str:
         # Sanity check: if LLM returned empty or something wildly different in length, keep original
         if not masked or len(masked) > len(text) * 3:
             logger.warning("LLM PII mask returned suspicious output, keeping presidio result")
-            return text
-        return masked
+            return _LlmPiiResult(text=text)
+
+        # Extract token usage from response metadata
+        usage = getattr(response, "usage_metadata", None) or {}
+        input_tokens = usage.get("input_tokens", 0) if isinstance(usage, dict) else getattr(usage, "input_tokens", 0)
+        output_tokens = usage.get("output_tokens", 0) if isinstance(usage, dict) else getattr(usage, "output_tokens", 0)
+
+        return _LlmPiiResult(
+            text=masked,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            total_tokens=input_tokens + output_tokens,
+            llm_calls_count=1,
+        )
     except Exception:  # noqa: BLE001
-        logger.exception("LLM PII mask fallback failed, keeping presidio result")
-        return text
+        logger.exception("LLM PII mask failed, keeping previous result")
+        return _LlmPiiResult(text=text)
+
+
+def _detect_rail_types(runtime_config: dict[str, Any] | None) -> tuple[bool, bool]:
+    """Detect whether the guardrail config defines input and/or output flows.
+
+    Returns (has_input, has_output).
+    """
+    if not runtime_config:
+        return True, False
+
+    config_yml = runtime_config.get("config_yml", "")
+    if not isinstance(config_yml, str) or not config_yml.strip():
+        return True, False
+
+    try:
+        parsed = yaml.safe_load(config_yml)
+        if not isinstance(parsed, dict):
+            return True, False
+        rails_cfg = parsed.get("rails", {})
+        if not isinstance(rails_cfg, dict):
+            return True, False
+
+        input_flows = rails_cfg.get("input", {})
+        output_flows = rails_cfg.get("output", {})
+        has_input = bool(input_flows.get("flows")) if isinstance(input_flows, dict) else False
+        has_output = bool(output_flows.get("flows")) if isinstance(output_flows, dict) else False
+
+        # Default to input if neither is found
+        if not has_input and not has_output:
+            return True, False
+        return has_input, has_output
+    except Exception:  # noqa: BLE001
+        return True, False
 
 
 def _is_masking_category(category: str | None) -> bool:
@@ -1205,11 +1286,16 @@ async def apply_nemo_guardrail_text(
         )
 
         step = "generate"
+        has_input, has_output = _detect_rail_types(effective_runtime_config)
+        logger.info(
+            f"Rail types detected: has_input={has_input}, has_output={has_output}, "
+            f"guardrail_id={guardrail_id}"
+        )
         options = {
             "rails": {
-                "input": True,
+                "input": has_input,
                 "dialog": False,
-                "output": False,
+                "output": has_output,
                 "retrieval": False,
                 "tool_input": False,
                 "tool_output": False,
@@ -1219,7 +1305,15 @@ async def apply_nemo_guardrail_text(
                 "llm_calls": True,
             },
         }
-        messages = [{"role": "user", "content": input_text}]
+        # NeMo runs input rails on "user" messages and output rails on "assistant" messages.
+        # For output rails, NeMo needs a user message + assistant message in the conversation.
+        if has_output and not has_input:
+            messages = [
+                {"role": "user", "content": ""},
+                {"role": "assistant", "content": input_text},
+            ]
+        else:
+            messages = [{"role": "user", "content": input_text}]
         try:
             generated = rails.generate_async(messages=messages, options=options)
             if asyncio.iscoroutine(generated):
@@ -1240,16 +1334,18 @@ async def apply_nemo_guardrail_text(
         activated_rails = _extract_activated_rails(generated)
         blocked_by_input_rail, blocked_rail_names = _is_input_rail_blocked(activated_rails)
         input_rails_count = sum(1 for rail in activated_rails if rail.get("type") == "input")
+        output_rails_count = sum(1 for rail in activated_rails if rail.get("type") == "output")
         logger.info(
             "NeMo guardrail rails log summary: "
             f"guardrail_id={guardrail_id}, activated_rails={len(activated_rails)}, "
-            f"input_rails={input_rails_count}, blocked_by_input_rail={blocked_by_input_rail}, "
+            f"input_rails={input_rails_count}, output_rails={output_rails_count}, "
+            f"blocked_by_input_rail={blocked_by_input_rail}, "
             f"blocked_input_rails={blocked_rail_names}"
         )
-        if input_rails_count == 0:
+        if input_rails_count == 0 and output_rails_count == 0:
             logger.warning(
-                "NeMo guardrail executed with zero active input rails: "
-                f"guardrail_id={guardrail_id}. Check config_yml rails.input.flows and prompts_yml task names."
+                "NeMo guardrail executed with zero active rails: "
+                f"guardrail_id={guardrail_id}. Check config_yml rails.input/output.flows and prompts_yml task names."
             )
 
         llm_calls = _extract_llm_calls(generated)
@@ -1264,26 +1360,63 @@ async def apply_nemo_guardrail_text(
         step = "extract_output"
         output_text = _extract_generated_text(generated)
 
-        # Hybrid PII masking: if presidio didn't modify the text (passthrough)
-        # but the guardrail is a PII/masking type, run an LLM pass to catch
-        # informal addresses, regional formats, and other PII that regex missed.
-        if (
-            _is_masking_category(guardrail.category)
-            and (output_text or "").strip() == (input_text or "").strip()
-        ):
-            step = "llm_pii_fallback"
-            pii_prompt = _extract_pii_llm_prompt(runtime_config)
-            if pii_prompt:
-                logger.info(
-                    f"Presidio returned passthrough for PII guardrail, running LLM fallback: "
-                    f"guardrail_id={guardrail_id}"
-                )
-                output_text = await _llm_pii_mask(rails, input_text, pii_prompt)
+        # PII masking mode: presidio (default), llm, or hybrid.
+        # - presidio: only Presidio/spaCy NER (already ran above via NeMo rails)
+        # - llm: only LLM-based masking (ignore Presidio output, run LLM on original input)
+        # - hybrid: run LLM on Presidio's output to catch remaining PII
+        pii_llm_result: _LlmPiiResult | None = None
+        if _is_masking_category(guardrail.category):
+            pii_mode = _extract_pii_detection_mode(effective_runtime_config)
+            pii_prompt = _extract_pii_llm_prompt(effective_runtime_config)
+            presidio_modified = (output_text or "").strip() != (input_text or "").strip()
+
+            if pii_mode == "llm":
+                step = "llm_pii_only"
+                if pii_prompt:
+                    logger.info(
+                        f"PII mode=llm, running LLM-only masking: guardrail_id={guardrail_id}"
+                    )
+                    pii_llm_result = await _llm_pii_mask(rails, input_text, pii_prompt)
+                    output_text = pii_llm_result.text
+                else:
+                    logger.warning(
+                        f"PII mode=llm but no pii_llm_mask prompt configured, skipping: guardrail_id={guardrail_id}"
+                    )
+
+            elif pii_mode == "hybrid":
+                step = "llm_pii_hybrid"
+                if pii_prompt:
+                    # Run LLM on Presidio's output (or original input if Presidio didn't modify)
+                    llm_input = output_text if presidio_modified else input_text
+                    logger.info(
+                        f"PII mode=hybrid, running LLM after Presidio (presidio_modified={presidio_modified}): "
+                        f"guardrail_id={guardrail_id}"
+                    )
+                    pii_llm_result = await _llm_pii_mask(rails, llm_input, pii_prompt)
+                    output_text = pii_llm_result.text
+                else:
+                    logger.info(
+                        f"PII mode=hybrid but no pii_llm_mask prompt configured, using Presidio-only result: "
+                        f"guardrail_id={guardrail_id}"
+                    )
+
             else:
+                # pii_mode == "presidio" (default) — Presidio already ran, nothing else to do
                 logger.info(
-                    f"Presidio returned passthrough for PII guardrail, no pii_llm_mask prompt configured, skipping LLM fallback: "
+                    f"PII mode=presidio, Presidio-only result (modified={presidio_modified}): "
                     f"guardrail_id={guardrail_id}"
                 )
+
+        # Merge LLM PII usage into totals
+        if pii_llm_result and pii_llm_result.llm_calls_count > 0:
+            llm_usage["llm_calls_count"] += pii_llm_result.llm_calls_count
+            llm_usage["input_tokens"] += pii_llm_result.input_tokens
+            llm_usage["output_tokens"] += pii_llm_result.output_tokens
+            llm_usage["total_tokens"] += pii_llm_result.total_tokens
+            logger.info(
+                f"PII LLM usage: llm_calls=1, input_tokens={pii_llm_result.input_tokens}, "
+                f"output_tokens={pii_llm_result.output_tokens}, total_tokens={pii_llm_result.total_tokens}"
+            )
 
         step = "classify_action"
         action = _classify_action(
