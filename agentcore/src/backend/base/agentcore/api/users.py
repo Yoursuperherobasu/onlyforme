@@ -1,8 +1,11 @@
 from datetime import datetime, timezone
+import csv
+import io
 import secrets
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi.responses import StreamingResponse
 from sqlalchemy import and_, distinct, exists, func, or_, asc, desc, delete, update, inspect
 from sqlalchemy.sql import column, table
 from sqlalchemy.orm import aliased
@@ -1556,6 +1559,180 @@ async def read_current_user(
         "organization_id": organization_id,
         "department_id": department_id,
     }
+
+
+@router.get("/export-csv")
+async def export_users_csv(
+    *,
+    q: str | None = None,
+    role: str | None = None,
+    organization_id: UUID | None = None,
+    department_id: UUID | None = None,
+    sort_by: str | None = None,
+    sort_order: str | None = None,
+    session: DbSession,
+    current_admin: User = Depends(PermissionChecker(["view_admin_page"])),
+):
+    """Export visible users as a CSV file (respects role-based visibility)."""
+    visible_user_ids = await _visible_user_ids_for_admin(session, current_admin)
+    if not visible_user_ids:
+        output = io.StringIO()
+        writer = csv.writer(output)
+        writer.writerow(["Username", "Email", "Organization", "Department", "Role", "Active", "Created By", "Created At", "Updated At", "Expires At"])
+        output.seek(0)
+        return StreamingResponse(
+            iter([output.getvalue()]),
+            media_type="text/csv",
+            headers={"Content-Disposition": "attachment; filename=users_export.csv"},
+        )
+
+    query: SelectOfScalar = select(User).where(
+        User.id.in_(list(visible_user_ids)),
+        User.deleted_at.is_(None),
+    )
+    if normalize_role(current_admin.role) != "root":
+        query = query.where(User.role != "root")
+    else:
+        duplicate = aliased(User)
+        current_identity = func.lower(func.coalesce(User.email, User.username))
+        duplicate_identity = func.lower(func.coalesce(duplicate.email, duplicate.username))
+        has_non_consumer_duplicate = exists(
+            select(1).where(
+                duplicate.id != User.id,
+                duplicate_identity == current_identity,
+                func.lower(duplicate.role) != "consumer",
+            )
+        )
+        query = query.where(
+            ~and_(func.lower(User.role) == "consumer", has_non_consumer_duplicate)
+        )
+    if role:
+        query = query.where(User.role == normalize_role(role))
+    if q:
+        query = query.where(User.username.ilike(f"%{q}%"))
+    if organization_id:
+        org_exists = exists(
+            select(1).where(
+                UserOrganizationMembership.user_id == User.id,
+                UserOrganizationMembership.org_id == organization_id,
+                UserOrganizationMembership.status.in_(list(ACTIVE_ORG_STATUSES)),
+            )
+        )
+        query = query.where(org_exists)
+    if department_id:
+        dept_exists = exists(
+            select(1).where(
+                UserDepartmentMembership.user_id == User.id,
+                UserDepartmentMembership.department_id == department_id,
+                UserDepartmentMembership.status == ACTIVE_DEPT_STATUS,
+            )
+        )
+        query = query.where(dept_exists)
+
+    sort_key = (sort_by or "").strip().lower()
+    sort_dir = (sort_order or "asc").strip().lower()
+    if sort_dir not in {"asc", "desc"}:
+        sort_dir = "asc"
+    order_func = asc if sort_dir == "asc" else desc
+
+    if sort_key == "username":
+        query = query.order_by(order_func(User.username))
+    elif sort_key == "role":
+        query = query.order_by(order_func(User.role))
+    elif sort_key == "created_at":
+        query = query.order_by(order_func(User.create_at))
+    elif sort_key == "updated_at":
+        query = query.order_by(order_func(User.updated_at))
+    else:
+        query = query.order_by(User.username.asc())
+
+    users = (await session.exec(query)).fetchall()
+
+    user_ids = [user.id for user in users]
+    creator_ids = [user.created_by for user in users if user.created_by]
+
+    org_map: dict[UUID, str] = {}
+    if user_ids:
+        org_rows = (
+            await session.exec(
+                select(UserOrganizationMembership.user_id, Organization.name)
+                .join(Organization, Organization.id == UserOrganizationMembership.org_id)
+                .where(
+                    UserOrganizationMembership.user_id.in_(user_ids),
+                    UserOrganizationMembership.status.in_(list(ACTIVE_ORG_STATUSES)),
+                )
+            )
+        ).all()
+        for uid, org_name in org_rows:
+            if uid not in org_map:
+                org_map[uid] = org_name
+
+    dept_name_map: dict[UUID, str] = {}
+    if user_ids:
+        dept_rows = (
+            await session.exec(
+                select(UserDepartmentMembership.user_id, Department.name)
+                .join(Department, Department.id == UserDepartmentMembership.department_id)
+                .where(
+                    UserDepartmentMembership.user_id.in_(user_ids),
+                    UserDepartmentMembership.status == ACTIVE_DEPT_STATUS,
+                )
+            )
+        ).all()
+        for uid, dept_name in dept_rows:
+            if uid not in dept_name_map:
+                dept_name_map[uid] = dept_name
+
+    creator_map: dict[UUID, str] = {}
+    if creator_ids:
+        creator_rows = (
+            await session.exec(select(User.id, User.username).where(User.id.in_(list(set(creator_ids)))))
+        ).all()
+        creator_map = {cid: cname for cid, cname in creator_rows}
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["Username", "Email", "Organization", "Department", "Role", "Active", "Created By", "Created At", "Updated At", "Expires At"])
+
+    for user in users:
+        org_name = org_map.get(user.id, "")
+        dept_name = dept_name_map.get(user.id) or user.department_name or ""
+        created_by = creator_map.get(user.created_by) if user.created_by else (user.creator_email or "")
+        created_at = user.create_at.strftime("%Y-%m-%d") if user.create_at else ""
+        updated_at = user.updated_at.strftime("%Y-%m-%d") if user.updated_at else ""
+        expires_at = ""
+        if user.expires_at:
+            if isinstance(user.expires_at, str):
+                expires_at = user.expires_at[:10]
+            else:
+                expires_at = user.expires_at.strftime("%Y-%m-%d")
+
+        role_display = (user.role or "").replace("_", " ").title()
+        active_status = "Yes" if user.is_active else "No"
+        if user.expires_at:
+            exp_dt = user.expires_at if not isinstance(user.expires_at, str) else datetime.fromisoformat(user.expires_at.replace("Z", "+00:00"))
+            if exp_dt <= datetime.now(timezone.utc):
+                active_status = "Expired"
+
+        writer.writerow([
+            user.username or "",
+            user.email or "",
+            org_name,
+            dept_name,
+            role_display,
+            active_status,
+            created_by,
+            created_at,
+            updated_at,
+            expires_at,
+        ])
+
+    output.seek(0)
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=users_export.csv"},
+    )
 
 
 @router.get("/", response_model=UsersResponse)

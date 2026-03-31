@@ -190,6 +190,10 @@ class Settings(BaseSettings):
     """Pinecone index name for semantic search vectors."""
     semantic_search_embedding_dimensions: int = 1536
     """Embedding dimensions for semantic search (text-embedding-3-small default: 1536)."""
+    semantic_search_min_score: float = 0.35
+    """Minimum cosine similarity score (0.0-1.0) to return a semantic search result. Results below this threshold are filtered out."""
+    semantic_search_use_reranking: bool = False
+    """Enable Pinecone reranking (pinecone-rerank-v0) for semantic search. Requires a paid Pinecone plan."""
 
     """The cache expire in seconds."""
     # [VARIABLE REMOVED] variable_store setting removed — migrating to Azure Key Vault
