@@ -87,7 +87,7 @@ async def upsert_entity_embedding(
     Safe to call via ``asyncio.create_task`` — never raises.
     """
     if not _is_enabled():
-        logger.info("[SEMANTIC] Semantic search disabled, skipping upsert for %s/%s", entity_type, entity_id)
+        logger.info("[SEMANTIC] Semantic search disabled, skipping upsert for {}/{}", entity_type, entity_id)
         return
 
     try:
@@ -95,11 +95,11 @@ async def upsert_entity_embedding(
         from agentcore.services.pinecone_service_client import async_ingest_via_service
 
         text = build_embedding_text(name, description, tags)
-        logger.info("[SEMANTIC] Generating embedding for %s/%s: text='%s'", entity_type, entity_id, text[:100])
+        logger.info("[SEMANTIC] Generating embedding for {}/{}: text='{}'", entity_type, entity_id, text[:100])
 
         embedding = await embed_single(text)
         if not embedding:
-            logger.warning("[SEMANTIC] Empty embedding for %s/%s, skipping upsert", entity_type, entity_id)
+            logger.warning("[SEMANTIC] Empty embedding for {}/{}, skipping upsert", entity_type, entity_id)
             return
 
         vec_id = build_vector_id(entity_type, entity_id)
@@ -118,7 +118,7 @@ async def upsert_entity_embedding(
         # Try upsert with one retry on failure
         for attempt in range(2):
             try:
-                logger.info("[SEMANTIC] Upserting to Pinecone index=%s namespace=%s vec_id=%s (attempt %d)", _index_name(), entity_type, vec_id, attempt + 1)
+                logger.info("[SEMANTIC] Upserting to Pinecone index={} namespace={} vec_id={} (attempt {})", _index_name(), entity_type, vec_id, attempt + 1)
                 await async_ingest_via_service(
                     index_name=_index_name(),
                     namespace=entity_type,
@@ -129,17 +129,17 @@ async def upsert_entity_embedding(
                     auto_create_index=True,
                     embedding_dimension=_embedding_dimensions(),
                 )
-                logger.info("[SEMANTIC] Successfully upserted embedding for %s/%s", entity_type, entity_id)
+                logger.info("[SEMANTIC] Successfully upserted embedding for {}/{}", entity_type, entity_id)
                 return
             except Exception:
                 if attempt == 0:
-                    logger.warning("[SEMANTIC] Upsert attempt 1 failed for %s/%s, retrying in 2s", entity_type, entity_id, exc_info=True)
+                    logger.warning("[SEMANTIC] Upsert attempt 1 failed for {}/{}, retrying in 2s", entity_type, entity_id, exc_info=True)
                     await asyncio.sleep(2)
                 else:
                     raise
 
     except Exception:
-        logger.warning("[SEMANTIC] Failed to upsert embedding for %s/%s after all attempts", entity_type, entity_id, exc_info=True)
+        logger.warning("[SEMANTIC] Failed to upsert embedding for {}/{} after all attempts", entity_type, entity_id, exc_info=True)
 
 
 # ---------------------------------------------------------------------------
@@ -159,16 +159,16 @@ async def delete_entity_embedding(entity_type: str, entity_id: str) -> None:
         from agentcore.services.pinecone_service_client import async_delete_vectors_via_service
 
         vec_id = build_vector_id(entity_type, entity_id)
-        logger.info("[SEMANTIC] Deleting embedding %s/%s vec_id=%s", entity_type, entity_id, vec_id)
+        logger.info("[SEMANTIC] Deleting embedding {}/{} vec_id={}", entity_type, entity_id, vec_id)
         await async_delete_vectors_via_service(
             index_name=_index_name(),
             namespace=entity_type,
             vector_ids=[vec_id],
         )
-        logger.info("[SEMANTIC] Successfully deleted embedding for %s/%s", entity_type, entity_id)
+        logger.info("[SEMANTIC] Successfully deleted embedding for {}/{}", entity_type, entity_id)
 
     except Exception:
-        logger.warning("[SEMANTIC] Failed to delete embedding for %s/%s", entity_type, entity_id, exc_info=True)
+        logger.warning("[SEMANTIC] Failed to delete embedding for {}/{}", entity_type, entity_id, exc_info=True)
 
 
 # ---------------------------------------------------------------------------
@@ -213,19 +213,26 @@ async def semantic_search(
         query=query,
         query_embedding=embedding,
         number_of_results=top_k,
-        use_reranking=True,
+        use_reranking=_get_settings().semantic_search_use_reranking,
         rerank_top_n=top_k,
         metadata_filter=metadata_filter,
     )
 
+    min_score = _get_settings().semantic_search_min_score
+    all_results = result.get("results", [])
     hits: list[dict] = []
-    for item in result.get("results", []):
+    for item in all_results:
+        score = item.get("score", 0.0)
         meta = item.get("metadata", {})
-        hits.append({
-            "entity_id": meta.get("entity_id", ""),
-            "score": item.get("score", 0.0),
-            "name": meta.get("name", ""),
-        })
+        name = meta.get("name", "")
+        entity_id = meta.get("entity_id", "")
+        if score >= min_score:
+            hits.append({"entity_id": entity_id, "score": score, "name": name})
+            logger.info("[SEMANTIC] Result: name='{}' score={:.4f} entity_id='{}' | KEPT (>= {:.2f})", name, score, entity_id, min_score)
+        else:
+            logger.info("[SEMANTIC] Result: name='{}' score={:.4f} entity_id='{}' | FILTERED (< {:.2f})", name, score, entity_id, min_score)
+
+    logger.info("[SEMANTIC] Search query='{}' entity_type='{}' | pinecone_returned={} after_threshold={} min_score={:.2f}", query, entity_type, len(all_results), len(hits), min_score)
 
     return hits
 
@@ -278,7 +285,7 @@ async def backfill_embeddings(
 
         embeddings = await embed_batch(texts)
         if not embeddings or len(embeddings) != len(texts):
-            logger.warning("[SEMANTIC] Batch embedding failed for %s batch %d, skipping", entity_type, i)
+            logger.warning("[SEMANTIC] Batch embedding failed for {} batch {}, skipping", entity_type, i)
             continue
 
         try:
@@ -294,7 +301,7 @@ async def backfill_embeddings(
             )
             total_upserted += result.get("vectors_upserted", 0)
         except Exception:
-            logger.warning("[SEMANTIC] Batch ingest failed for %s batch %d", entity_type, i, exc_info=True)
+            logger.warning("[SEMANTIC] Batch ingest failed for {} batch {}", entity_type, i, exc_info=True)
 
-    logger.info("[SEMANTIC] Backfill complete for %s: %d vectors upserted", entity_type, total_upserted)
+    logger.info("[SEMANTIC] Backfill complete for {}: {} vectors upserted", entity_type, total_upserted)
     return total_upserted
