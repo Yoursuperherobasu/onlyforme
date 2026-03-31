@@ -311,6 +311,7 @@ export async function buildAgentVertices({
   if (session) {
     inputs["session"] = session;
   }
+  inputs["env"] = "dev";
   if (Object.keys(inputs).length > 0) {
     postData["inputs"] = inputs;
   }

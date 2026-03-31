@@ -508,6 +508,10 @@ async def generate_agent_events(
             async with session_scope() as fresh_session:
                 graph = await create_graph(fresh_session, agent_id_str, agent_name)
 
+            # Playground / builder builds are always dev environment.
+            # Read explicit env from the request body if provided; default to "dev".
+            graph.env = getattr(inputs, "env", None) or "dev"
+
             first_layer = sort_vertices(graph)
 
 

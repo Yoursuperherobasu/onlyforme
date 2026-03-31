@@ -357,6 +357,7 @@ class InputValueRequest(BaseModel):
     components: list[str] | None = []
     input_value: str | None = None
     session: str | None = None
+    env: str | None = None  # "dev", "uat", "prod"
     type: InputType | None = Field(
         "any",
         description="Defines on which components the input value should be applied. "
@@ -398,6 +399,7 @@ class SimplifiedAPIRequest(BaseModel):
     )
     tweaks: Tweaks | None = Field(default=None, description="The tweaks")
     session_id: str | None = Field(default=None, description="The session id")
+    env: str | None = Field(default=None, description="Environment: dev, uat, prod")
     files: list[str] | None = Field(default=None, description="List of file paths for uploaded files")
     # Internal-only HITL resume payload (used by /api/run resume mode).
     hitl_action: str | None = Field(default=None, description="HITL action name for resume mode")

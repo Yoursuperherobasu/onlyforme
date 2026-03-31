@@ -493,7 +493,7 @@ class LTMService(Service):
         if not entities:
             return
 
-        # Namespace by session + environment: ltm_{session_id}_prod, ltm_{session_id}
+        # Namespace by session_id — data isolation is per session
         graph_kb_id = f"{settings.ltm_neo4j_graph_kb_id}_{session_id}"
 
         try:
@@ -590,7 +590,7 @@ class LTMService(Service):
 
             embedding = await self._embed_text(summary)
 
-            # Namespace by session + environment: {session_id}_prod, {session_id}
+            # Namespace by session_id — data isolation is per session
             namespace = f"{session_id}"
 
             # Dedup check: query existing summaries with this embedding

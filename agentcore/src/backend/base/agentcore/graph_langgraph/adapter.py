@@ -86,6 +86,11 @@ class LangGraphAdapter:
         # Context for shared state (used by conditional router, loops, etc.)
         self.context: dict[str, Any] = {}
         
+        # Environment context — "dev", "uat", "prod".
+        # Set by the API endpoint / build handler so downstream components
+        # (Memory, LTM) know the request environment without re-detecting.
+        self.env: str | None = None
+
         # When True, skip writing to dev tables (conversation, transaction,
         # vertex_build).  Set by the orchestration chat so that only the
         # orch-specific tables receive data.

@@ -692,6 +692,7 @@ export default function AgentOrchestrator() {
       deployment_id: targetAgent.deploy_id,
       input_value: cleanedInput,
       version_number: targetAgent.version_number,
+      env: targetAgent.environment || "uat",
     };
     if (filePaths.length > 0) {
       requestBody.files = filePaths;
