@@ -1220,7 +1220,7 @@ const KnowledgeBasesTab = ({
       <div className="flex flex-shrink-0 flex-col gap-3 border-b px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-6 md:px-8 md:py-4">
         <div>
           <div className="mb-1 flex items-center gap-3">
-            <h1 className="text-lg font-semibold md:text-xl">{t("Knowledge Hub")}</h1>
+            <h1 className="text-lg font-semibold md:text-xl">{t("Knowledge Base")}</h1>
           </div>
           <p className="text-sm text-muted-foreground">
             {t("Manage knowledge sources for agents")}

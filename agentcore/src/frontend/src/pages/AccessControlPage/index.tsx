@@ -115,7 +115,7 @@ const EXCEL_PERMISSION_STRUCTURE: Array<{
     ],
   },
   {
-    page: "Knowledge Hub",
+    page: "Knowledge Base",
     sections: [
       { name: "Page Access", keys: ["view_knowledge_base"] },
       { name: "Actions", keys: ["add_new_knowledge"] },

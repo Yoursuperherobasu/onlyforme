@@ -32,9 +32,6 @@ def _build_key_vault_store() -> KeyVaultSecretStore | None:
     config = KeyVaultConfig(
         vault_url=settings.key_vault_url,
         secret_prefix=settings.key_vault_secret_prefix,
-        tenant_id=settings.key_vault_tenant_id,
-        client_id=settings.key_vault_client_id,
-        client_secret=settings.key_vault_client_secret,
     )
     return KeyVaultSecretStore.from_config(config)
 

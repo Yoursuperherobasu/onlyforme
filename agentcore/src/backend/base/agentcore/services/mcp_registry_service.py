@@ -66,9 +66,6 @@ def _get_kv_store() -> KeyVaultSecretStore | None:
         KeyVaultConfig(
             vault_url=vault_url,
             secret_prefix=_secret_prefix(),
-            tenant_id=os.getenv("AGENTCORE_KEY_VAULT_TENANT_ID", "").strip() or None,
-            client_id=os.getenv("AGENTCORE_KEY_VAULT_CLIENT_ID", "").strip() or None,
-            client_secret=os.getenv("AGENTCORE_KEY_VAULT_CLIENT_SECRET", "").strip() or None,
         )
     )
     _kv_store_cache[vault_url] = store

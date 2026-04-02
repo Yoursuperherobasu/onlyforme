@@ -35,9 +35,6 @@ class Settings(BaseSettings):
     # Azure Key Vault — required. Region registry is stored as a KV secret.
     key_vault_url: str = ""
     key_vault_regions_secret: str = "agentcore-region-registry"
-    key_vault_tenant_id: str | None = None
-    key_vault_client_id: str | None = None
-    key_vault_client_secret: str | None = None
 
     # Request timeouts (seconds)
     proxy_timeout: int = 10
@@ -82,16 +79,12 @@ def load_regions(settings: Settings | None = None) -> list[RegionEntry]:
 
     from azure.keyvault.secrets import SecretClient
 
-    if settings.key_vault_tenant_id and settings.key_vault_client_id and settings.key_vault_client_secret:
-        from azure.identity import ClientSecretCredential
-        credential = ClientSecretCredential(
-            tenant_id=settings.key_vault_tenant_id,
-            client_id=settings.key_vault_client_id,
-            client_secret=settings.key_vault_client_secret,
-        )
-    else:
-        from azure.identity import DefaultAzureCredential
-        credential = DefaultAzureCredential()
+    from azure.identity import DefaultAzureCredential
+
+    credential = DefaultAzureCredential(
+        exclude_environment_credential=True,
+        exclude_interactive_browser_credential=True,
+    )
 
     client = SecretClient(vault_url=settings.key_vault_url, credential=credential)
     secret = client.get_secret(settings.key_vault_regions_secret)

@@ -44,9 +44,6 @@ def _get_kv_store():
         KeyVaultConfig(
             vault_url=vault_url,
             secret_prefix=os.getenv("AGENTCORE_KEY_VAULT_SECRET_PREFIX", "agentcore").strip() or "agentcore",
-            tenant_id=os.getenv("AGENTCORE_KEY_VAULT_TENANT_ID", "").strip() or None,
-            client_id=os.getenv("AGENTCORE_KEY_VAULT_CLIENT_ID", "").strip() or None,
-            client_secret=os.getenv("AGENTCORE_KEY_VAULT_CLIENT_SECRET", "").strip() or None,
         )
     )
     if kv_store is None:

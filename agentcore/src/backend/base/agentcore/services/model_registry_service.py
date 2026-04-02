@@ -187,16 +187,10 @@ def _try_resolve_key_vault_secret(secret_name: str) -> str | None:
         {
             "vault_url": os.getenv("MODEL_SERVICE_KEY_VAULT_URL", ""),
             "prefix": os.getenv("MODEL_SERVICE_KEY_VAULT_SECRET_PREFIX", "agentcore"),
-            "tenant_id": os.getenv("MODEL_SERVICE_KEY_VAULT_TENANT_ID", ""),
-            "client_id": os.getenv("MODEL_SERVICE_KEY_VAULT_CLIENT_ID", ""),
-            "client_secret": os.getenv("MODEL_SERVICE_KEY_VAULT_CLIENT_SECRET", ""),
         },
         {
             "vault_url": os.getenv("AGENTCORE_KEY_VAULT_URL", ""),
             "prefix": os.getenv("AGENTCORE_KEY_VAULT_SECRET_PREFIX", "agentcore"),
-            "tenant_id": os.getenv("AGENTCORE_KEY_VAULT_TENANT_ID", ""),
-            "client_id": os.getenv("AGENTCORE_KEY_VAULT_CLIENT_ID", ""),
-            "client_secret": os.getenv("AGENTCORE_KEY_VAULT_CLIENT_SECRET", ""),
         },
     ]
 
@@ -210,9 +204,6 @@ def _try_resolve_key_vault_secret(secret_name: str) -> str | None:
                 store = KeyVaultSecretStore.from_config(KeyVaultConfig(
                     vault_url=vault_url,
                     secret_prefix=cfg["prefix"],
-                    tenant_id=cfg["tenant_id"] or None,
-                    client_id=cfg["client_id"] or None,
-                    client_secret=cfg["client_secret"] or None,
                 ))
                 _kv_store_cache[cache_key] = store
             except Exception:

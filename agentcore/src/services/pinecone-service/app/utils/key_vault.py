@@ -10,9 +10,6 @@ from pydantic import BaseModel
 class KeyVaultConfig(BaseModel):
     vault_url: str | None = None
     secret_prefix: str = "agentcore-pinecone"
-    tenant_id: str | None = None
-    client_id: str | None = None
-    client_secret: str | None = None
 
 
 @dataclass(slots=True)
@@ -27,17 +24,13 @@ class KeyVaultSecretStore:
         if not config.vault_url:
             return None
 
-        from azure.identity import ClientSecretCredential, DefaultAzureCredential
+        from azure.identity import DefaultAzureCredential
         from azure.keyvault.secrets import SecretClient
 
-        if config.tenant_id and config.client_id and config.client_secret:
-            credential = ClientSecretCredential(
-                tenant_id=config.tenant_id,
-                client_id=config.client_id,
-                client_secret=config.client_secret,
-            )
-        else:
-            credential = DefaultAzureCredential(exclude_interactive_browser_credential=True)
+        credential = DefaultAzureCredential(
+            exclude_environment_credential=True,
+            exclude_interactive_browser_credential=True,
+        )
 
         client = SecretClient(
             vault_url=config.vault_url,

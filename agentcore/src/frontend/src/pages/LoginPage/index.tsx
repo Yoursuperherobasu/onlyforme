@@ -94,8 +94,6 @@ export default function LoginPage(): JSX.Element {
         return;
       }
 
-      console.log("🟣 [SSO] Starting Azure login...");
-
       let response;
       try {
         response = await instance.loginPopup(loginRequest);
@@ -111,12 +109,7 @@ export default function LoginPage(): JSX.Element {
         }
         throw popupErr;
       }
-      console.log("🟣 [SSO] Azure popup success:", response);
-
       const idToken = response.idToken;
-
-      console.log("🟣 [SSO] Sending token to backend...");
-      const backendBaseUrl = getBackendBaseUrl();
 
       const res = await fetch(
         "/api/azure/sso",
@@ -143,19 +136,12 @@ export default function LoginPage(): JSX.Element {
       }
 
       const data = await res.json();
-
-      console.log("✅ [SSO] BACKEND TOKEN RESPONSE:", data);
-
-      // legacy token handling (cookies, redirects)
-      console.log("🟡 [SSO] Calling AuthContext.login()");
       login(
         data.access_token,
         data.role,
         data.permissions,
         data.refresh_token,
       );
-
-      console.log("🟢 [SSO] Zustand AFTER SET:", useAuthStore.getState());
 
       // optional redirect
       // window.location.href = "/";
@@ -177,28 +163,19 @@ export default function LoginPage(): JSX.Element {
       password: password.trim(),
     };
 
-    console.log("🟣 [LOGIN] Starting username/password login...");
-
     mutate(user, {
       onSuccess: (data) => {
-        console.log("✅ [LOGIN] BACKEND TOKEN RESPONSE:", data);
-
-        console.log("🟡 [LOGIN] Calling AuthContext.login()");
         login(
           data.access_token,
           data.role,
           data.permissions,
           data.refresh_token,
         );
-
-        console.log("🟢 [LOGIN] Updating Zustand auth store...");
         setAuthContext({
           role: data.role,
           permissions: data.permissions,
         });
         setIsAuthenticated(true);
-
-        console.log("🟢 [LOGIN] Zustand AFTER SET:", useAuthStore.getState());
       },
       onError: (error) => {
         console.error("🔴 [LOGIN] Login failed:", error);

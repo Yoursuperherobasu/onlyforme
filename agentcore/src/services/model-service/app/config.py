@@ -73,9 +73,6 @@ class Settings(BaseSettings):
     encryption_key: str = ""
     key_vault_url: str | None = None
     key_vault_secret_prefix: str = "agentcore-model"
-    key_vault_tenant_id: str | None = None
-    key_vault_client_id: str | None = None
-    key_vault_client_secret: str | None = None
     key_vault_api_key_secret_name: str | None = None
     key_vault_database_url_secret_name: str | None = None
 
@@ -103,9 +100,6 @@ def get_settings() -> Settings:
             KeyVaultConfig(
                 vault_url=settings.key_vault_url,
                 secret_prefix=settings.key_vault_secret_prefix,
-                tenant_id=settings.key_vault_tenant_id,
-                client_id=settings.key_vault_client_id,
-                client_secret=settings.key_vault_client_secret,
             )
         )
 
