@@ -199,16 +199,28 @@ async def test_bot_message() -> dict:
 @router.get("/oauth/authorize")
 async def teams_oauth_authorize(
     db: DbSession,
-    token: str = Query(..., description="JWT access token"),
+    request: Request,
+    token: str | None = Query(default=None, description="JWT access token"),
 ) -> RedirectResponse:
     """Start the Microsoft OAuth flow.
 
     Redirects the user to Microsoft login to authorize Graph API access.
     Called from a popup window in the frontend.
-    Token is passed as query param because window.open() cannot set headers.
+    Prefer existing session auth (cookie / Authorization header). Query token is
+    retained as a backward-compatible fallback for older clients.
     """
-    # Manually validate the JWT token passed as query param
-    current_user = await get_current_user_by_jwt(token, db)
+    auth_header = request.headers.get("Authorization", "")
+    bearer_token = auth_header.split(" ", 1)[1] if auth_header.startswith("Bearer ") else None
+    cookie_token = request.cookies.get("access_token_lf")
+    resolved_token = cookie_token or bearer_token or token
+
+    if not resolved_token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing authentication token",
+        )
+
+    current_user = await get_current_user_by_jwt(resolved_token, db)
 
     teams_service = get_teams_service()
     redirect_uri = teams_service.get_redirect_uri()

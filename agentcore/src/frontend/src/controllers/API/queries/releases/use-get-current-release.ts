@@ -13,9 +13,14 @@ export const useGetCurrentRelease: useQueryFunctionType<
 > = (params, options?) => {
   const { query } = UseRequestProcessor();
   const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
+  const permissions = useAuthStore((state) => state.permissions);
+  const role = useAuthStore((state) => state.role);
+  const canViewReleaseManagement =
+    String(role ?? "").toLowerCase() === "root" ||
+    permissions.includes("view_release_management_page");
 
   const getCurrentReleaseFn = async (): Promise<ReleaseRecord | null> => {
-    if (!isAuthenticated) return null;
+    if (!isAuthenticated || !canViewReleaseManagement) return null;
     const config = params?.regionCode ? { headers: { "X-Region-Code": params.regionCode } } : undefined;
     const res = await api.get(`${getURL("RELEASES")}/current`, config);
     return res.data;
@@ -36,6 +41,8 @@ export const useGetCurrentRelease: useQueryFunctionType<
     {
       refetchOnWindowFocus: false,
       ...options,
+      enabled:
+        (options?.enabled ?? true) && isAuthenticated && canViewReleaseManagement,
     },
   );
 

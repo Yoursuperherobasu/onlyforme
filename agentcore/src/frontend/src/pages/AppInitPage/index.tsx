@@ -6,7 +6,6 @@ import { useGetFoldersQuery } from "@/controllers/API/queries/folders/use-get-fo
 import { useGetTagsQuery } from "@/controllers/API/queries/store";
 import { useGetGlobalVariables } from "@/controllers/API/queries/variables";
 import { useGetVersionQuery } from "@/controllers/API/queries/version";
-import { useGetCurrentRelease } from "@/controllers/API/queries/releases";
 import { ENABLE_AGENTCORE_STORE } from "@/customization/feature-flags";
 import { CustomLoadingPage } from "@/customization/components/custom-loading-page";
 import { useCustomPrimaryLoading } from "@/customization/hooks/use-custom-primary-loading";
@@ -21,7 +20,6 @@ export function AppInitPage() {
   const { isFetched: isLoaded } = useCustomPrimaryLoading();
 
   useGetVersionQuery({ enabled: isLoaded });
-  useGetCurrentRelease({ enabled: isLoaded });
   const { isFetched: isConfigFetched } = useGetConfig({ enabled: isLoaded });
   useGetGlobalVariables({ enabled: isLoaded });
   useGetTagsQuery({ enabled: isLoaded && ENABLE_AGENTCORE_STORE });

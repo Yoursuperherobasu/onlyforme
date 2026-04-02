@@ -10,7 +10,6 @@ import { useGetUserData } from "@/controllers/API/queries/auth";
 import { useLogout } from "@/controllers/API/queries/auth/use-post-logout";
 import { useGetGlobalVariablesMutation } from "@/controllers/API/queries/variables/use-get-mutation-global-variables";
 import useAuthStore from "@/stores/authStore";
-import { setLocalStorage } from "@/utils/local-storage-util";
 import { getAuthCookie, setAuthCookie } from "@/utils/utils";
 import { useStoreStore } from "../stores/storeStore";
 import type { Users } from "../types/api";
@@ -196,7 +195,6 @@ export function AuthProvider({ children }): React.ReactElement {
     
   ) {
     setAuthCookie(cookies, AGENTCORE_ACCESS_TOKEN, newAccessToken);
-    setLocalStorage(AGENTCORE_ACCESS_TOKEN, newAccessToken);
 
     if (refreshToken) {
       setAuthCookie(cookies, AGENTCORE_REFRESH_TOKEN, refreshToken);
