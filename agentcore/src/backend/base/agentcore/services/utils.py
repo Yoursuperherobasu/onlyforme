@@ -119,18 +119,40 @@ async def clean_vertex_builds(settings_service: SettingsService, session: AsyncS
 
 async def initialize_services(*, fix_migration: bool = False) -> None:
     """Initialize all the services needed."""
+    settings_service = get_service(ServiceType.SETTINGS_SERVICE)
     cache_service = get_service(ServiceType.CACHE_SERVICE, default=CacheServiceFactory())
-    # Test external cache connection
+    # Test external cache connection and gracefully fall back for local/dev runs.
     if isinstance(cache_service, ExternalAsyncBaseCacheService) and not (await cache_service.is_connected()):
-        msg = "Cache service failed to connect to external database"
-        raise ConnectionError(msg)
+        strict_cache_startup = os.getenv("CACHE_STRICT_STARTUP", "true").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+        if strict_cache_startup:
+            msg = "Cache service failed to connect to external database"
+            raise ConnectionError(msg)
+
+        from agentcore.services.cache.service import AsyncInMemoryCache
+        from agentcore.services.manager import service_manager
+
+        fallback_ttl = settings_service.settings.cache_expire or settings_service.settings.redis_cache_expire or 3600
+        fallback_cache_service = AsyncInMemoryCache(expiration_time=fallback_ttl)
+        fallback_cache_service.set_ready()
+        service_manager.services[ServiceType.CACHE_SERVICE] = fallback_cache_service
+        settings_service.settings.cache_type = "async"
+        cache_service = fallback_cache_service
+        logger.warning(
+            "Cache service failed to connect to external database. "
+            "Falling back to in-memory async cache. "
+            "Set CACHE_STRICT_STARTUP=false to allow fallback."
+        )
 
     # Initialize database
     await initialize_database(fix_migration=fix_migration)
     db_service = get_db_service()
     await db_service.initialize_alembic_log_file()
     async with db_service.with_session() as session:
-        settings_service = get_service(ServiceType.SETTINGS_SERVICE)
         # SSO is enabled - users are managed via Azure AD, no superuser setup needed
         await clean_transactions(settings_service, session)
         await clean_vertex_builds(settings_service, session)

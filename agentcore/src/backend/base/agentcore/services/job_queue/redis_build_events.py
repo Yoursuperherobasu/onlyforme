@@ -119,8 +119,10 @@ def get_redis_job_event_store(
         settings.redis_host,
         settings.redis_port,
         settings.redis_db,
-        settings.redis_password,
         settings.redis_ssl,
+        settings.redis_entra_scope,
+        settings.redis_entra_object_id,
+        settings.redis_entra_refresh_margin_seconds,
         settings.redis_cache_expire,
     )
 
