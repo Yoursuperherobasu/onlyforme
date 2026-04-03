@@ -197,15 +197,22 @@ class RedisCache(ExternalAsyncBaseCacheService, Generic[LockType]):
         b = cache["b"]
     """
 
-    def __init__(self, host=os.getenv("LOCALHOST_HOST", "localhost"), port=6379, db=0, url=None, password=None, ssl=False, expiration_time=60 * 60) -> None:
+    def __init__(
+        self,
+        host=os.getenv("LOCALHOST_HOST", "localhost"),
+        port=6379,
+        db=0,
+        credential_provider=None,
+        ssl=False,
+        expiration_time=60 * 60,
+    ) -> None:
         """Initialize a new RedisCache instance.
 
         Args:
             host (str, optional): Redis host.
             port (int, optional): Redis port.
             db (int, optional): Redis DB.
-            url (str, optional): Redis URL.
-            password (str, optional): Redis password.
+            credential_provider (CredentialProvider): Redis credential provider.
             ssl (bool, optional): Use SSL connection.
             expiration_time (int, optional): Time in seconds after which a
                 cached item expires. Default is 1 hour.
@@ -215,35 +222,26 @@ class RedisCache(ExternalAsyncBaseCacheService, Generic[LockType]):
         from redis.asyncio.retry import Retry
         from redis.backoff import ExponentialBackoff
 
-        logger.warning(
-            ""
-        )
         # retry_on_timeout + Retry: when Redis restarts or a connection
         # goes stale, the client automatically drops the dead socket and
         # retries with a fresh connection — no server restart needed.
         _retry = Retry(ExponentialBackoff(), retries=3)
-        if url:
-            self._client = StrictRedis.from_url(
-                url,
-                socket_connect_timeout=5,
-                socket_timeout=5,
-                retry_on_timeout=True,
-                retry=_retry,
-                health_check_interval=30,
-            )
-        else:
-            self._client = StrictRedis(
-                host=host,
-                port=port,
-                db=db,
-                password=password,
-                ssl=ssl,
-                socket_connect_timeout=5,
-                socket_timeout=5,
-                retry_on_timeout=True,
-                retry=_retry,
-                health_check_interval=30,
-            )
+        if credential_provider is None:
+            msg = "RedisCache requires an Entra ID credential provider."
+            raise ValueError(msg)
+
+        self._client = StrictRedis(
+            host=host,
+            port=port,
+            db=db,
+            ssl=ssl,
+            credential_provider=credential_provider,
+            socket_connect_timeout=5,
+            socket_timeout=5,
+            retry_on_timeout=True,
+            retry=_retry,
+            health_check_interval=30,
+        )
         self.expiration_time = expiration_time
 
     async def is_connected(self) -> bool:
@@ -252,9 +250,8 @@ class RedisCache(ExternalAsyncBaseCacheService, Generic[LockType]):
 
         try:
             await self._client.ping()
-        except redis.exceptions.ConnectionError:
-            msg = "RedisCache could not connect to the Redis server"
-            logger.exception(msg)
+        except (redis.exceptions.ConnectionError, redis.exceptions.TimeoutError, redis.exceptions.RedisError) as exc:
+            logger.warning(f"RedisCache connection check failed: {exc}")
             return False
         return True
 
