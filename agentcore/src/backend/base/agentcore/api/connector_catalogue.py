@@ -93,18 +93,10 @@ def _prepare_provider_config(
     prefix = _secret_prefix()
 
     if provider == "azure_blob":
-        secret_name_key = "connection_string_secret_name"
-        raw_value = prepared.get("connection_string")
-        if raw_value:
-            if allow_secret_update or not existing.get(secret_name_key):
-                secret_name = _build_secret_name(prefix, connector_id, provider, "connection-string")
-                _store_secret_value(secret_name, raw_value)
-                prepared[secret_name_key] = secret_name
-            else:
-                prepared[secret_name_key] = existing.get(secret_name_key) or prepared.get(secret_name_key)
-            prepared.pop("connection_string", None)
-        elif existing.get(secret_name_key):
-            prepared[secret_name_key] = existing[secret_name_key]
+        # Azure Blob connectors use managed identity (AAD) only.
+        # Strip legacy connection-string fields if present.
+        prepared.pop("connection_string", None)
+        prepared.pop("connection_string_secret_name", None)
 
     elif provider == "sharepoint":
         secret_name_key = "client_secret_secret_name"
@@ -140,8 +132,16 @@ def _prepare_provider_config(
 def _ensure_provider_secret_present(provider: str, config: dict, existing_config: dict | None = None) -> None:
     existing = dict(existing_config or {})
     if provider == "azure_blob":
-        if not config.get("connection_string") and not config.get("connection_string_secret_name") and not existing.get("connection_string_secret_name"):
-            raise HTTPException(status_code=400, detail="connection_string is required for Azure Blob connector")
+        merged = {**existing, **(config or {})}
+        if merged.get("connection_string") or merged.get("connection_string_secret_name"):
+            raise HTTPException(
+                status_code=400,
+                detail="connection_string is no longer supported for Azure Blob connector. Use account_url + container_name.",
+            )
+        if not merged.get("account_url"):
+            raise HTTPException(status_code=400, detail="account_url is required for Azure Blob connector")
+        if not merged.get("container_name"):
+            raise HTTPException(status_code=400, detail="container_name is required for Azure Blob connector")
     elif provider == "sharepoint":
         if not config.get("client_secret") and not config.get("client_secret_secret_name") and not existing.get("client_secret_secret_name"):
             raise HTTPException(status_code=400, detail="client_secret is required for SharePoint connector")
@@ -154,10 +154,9 @@ def _decrypt_provider_config(provider: str, config: dict) -> dict:
     """Resolve Key Vault secrets into provider_config for runtime use."""
     resolved = dict(config or {})
     if provider == "azure_blob":
-        if "connection_string" not in resolved:
-            secret_name = resolved.get("connection_string_secret_name", "")
-            if secret_name:
-                resolved["connection_string"] = _resolve_secret_value(secret_name)
+        # Azure Blob uses managed identity only; no provider secrets to resolve.
+        resolved.pop("connection_string", None)
+        resolved.pop("connection_string_secret_name", None)
     elif provider == "sharepoint":
         if "client_secret" not in resolved:
             secret_name = resolved.get("client_secret_secret_name", "")
@@ -743,29 +742,55 @@ def _test_azure_blob_connection(config: dict) -> dict:
     """Test an Azure Blob Storage connection."""
     start = time.time()
     try:
+        from azure.identity import DefaultAzureCredential
         from azure.storage.blob import BlobServiceClient
     except ImportError:
         raise HTTPException(
             status_code=400,
-            detail="azure-storage-blob not installed. Install with: pip install azure-storage-blob",
+            detail=(
+                "azure-storage-blob and azure-identity packages are required. "
+                "Install with: pip install azure-storage-blob azure-identity"
+            ),
         )
 
-    connection_string = config.get("connection_string", "")
+    account_url = config.get("account_url", "")
     container_name = config.get("container_name", "")
+    prefix = config.get("blob_prefix", "")
 
-    if not connection_string:
-        raise HTTPException(status_code=400, detail="connection_string is required for Azure Blob connector")
+    if not account_url:
+        raise HTTPException(status_code=400, detail="account_url is required for Azure Blob connector")
     if not container_name:
         raise HTTPException(status_code=400, detail="container_name is required for Azure Blob connector")
+    if config.get("connection_string") or config.get("connection_string_secret_name"):
+        raise HTTPException(
+            status_code=400,
+            detail="connection_string is no longer supported for Azure Blob connector. Use account_url + container_name.",
+        )
 
-    client = BlobServiceClient.from_connection_string(connection_string)
-    container_client = client.get_container_client(container_name)
-    blobs = list(container_client.list_blobs())
-    latency_ms = round((time.time() - start) * 1000, 2)
+    credential = DefaultAzureCredential(
+        exclude_environment_credential=True,
+        exclude_interactive_browser_credential=True,
+    )
+    client = BlobServiceClient(account_url=account_url, credential=credential)
+    try:
+        container_client = client.get_container_client(container_name)
+        container_client.get_container_properties()
+        sample_blob = next(iter(container_client.list_blobs(name_starts_with=prefix or None)), None)
+        latency_ms = round((time.time() - start) * 1000, 2)
+    finally:
+        close_client = getattr(client, "close", None)
+        if callable(close_client):
+            close_client()
+        close_credential = getattr(credential, "close", None)
+        if callable(close_credential):
+            close_credential()
 
     return {
         "success": True,
-        "message": f"Connected successfully. Found {len(blobs)} blobs in '{container_name}'.",
+        "message": (
+            f"Connected successfully to container '{container_name}' via managed identity. "
+            f"{'Found at least one blob.' if sample_blob else 'Container is accessible (no blobs found for the selected prefix).'}"
+        ),
         "latency_ms": latency_ms,
         "tables_metadata": None,
     }

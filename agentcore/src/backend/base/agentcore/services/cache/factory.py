@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 from typing_extensions import override
 
 from agentcore.logging.logger import logger
-from agentcore.services.cache.redis_client import get_redis_credential_provider
+from agentcore.services.cache.redis_client import get_redis_credential_provider, _redis_cluster_enabled
 from agentcore.services.cache.service import AsyncInMemoryCache, CacheService, RedisCache, ThreadingInMemoryCache
 from agentcore.services.factory import ServiceFactory
 
@@ -29,6 +29,7 @@ class CacheServiceFactory(ServiceFactory):
                 port=settings_service.settings.redis_port,
                 db=settings_service.settings.redis_db,
                 credential_provider=get_redis_credential_provider(settings_service),
+                cluster_enabled=_redis_cluster_enabled(settings_service),
                 ssl=settings_service.settings.redis_ssl,
                 expiration_time=settings_service.settings.redis_cache_expire,
             )

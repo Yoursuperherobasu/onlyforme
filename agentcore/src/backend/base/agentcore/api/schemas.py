@@ -160,6 +160,13 @@ class UploadFileResponse(BaseModel):
     file_path: Path
 
 
+class UserUploadFileResponse(BaseModel):
+    """User file upload response schema."""
+
+    user_id: str = Field(serialization_alias="userId")
+    file_path: Path
+
+
 class StreamData(BaseModel):
     event: str
     data: dict
@@ -459,4 +466,3 @@ class CancelagentResponse(BaseModel):
 
     success: bool
     message: str
-

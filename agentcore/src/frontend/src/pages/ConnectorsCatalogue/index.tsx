@@ -102,7 +102,7 @@ const BLANK_FORM = {
   password: "",
   ssl_enabled: false,
   // Azure Blob fields
-  azure_connection_string: "",
+  azure_account_url: "",
   azure_container_name: "",
   azure_blob_prefix: "",
   // SharePoint fields
@@ -496,8 +496,8 @@ export default function ConnectorsCatalogueView(): JSX.Element {
       username: connector.username ?? "",
       password: "",
       ssl_enabled: connector.ssl_enabled,
-      // Azure Blob (connection_string is masked; user must re-enter to update)
-      azure_connection_string: "",
+      // Azure Blob (managed identity via account URL)
+      azure_account_url: cfg.account_url ?? "",
       azure_container_name: cfg.container_name ?? "",
       azure_blob_prefix: cfg.blob_prefix ?? "",
       // SharePoint (client_secret is masked; user must re-enter to update)
@@ -582,11 +582,9 @@ export default function ConnectorsCatalogueView(): JSX.Element {
 
     if (form.provider === "azure_blob") {
       const provider_config: Record<string, string> = {
+        account_url: form.azure_account_url,
         container_name: form.azure_container_name,
       };
-      if (form.azure_connection_string) {
-        provider_config.connection_string = form.azure_connection_string;
-      }
       if (form.azure_blob_prefix) {
         provider_config.blob_prefix = form.azure_blob_prefix;
       }
@@ -661,9 +659,9 @@ export default function ConnectorsCatalogueView(): JSX.Element {
       }
     }
     if (form.provider === "azure_blob") {
-      // On create, connection_string is required; on edit, container_name is always required
+      // Azure Blob managed identity requires account_url + container_name
       if (!form.azure_container_name) return true;
-      if (!editingConnector && !form.azure_connection_string) return true;
+      if (!form.azure_account_url) return true;
     } else if (form.provider === "sharepoint") {
       if (!form.sharepoint_site_url || !form.sharepoint_client_id) return true;
       if (!editingConnector && !form.sharepoint_client_secret) return true;
@@ -780,7 +778,7 @@ export default function ConnectorsCatalogueView(): JSX.Element {
         payload = {
           provider: form.provider,
           provider_config: {
-            connection_string: form.azure_connection_string,
+            account_url: form.azure_account_url,
             container_name: form.azure_container_name,
             ...(form.azure_blob_prefix ? { blob_prefix: form.azure_blob_prefix } : {}),
           },
@@ -1581,30 +1579,15 @@ export default function ConnectorsCatalogueView(): JSX.Element {
               {form.provider === "azure_blob" && (
                 <>
                   <div>
-                    <label className="mb-1.5 block text-sm font-medium">
-                      {t("Connection String")}{" "}
-                      {editingConnector && (
-                        <span className="text-xs text-muted-foreground">{t("(leave blank to keep current)")}</span>
-                      )}
-                    </label>
-                    <div className="relative">
-                      <input
-                        type={showPassword ? "text" : "password"}
-                        value={form.azure_connection_string}
-                        onChange={(e) =>
-                          setForm({ ...form, azure_connection_string: e.target.value })
-                        }
-                        className="w-full rounded-lg border border-border bg-background px-3 py-2 pr-10 text-sm focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring"
-                        placeholder="DefaultEndpointsProtocol=https;AccountName=..."
-                      />
-                      <button
-                        type="button"
-                        onClick={() => setShowPassword(!showPassword)}
-                        className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                      >
-                        {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                      </button>
-                    </div>
+                    <label className="mb-1.5 block text-sm font-medium">{t("Storage Account URL")}</label>
+                    <input
+                      value={form.azure_account_url}
+                      onChange={(e) =>
+                        setForm({ ...form, azure_account_url: e.target.value })
+                      }
+                      className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring"
+                      placeholder="https://<account>.blob.core.windows.net"
+                    />
                   </div>
                   <div className="grid grid-cols-2 gap-3">
                     <div>

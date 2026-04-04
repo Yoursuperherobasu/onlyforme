@@ -41,6 +41,13 @@ def _get_release_documents_container(settings_service: SettingsService) -> str:
     return configured
 
 
+def _get_storage_account_url() -> str:
+    account_url = os.environ.get("AZURE_STORAGE_ACCOUNT_URL", "").strip().strip("'\"")
+    if not account_url:
+        raise ValueError("AZURE_STORAGE_ACCOUNT_URL is required when STORAGE_TYPE=azure.")
+    return account_url.rstrip("/")
+
+
 async def save_release_document(
     *,
     settings_service: SettingsService,
@@ -52,14 +59,16 @@ async def save_release_document(
     blob_path = build_release_document_path(release_id, file_name)
 
     if storage_type == "azure":
-        connection_string = os.environ.get("AZURE_STORAGE_CONNECTION_STRING", "").strip().strip("'\"")
-        if not connection_string:
-            raise ValueError("AZURE_STORAGE_CONNECTION_STRING is required when STORAGE_TYPE=azure.")
-
+        from azure.identity.aio import DefaultAzureCredential
         from azure.storage.blob.aio import BlobServiceClient
 
+        account_url = _get_storage_account_url()
         container_name = _get_release_documents_container(settings_service)
-        blob_service_client = BlobServiceClient.from_connection_string(connection_string)
+        credential = DefaultAzureCredential(
+            exclude_environment_credential=True,
+            exclude_interactive_browser_credential=True,
+        )
+        blob_service_client = BlobServiceClient(account_url=account_url, credential=credential)
         container_client = blob_service_client.get_container_client(container_name)
         try:
             try:
@@ -70,6 +79,9 @@ async def save_release_document(
             await container_client.upload_blob(name=blob_path, data=content, overwrite=True)
         finally:
             await blob_service_client.close()
+            close_credential = getattr(credential, "close", None)
+            if callable(close_credential):
+                await close_credential()
         return blob_path
 
     base_dir = anyio.Path(settings_service.settings.config_dir) / "release_documents"
@@ -88,14 +100,16 @@ async def get_release_document(
     storage_type = str(getattr(settings_service.settings, "storage_type", "local") or "local").strip().lower()
 
     if storage_type == "azure":
-        connection_string = os.environ.get("AZURE_STORAGE_CONNECTION_STRING", "").strip().strip("'\"")
-        if not connection_string:
-            raise ValueError("AZURE_STORAGE_CONNECTION_STRING is required when STORAGE_TYPE=azure.")
-
+        from azure.identity.aio import DefaultAzureCredential
         from azure.storage.blob.aio import BlobServiceClient
 
+        account_url = _get_storage_account_url()
         container_name = _get_release_documents_container(settings_service)
-        blob_service_client = BlobServiceClient.from_connection_string(connection_string)
+        credential = DefaultAzureCredential(
+            exclude_environment_credential=True,
+            exclude_interactive_browser_credential=True,
+        )
+        blob_service_client = BlobServiceClient(account_url=account_url, credential=credential)
         container_client = blob_service_client.get_container_client(container_name)
         blob_client = container_client.get_blob_client(storage_path)
         try:
@@ -103,6 +117,9 @@ async def get_release_document(
             return await stream.readall()
         finally:
             await blob_service_client.close()
+            close_credential = getattr(credential, "close", None)
+            if callable(close_credential):
+                await close_credential()
 
     file_path = anyio.Path(settings_service.settings.config_dir) / "release_documents" / storage_path
     if not await file_path.exists():
@@ -111,7 +128,7 @@ async def get_release_document(
         return await file_handle.read()
 
 
-def build_release_document_office_viewer_url(
+async def build_release_document_office_viewer_url(
     *,
     settings_service: SettingsService,
     storage_path: str,
@@ -120,39 +137,52 @@ def build_release_document_office_viewer_url(
     if storage_type != "azure":
         return None
 
-    connection_string = os.environ.get("AZURE_STORAGE_CONNECTION_STRING", "").strip().strip("'\"")
-    if not connection_string:
+    account_url = os.environ.get("AZURE_STORAGE_ACCOUNT_URL", "").strip().strip("'\"")
+    if not account_url:
         return None
 
+    from azure.identity.aio import DefaultAzureCredential
     from azure.storage.blob import BlobSasPermissions, generate_blob_sas
-
-    parts = {}
-    for segment in connection_string.split(";"):
-        if "=" not in segment:
-            continue
-        key, value = segment.split("=", 1)
-        parts[key.strip().lower()] = value.strip()
-
-    account_name = parts.get("accountname")
-    account_key = parts.get("accountkey")
-    endpoint_suffix = parts.get("endpointsuffix", "core.windows.net")
-    if not account_name or not account_key:
-        return None
+    from azure.storage.blob.aio import BlobServiceClient
 
     container_name = _get_release_documents_container(settings_service)
-    sas_token = generate_blob_sas(
-        account_name=account_name,
-        container_name=container_name,
-        blob_name=storage_path,
-        account_key=account_key,
-        permission=BlobSasPermissions(read=True),
-        expiry=datetime.now(timezone.utc) + timedelta(minutes=30),
+    credential = DefaultAzureCredential(
+        exclude_environment_credential=True,
+        exclude_interactive_browser_credential=True,
     )
-    if not sas_token:
+    blob_service_client = BlobServiceClient(account_url=account_url, credential=credential)
+    try:
+        now = datetime.now(timezone.utc)
+        key_start = now - timedelta(minutes=5)
+        key_expiry = now + timedelta(minutes=30)
+        delegation_key = await blob_service_client.get_user_delegation_key(
+            key_start_time=key_start,
+            key_expiry_time=key_expiry,
+        )
+        account_name = getattr(blob_service_client, "account_name", "") or ""
+        if not account_name:
+            return None
+        sas_token = generate_blob_sas(
+            account_name=account_name,
+            container_name=container_name,
+            blob_name=storage_path,
+            user_delegation_key=delegation_key,
+            permission=BlobSasPermissions(read=True),
+            start=key_start,
+            expiry=key_expiry,
+        )
+        if not sas_token:
+            return None
+        direct_url = f"{account_url.rstrip('/')}/{container_name}/{quote(storage_path)}?{sas_token}"
+        return f"{OFFICE_VIEWER_BASE_URL}{quote(direct_url, safe='')}"
+    except Exception as exc:
+        logger.warning(f"Failed to build Office viewer URL for release document: {exc}")
         return None
-
-    direct_url = f"https://{account_name}.blob.{endpoint_suffix}/{container_name}/{quote(storage_path)}?{sas_token}"
-    return f"{OFFICE_VIEWER_BASE_URL}{quote(direct_url, safe='')}"
+    finally:
+        await blob_service_client.close()
+        close_credential = getattr(credential, "close", None)
+        if callable(close_credential):
+            await close_credential()
 
 
 def render_release_document_preview_html(document_bytes: bytes) -> str:
