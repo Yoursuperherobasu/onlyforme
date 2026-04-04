@@ -744,7 +744,7 @@ async def get_release_document_preview(
         "document_uploaded_at": release.document_uploaded_at.isoformat() if release.document_uploaded_at else None,
         "document_size": release.document_size,
         "has_document": True,
-        "office_viewer_url": build_release_document_office_viewer_url(
+        "office_viewer_url": await build_release_document_office_viewer_url(
             settings_service=get_settings_service(),
             storage_path=release.document_storage_path,
         ),

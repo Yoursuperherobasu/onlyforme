@@ -11,15 +11,14 @@ class AzureBlobStorageService(StorageService):
     def __init__(self, session_service, settings_service) -> None:
         super().__init__(session_service, settings_service)
 
-        connection_string = os.environ.get("AZURE_STORAGE_CONNECTION_STRING", "").strip().strip("'\"")
+        account_url = os.environ.get("AZURE_STORAGE_ACCOUNT_URL", "").strip().strip("'\"")
         self.container_name = os.environ.get(
             "AZURE_STORAGE_CONTAINER_NAME", "agentcore-knowledge-container"
         ).strip().strip("'\"")
 
-        if not connection_string:
+        if not account_url:
             raise ValueError(
-                "AZURE_STORAGE_CONNECTION_STRING environment variable is required "
-                "when STORAGE_TYPE=azure."
+                "AZURE_STORAGE_ACCOUNT_URL is required when STORAGE_TYPE=azure."
             )
 
         try:
@@ -30,7 +29,19 @@ class AzureBlobStorageService(StorageService):
                 "Install it with: pip install azure-storage-blob"
             )
 
-        self._blob_service_client = BlobServiceClient.from_connection_string(connection_string)
+        self._credential = None
+        from azure.identity.aio import DefaultAzureCredential
+
+        # Use the same managed identity chain used by Redis and Key Vault.
+        self._credential = DefaultAzureCredential(
+            exclude_environment_credential=True,
+            exclude_interactive_browser_credential=True,
+        )
+        self._blob_service_client = BlobServiceClient(
+            account_url=account_url,
+            credential=self._credential,
+        )
+        logger.info("Azure Blob auth mode: managed identity (AZURE_STORAGE_ACCOUNT_URL)")
         self._container_ensured = False
         self.set_ready()
 
@@ -129,3 +140,6 @@ class AzureBlobStorageService(StorageService):
 
     async def teardown(self) -> None:
         await self._blob_service_client.close()
+        close_credential = getattr(self._credential, "close", None)
+        if callable(close_credential):
+            await close_credential()

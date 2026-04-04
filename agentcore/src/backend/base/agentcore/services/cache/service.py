@@ -203,6 +203,7 @@ class RedisCache(ExternalAsyncBaseCacheService, Generic[LockType]):
         port=6379,
         db=0,
         credential_provider=None,
+        cluster_enabled=True,
         ssl=False,
         expiration_time=60 * 60,
     ) -> None:
@@ -219,6 +220,7 @@ class RedisCache(ExternalAsyncBaseCacheService, Generic[LockType]):
         """
         # Redis is a main dependency, no need to import check
         from redis.asyncio import StrictRedis
+        from redis.asyncio.cluster import RedisCluster
         from redis.asyncio.retry import Retry
         from redis.backoff import ExponentialBackoff
 
@@ -230,18 +232,28 @@ class RedisCache(ExternalAsyncBaseCacheService, Generic[LockType]):
             msg = "RedisCache requires an Entra ID credential provider."
             raise ValueError(msg)
 
-        self._client = StrictRedis(
-            host=host,
-            port=port,
-            db=db,
-            ssl=ssl,
-            credential_provider=credential_provider,
-            socket_connect_timeout=5,
-            socket_timeout=5,
-            retry_on_timeout=True,
-            retry=_retry,
-            health_check_interval=30,
-        )
+        common_kwargs = {
+            "host": host,
+            "port": port,
+            "ssl": ssl,
+            "credential_provider": credential_provider,
+            "socket_connect_timeout": 5,
+            "socket_timeout": 5,
+            "retry": _retry,
+            "health_check_interval": 30,
+        }
+        if cluster_enabled:
+            self._client = RedisCluster(
+                **common_kwargs,
+                cluster_error_retry_attempts=3,
+                connection_error_retry_attempts=3,
+            )
+        else:
+            self._client = StrictRedis(
+                **common_kwargs,
+                db=db,
+                retry_on_timeout=True,
+            )
         self.expiration_time = expiration_time
 
     async def is_connected(self) -> bool:

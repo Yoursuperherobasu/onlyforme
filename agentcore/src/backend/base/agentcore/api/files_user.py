@@ -15,7 +15,7 @@ from loguru import logger
 from sqlmodel import col, select
 from sqlalchemy import and_, or_
 
-from agentcore.api.schemas import UploadFileResponse
+from agentcore.api.schemas import UserUploadFileResponse
 from agentcore.api.utils import CurrentActiveUser, DbSession
 from agentcore.services.auth.permissions import get_permissions_for_role, normalize_role
 from agentcore.services.database.models.department.model import Department
@@ -447,7 +447,7 @@ async def upload_user_file(
     org_id: Annotated[str | None, Form()] = None,
     dept_id: Annotated[str | None, Form()] = None,
     public_dept_ids: Annotated[list[str] | None, Form()] = None,
-) -> UploadFileResponse:
+) -> UserUploadFileResponse:
 
     """Upload a file for the current user and track it in the database."""
     # Get the max allowed file size from settings (in MB)
@@ -588,7 +588,7 @@ async def upload_user_file(
             detail=_safe_upload_error_detail(e, "Unable to complete the upload."),
         ) from e
 
-    return UploadFileResponse(agent_id=str(current_user.id), file_path=Path(new_file.path))
+    return UserUploadFileResponse(user_id=str(current_user.id), file_path=Path(new_file.path))
 
 
 async def get_file_by_name(
@@ -863,7 +863,7 @@ async def edit_file_name(
     name: str,
     current_user: CurrentActiveUser,
     session: DbSession,
-) -> UploadFileResponse:
+) -> UserUploadFileResponse:
     """Edit the name of a file by its ID."""
     try:
         # Fetch the file from the DB
@@ -875,7 +875,7 @@ async def edit_file_name(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error editing file: {e}") from e
 
-    return UploadFileResponse(agent_id=str(current_user.id), file_path=Path(file.path))
+    return UserUploadFileResponse(user_id=str(current_user.id), file_path=Path(file.path))
 
 
 @router.delete("/{file_id}")

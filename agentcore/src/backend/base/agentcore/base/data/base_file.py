@@ -549,25 +549,31 @@ class BaseFileNode(Node, ABC):
         """
         import os
 
-        conn_str = os.environ.get("AZURE_STORAGE_CONNECTION_STRING", "")
-        # Strip any surrounding quotes that dotenv might have kept
-        conn_str = conn_str.strip().strip("'\"")
+        account_url = os.environ.get("AZURE_STORAGE_ACCOUNT_URL", "")
+        account_url = account_url.strip().strip("'\"")
         container_name = os.environ.get("AZURE_STORAGE_CONTAINER_NAME", "agentcore-knowledge-container")
         container_name = container_name.strip().strip("'\"")
 
         logger.info(
             f"[BaseFile] Azure download: blob='{blob_path}', container='{container_name}', "
-            f"conn_str_len={len(conn_str)}, conn_str_start='{conn_str[:40]}...'"
+            f"account_url_set={bool(account_url)}"
         )
 
-        if not conn_str:
+        if not account_url:
             raise FileNotFoundError(
-                f"AZURE_STORAGE_CONNECTION_STRING is empty — cannot download '{blob_path}'"
+                f"AZURE_STORAGE_ACCOUNT_URL is not set for '{blob_path}'"
             )
 
         from azure.storage.blob import BlobServiceClient
 
-        sync_client = BlobServiceClient.from_connection_string(conn_str)
+        credential = None
+        from azure.identity import DefaultAzureCredential
+
+        credential = DefaultAzureCredential(
+            exclude_environment_credential=True,
+            exclude_interactive_browser_credential=True,
+        )
+        sync_client = BlobServiceClient(account_url=account_url, credential=credential)
         try:
             blob_client = sync_client.get_container_client(container_name).get_blob_client(blob_path)
             logger.info(f"[BaseFile] Downloading blob '{blob_path}' from container '{container_name}'...")
@@ -579,6 +585,10 @@ class BaseFileNode(Node, ABC):
             raise
         finally:
             sync_client.close()
+            if credential is not None:
+                close_credential = getattr(credential, "close", None)
+                if callable(close_credential):
+                    close_credential()
 
         # Write to temp dir (tracked in self._temp_dirs for cleanup)
         temp_dir = TemporaryDirectory()

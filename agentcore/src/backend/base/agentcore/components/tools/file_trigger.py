@@ -286,29 +286,35 @@ class FileTrigger(Node):
             logger.error(f"FileTrigger: could not load connector config for {connector_id}")
             return []
 
-        connection_string = config.get("connection_string", "")
+        account_url = config.get("account_url", "")
         container_name = config.get("container_name", "")
         prefix = config.get("blob_prefix", "")
 
-        if not connection_string or not container_name:
-            logger.error("FileTrigger: Azure connector is missing connection_string or container_name")
+        if not account_url or not container_name:
+            logger.error("FileTrigger: Azure connector is missing account_url or container_name")
             return []
 
         download = self.download_files
 
         def _do_scan():
             try:
+                from azure.identity import DefaultAzureCredential
                 from azure.storage.blob import BlobServiceClient
             except ImportError:
                 raise ImportError(
-                    "azure-storage-blob is required. Install with: pip install azure-storage-blob"
+                    "azure-storage-blob and azure-identity are required. Install with: "
+                    "pip install azure-storage-blob azure-identity"
                 )
 
             types = self.file_types if self.file_types else TEXT_FILE_TYPES
             batch_size = self.batch_size
 
             logger.info(f"FileTrigger: connecting to container={container_name}, prefix={prefix!r}")
-            blob_service = BlobServiceClient.from_connection_string(connection_string)
+            credential = DefaultAzureCredential(
+                exclude_environment_credential=True,
+                exclude_interactive_browser_credential=True,
+            )
+            blob_service = BlobServiceClient(account_url=account_url, credential=credential)
             container_client = blob_service.get_container_client(container_name)
             blobs = list(container_client.list_blobs(name_starts_with=prefix if prefix else None))
             logger.info(f"FileTrigger: found {len(blobs)} total blobs: {[b.name for b in blobs]}")
@@ -558,16 +564,38 @@ class FileTrigger(Node):
                 if download and temp_dir and blob_path:
                     try:
                         if storage_type == "Azure Blob Storage":
+                            from azure.identity import DefaultAzureCredential
                             from azure.storage.blob import BlobServiceClient
-                            conn_str = config.get("connection_string", "")
+                            account_url = config.get("account_url", "")
                             container = config.get("container_name", "")
-                            blob_service = BlobServiceClient.from_connection_string(conn_str)
-                            container_client = blob_service.get_container_client(container)
-                            blob_client = container_client.get_blob_client(blob_path)
-                            raw_bytes = blob_client.download_blob().readall()
-                            local_path = os.path.join(temp_dir, file_name)
-                            with open(local_path, "wb") as f:
-                                f.write(raw_bytes)
+                            if not account_url or not container:
+                                raise ValueError("account_url and container_name are required for Azure Blob downloads")
+
+                            blob_name = blob_path
+                            if blob_path.startswith("azure://"):
+                                path_without_scheme = blob_path[len("azure://"):]
+                                path_parts = path_without_scheme.split("/", 1)
+                                blob_name = path_parts[1] if len(path_parts) == 2 else ""
+
+                            credential = DefaultAzureCredential(
+                                exclude_environment_credential=True,
+                                exclude_interactive_browser_credential=True,
+                            )
+                            blob_service = BlobServiceClient(account_url=account_url, credential=credential)
+                            try:
+                                container_client = blob_service.get_container_client(container)
+                                blob_client = container_client.get_blob_client(blob_name)
+                                raw_bytes = blob_client.download_blob().readall()
+                                local_path = os.path.join(temp_dir, file_name)
+                                with open(local_path, "wb") as f:
+                                    f.write(raw_bytes)
+                            finally:
+                                close_blob_service = getattr(blob_service, "close", None)
+                                if callable(close_blob_service):
+                                    close_blob_service()
+                                close_credential = getattr(credential, "close", None)
+                                if callable(close_credential):
+                                    close_credential()
                         elif storage_type == "SharePoint":
                             import httpx as _httpx
                             from urllib.parse import urlparse as _urlparse

@@ -500,52 +500,66 @@ class TriggerService(Service):
         stored in the trigger_config JSON.
         """
         try:
+            from azure.identity.aio import DefaultAzureCredential
             from azure.storage.blob.aio import BlobServiceClient
         except ImportError:
-            logger.error("azure-storage-blob not installed. Install with: pip install azure-storage-blob")
+            logger.error(
+                "azure-storage-blob and azure-identity are required. "
+                "Install with: pip install azure-storage-blob azure-identity"
+            )
             return []
 
         # Resolve credentials from connector catalogue
         connector_id = config.get("connector_id")
-        if connector_id:
-            connector_cfg = await _get_storage_connector_config(str(connector_id))
-            if not connector_cfg:
-                logger.error(f"TriggerService: could not load Azure connector {connector_id}")
-                return []
-            connection_string = connector_cfg.get("connection_string", "")
-            container_name = connector_cfg.get("container_name", "")
-            prefix = connector_cfg.get("blob_prefix", config.get("azure_prefix", ""))
-        else:
-            # Fallback: legacy inline credentials (deprecated)
-            connection_string = config.get("azure_connection_string", "")
-            container_name = config.get("azure_container", "")
-            prefix = config.get("azure_prefix", "")
+        if not connector_id:
+            logger.warning(f"TriggerService: Azure Blob trigger {task_id} is missing connector_id")
+            return []
 
-        if not connection_string or not container_name:
-            logger.warning(f"TriggerService: Azure Blob trigger {task_id} missing connection_string or container_name")
+        connector_cfg = await _get_storage_connector_config(str(connector_id))
+        if not connector_cfg:
+            logger.error(f"TriggerService: could not load Azure connector {connector_id}")
+            return []
+
+        account_url = connector_cfg.get("account_url", "")
+        container_name = connector_cfg.get("container_name", "")
+        prefix = connector_cfg.get("blob_prefix", "")
+
+        if not account_url or not container_name:
+            logger.warning(
+                f"TriggerService: Azure Blob trigger {task_id} missing account_url or container_name"
+            )
             return []
 
         seen = self._seen_files.get(task_id, OrderedDict())
         new_files = []
 
-        async with BlobServiceClient.from_connection_string(connection_string) as client:
-            container = client.get_container_client(container_name)
-            async for blob in container.list_blobs(name_starts_with=prefix or None):
-                if file_types:
-                    ext = Path(blob.name).suffix.lstrip(".")
-                    if ext not in file_types:
-                        continue
+        credential = DefaultAzureCredential(
+            exclude_environment_credential=True,
+            exclude_interactive_browser_credential=True,
+        )
+        try:
+            async with BlobServiceClient(account_url=account_url, credential=credential) as client:
+                container = client.get_container_client(container_name)
+                async for blob in container.list_blobs(name_starts_with=prefix or None):
+                    if file_types:
+                        ext = Path(blob.name).suffix.lstrip(".")
+                        if ext not in file_types:
+                            continue
 
-                blob_key = f"{blob.name}:{blob.last_modified.isoformat() if blob.last_modified else ''}"
+                    blob_key = f"{blob.name}:{blob.last_modified.isoformat() if blob.last_modified else ''}"
 
-                if blob_key not in seen:
-                    new_files.append({
-                        "name": blob.name,
-                        "path": f"azure://{container_name}/{blob.name}",
-                        "size": blob.size,
-                        "modified": blob.last_modified.isoformat() if blob.last_modified else None,
-                    })
-                    seen[blob_key] = None
+                    if blob_key not in seen:
+                        new_files.append({
+                            "name": blob.name,
+                            "path": f"azure://{container_name}/{blob.name}",
+                            "size": blob.size,
+                            "modified": blob.last_modified.isoformat() if blob.last_modified else None,
+                        })
+                        seen[blob_key] = None
+        finally:
+            close_credential = getattr(credential, "close", None)
+            if callable(close_credential):
+                await close_credential()
 
         self._seen_files[task_id] = seen
         return new_files
