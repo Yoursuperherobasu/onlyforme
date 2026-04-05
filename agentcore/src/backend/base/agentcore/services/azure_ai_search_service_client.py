@@ -1,15 +1,9 @@
-"""Azure AI Search client using the azure-search-documents SDK directly.
-
-Reads AZURE_AI_SEARCH_ENDPOINT and AZURE_AI_SEARCH_API_KEY from settings/.env.
-No microservice required.
-"""
-
 from __future__ import annotations
 
 import logging
 import uuid
 
-from azure.core.credentials import AzureKeyCredential
+from azure.core.credentials import TokenCredential
 from azure.search.documents import SearchClient
 from azure.search.documents.indexes import SearchIndexClient
 from azure.search.documents.indexes.models import (
@@ -36,40 +30,70 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
-def _get_settings() -> tuple[str, str]:
-    """Return (endpoint, api_key) from app settings."""
+def _get_settings() -> str:
+    """Return endpoint from app settings."""
     from agentcore.services.deps import get_settings_service
 
     settings = get_settings_service().settings
     endpoint = getattr(settings, "azure_ai_search_endpoint", "")
-    api_key = getattr(settings, "azure_ai_search_api_key", "")
 
     if not endpoint:
         raise ValueError(
             "AZURE_AI_SEARCH_ENDPOINT is not configured. "
             "Set it in your .env file."
         )
-    if not api_key:
-        raise ValueError(
-            "AZURE_AI_SEARCH_API_KEY is not configured. "
-            "Set it in your .env file."
+    return endpoint.rstrip("/")
+
+
+def _credential() -> TokenCredential:
+    from azure.identity import DefaultAzureCredential
+    logger.info(
+        "[AzureAISearch] Using DefaultAzureCredential — "
+        "locally this resolves via 'az login', in production via Managed Identity."
+    )
+    try:
+        credential = DefaultAzureCredential(
+            exclude_environment_credential=True,
+            exclude_interactive_browser_credential=True,
         )
-    return endpoint.rstrip("/"), api_key
-
-
-def _credential() -> AzureKeyCredential:
-    _, api_key = _get_settings()
-    return AzureKeyCredential(api_key)
+        return credential
+    except Exception as exc:
+        logger.error(
+            "[AzureAISearch] Failed to build DefaultAzureCredential: %s. "
+            "Locally run 'az login' first. In production ensure a Managed Identity is assigned.",
+            exc,
+        )
+        raise
 
 
 def _index_client() -> SearchIndexClient:
-    endpoint, _ = _get_settings()
-    return SearchIndexClient(endpoint=endpoint, credential=_credential())
+    endpoint = _get_settings()
+    try:
+        client = SearchIndexClient(endpoint=endpoint, credential=_credential())
+        logger.debug("[AzureAISearch] SearchIndexClient created for endpoint=%s", endpoint)
+        return client
+    except Exception as exc:
+        logger.error(
+            "[AzureAISearch] Could not create SearchIndexClient for endpoint=%s — %s",
+            endpoint, exc,
+        )
+        raise
 
 
 def _search_client(index_name: str) -> SearchClient:
-    endpoint, _ = _get_settings()
-    return SearchClient(endpoint=endpoint, index_name=index_name, credential=_credential())
+    endpoint = _get_settings()
+    try:
+        client = SearchClient(endpoint=endpoint, index_name=index_name, credential=_credential())
+        logger.debug(
+            "[AzureAISearch] SearchClient created for endpoint=%s index=%s", endpoint, index_name
+        )
+        return client
+    except Exception as exc:
+        logger.error(
+            "[AzureAISearch] Could not create SearchClient for endpoint=%s index=%s — %s",
+            endpoint, index_name, exc,
+        )
+        raise
 
 
 def is_service_configured() -> bool:

@@ -1,2 +1,0 @@
-# Ignore large loguru JSONL log files (can still access via bash tail command)
-**/loguru/*.jsonl
