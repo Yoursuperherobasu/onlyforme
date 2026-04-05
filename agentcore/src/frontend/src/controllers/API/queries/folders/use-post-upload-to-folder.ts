@@ -1,3 +1,4 @@
+import type { AgentType } from "@/types/agent";
 import type { useMutationFunctionType } from "@/types/api";
 import { api } from "../../api";
 import { getURL } from "../../helpers/constants";
@@ -10,13 +11,14 @@ interface IPostAddUploadAgentToFolder {
 
 export const usePostUploadAgentToFolder: useMutationFunctionType<
   undefined,
-  IPostAddUploadAgentToFolder
+  IPostAddUploadAgentToFolder,
+  AgentType[]
 > = (options?) => {
   const { mutate, queryClient } = UseRequestProcessor();
 
   const uploadAgentToFolderFn = async (
     payload: IPostAddUploadAgentToFolder,
-  ): Promise<void> => {
+  ): Promise<AgentType[]> => {
     const res = await api.post(
       `${getURL("AGENTS")}/upload/?project_id=${encodeURIComponent(payload.folderId)}`,
       payload.agents,
@@ -24,17 +26,21 @@ export const usePostUploadAgentToFolder: useMutationFunctionType<
     return res.data;
   };
 
-  const mutation = mutate(["usePostUploadAgentToFolder"], uploadAgentToFolderFn, {
-    ...options,
-    onSettled: (res) => {
-      queryClient.refetchQueries({
-        queryKey: ["useGetFolders"],
-      });
-      queryClient.refetchQueries({
-        queryKey: ["useGetFolder"],
-      });
+  const mutation = mutate(
+    ["usePostUploadAgentToFolder"],
+    uploadAgentToFolderFn,
+    {
+      ...options,
+      onSettled: () => {
+        queryClient.refetchQueries({
+          queryKey: ["useGetFolders"],
+        });
+        queryClient.refetchQueries({
+          queryKey: ["useGetFolder"],
+        });
+      },
     },
-  });
+  );
 
   return mutation;
 };

@@ -1,7 +1,13 @@
-from typing import List, Dict, Optional
+from collections.abc import Awaitable, Callable
+from typing import Any, List, Dict, Optional
+
 from loguru import logger
+from redis.exceptions import ConnectionError as RedisConnectionError
+from redis.exceptions import RedisError
+from redis.exceptions import TimeoutError as RedisTimeoutError
+
 from agentcore.services.settings.service import SettingsService
-from agentcore.services.cache.redis_client import get_redis_client
+from agentcore.services.cache.redis_client import get_redis_client, reset_redis_client
 from agentcore.services.deps import session_scope
 from agentcore.services.database.models.role import Role
 from agentcore.services.database.models.permission import Permission
@@ -365,8 +371,27 @@ PERMISSION_VERSION = "v22"  # bump when permissions change
 
 class PermissionCacheService:
     def __init__(self, settings_service: SettingsService):
+        self.settings_service = settings_service
         self.redis = get_redis_client(settings_service)
         self.ttl = settings_service.settings.redis_cache_expire
+
+    async def _redis_call_with_reconnect(
+        self,
+        *,
+        action: str,
+        key: str,
+        call: Callable[[Any], Awaitable[Any]],
+    ) -> Any:
+        try:
+            return await call(self.redis)
+        except (RedisConnectionError, RedisTimeoutError, RedisError, OSError) as exc:
+            logger.warning(
+                f"RBAC cache {action} failed for {key}: {exc}. "
+                "Resetting Redis client and retrying once."
+            )
+            await reset_redis_client()
+            self.redis = get_redis_client(self.settings_service)
+            return await call(self.redis)
 
     async def get_permissions_for_role(self, role: str) -> List[str]:
         role = _normalize_role(role)
@@ -380,7 +405,11 @@ class PermissionCacheService:
 
         key = f"role:{PERMISSION_VERSION}:{role}"
 
-        cached = await self.redis.get(key)
+        cached = await self._redis_call_with_reconnect(
+            action="read",
+            key=key,
+            call=lambda client: client.get(key),
+        )
         if cached:
             if isinstance(cached, bytes):
                 cached = cached.decode("utf-8")
@@ -394,13 +423,27 @@ class PermissionCacheService:
 
         perms = await _get_permissions_for_role_db(role)
         if not perms:
-            await self.redis.set(key, "__none__", ex=self.ttl)
-            logger.info(f"RBAC cached → {key} = []")
+            try:
+                await self._redis_call_with_reconnect(
+                    action="write",
+                    key=key,
+                    call=lambda client: client.set(key, "__none__", ex=self.ttl),
+                )
+                logger.info(f"RBAC cache write: {key} = []")
+            except Exception as exc:
+                logger.warning(f"RBAC cache write failed for {key}: {exc}")
             return []
-        perms = _expand_permissions(perms)
-        await self.redis.set(key, ",".join(perms), ex=self.ttl)
 
-        logger.info(f"RBAC cached → {key} = {perms}")
+        perms = _expand_permissions(perms)
+        try:
+            await self._redis_call_with_reconnect(
+                action="write",
+                key=key,
+                call=lambda client: client.set(key, ",".join(perms), ex=self.ttl),
+            )
+            logger.info(f"RBAC cache write: {key} = {perms}")
+        except Exception as exc:
+            logger.warning(f"RBAC cache write failed for {key}: {exc}")
         return perms
 
 
@@ -420,14 +463,9 @@ async def get_permissions_for_role(role: str) -> List[str]:
 
     global permission_cache
     if permission_cache is None:
-        try:
-            from agentcore.services.deps import get_settings_service
-            permission_cache = PermissionCacheService(get_settings_service())
-        except Exception:
-            perms = await _get_permissions_for_role_db(normalized)
-            if perms:
-                return _expand_permissions(perms)
-            return []
+        from agentcore.services.deps import get_settings_service
+
+        permission_cache = PermissionCacheService(get_settings_service())
 
     perms = await permission_cache.get_permissions_for_role(role)
     if perms:

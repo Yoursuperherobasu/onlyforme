@@ -1,4 +1,5 @@
 import asyncio
+import inspect
 import os
 import pickle
 import threading
@@ -8,6 +9,9 @@ from typing import Generic, Union
 
 import dill
 from loguru import logger
+from redis.exceptions import ConnectionError as RedisConnectionError
+from redis.exceptions import RedisError
+from redis.exceptions import TimeoutError as RedisTimeoutError
 from typing_extensions import override
 
 from agentcore.services.cache.base import (
@@ -218,6 +222,13 @@ class RedisCache(ExternalAsyncBaseCacheService, Generic[LockType]):
             expiration_time (int, optional): Time in seconds after which a
                 cached item expires. Default is 1 hour.
         """
+        self._host = host
+        self._port = port
+        self._db = db
+        self._credential_provider = credential_provider
+        self._cluster_enabled = cluster_enabled
+        self._ssl = ssl
+
         # Redis is a main dependency, no need to import check
         from redis.asyncio import StrictRedis
         from redis.asyncio.cluster import RedisCluster
@@ -228,41 +239,119 @@ class RedisCache(ExternalAsyncBaseCacheService, Generic[LockType]):
         # goes stale, the client automatically drops the dead socket and
         # retries with a fresh connection — no server restart needed.
         _retry = Retry(ExponentialBackoff(), retries=3)
-        if credential_provider is None:
+        if self._credential_provider is None:
             msg = "RedisCache requires an Entra ID credential provider."
             raise ValueError(msg)
 
         common_kwargs = {
-            "host": host,
-            "port": port,
-            "ssl": ssl,
-            "credential_provider": credential_provider,
+            "host": self._host,
+            "port": self._port,
+            "ssl": self._ssl,
+            "credential_provider": self._credential_provider,
             "socket_connect_timeout": 5,
             "socket_timeout": 5,
             "retry": _retry,
             "health_check_interval": 30,
         }
-        if cluster_enabled:
-            self._client = RedisCluster(
-                **common_kwargs,
-                cluster_error_retry_attempts=3,
-                connection_error_retry_attempts=3,
-            )
+        if self._cluster_enabled:
+            self._client = RedisCluster(**self._build_cluster_kwargs(common_kwargs))
         else:
             self._client = StrictRedis(
                 **common_kwargs,
-                db=db,
+                db=self._db,
                 retry_on_timeout=True,
             )
         self.expiration_time = expiration_time
 
+    def _build_cluster_kwargs(self, common_kwargs: dict) -> dict:
+        from redis.asyncio.cluster import RedisCluster
+
+        supported = inspect.signature(RedisCluster.__init__).parameters
+        kwargs = dict(common_kwargs)
+        if "cluster_error_retry_attempts" in supported:
+            kwargs["cluster_error_retry_attempts"] = 3
+        if "connection_error_retry_attempts" in supported:
+            kwargs["connection_error_retry_attempts"] = 3
+        if "dynamic_startup_nodes" in supported:
+            kwargs["dynamic_startup_nodes"] = False
+        if (
+            "address_remap" in supported
+            and self._ssl
+            and (
+                self._host.lower().endswith(".redis.azure.net")
+                or self._host.lower().endswith(".redis.cache.windows.net")
+            )
+        ):
+            kwargs["address_remap"] = self._cluster_address_remap_factory()
+        return kwargs
+
+    def _cluster_address_remap_factory(self):
+        def _address_remap(_address):
+            # Route all cluster nodes through the configured TLS endpoint host/port.
+            return self._host, self._port
+
+        return _address_remap
+
+    def _create_client(self):
+        from redis.asyncio import StrictRedis
+        from redis.asyncio.cluster import RedisCluster
+        from redis.asyncio.retry import Retry
+        from redis.backoff import ExponentialBackoff
+
+        _retry = Retry(ExponentialBackoff(), retries=3)
+        common_kwargs = {
+            "host": self._host,
+            "port": self._port,
+            "ssl": self._ssl,
+            "credential_provider": self._credential_provider,
+            "socket_connect_timeout": 5,
+            "socket_timeout": 5,
+            "retry": _retry,
+            "health_check_interval": 30,
+        }
+        if self._cluster_enabled:
+            return RedisCluster(**self._build_cluster_kwargs(common_kwargs))
+        return StrictRedis(
+            **common_kwargs,
+            db=self._db,
+            retry_on_timeout=True,
+        )
+
+    async def _close_client(self, client) -> None:
+        close_fn = getattr(client, "aclose", None) or getattr(client, "close", None)
+        if not callable(close_fn):
+            return
+        try:
+            result = close_fn()
+            if inspect.isawaitable(result):
+                await result
+        except Exception:
+            return
+
+    async def _reconnect_client(self) -> None:
+        stale_client = self._client
+        self._client = self._create_client()
+        await self._close_client(stale_client)
+
+    async def _run_with_reconnect(self, *, operation: str, call):
+        try:
+            return await call(self._client)
+        except (RedisConnectionError, RedisTimeoutError, RedisError, OSError) as exc:
+            logger.warning(
+                f"RedisCache {operation} failed: {exc}. "
+                "Reconnecting Redis client and retrying once."
+            )
+            await self._reconnect_client()
+            return await call(self._client)
+
     async def is_connected(self) -> bool:
         """Check if the Redis client is connected."""
-        import redis
-
         try:
-            await self._client.ping()
-        except (redis.exceptions.ConnectionError, redis.exceptions.TimeoutError, redis.exceptions.RedisError) as exc:
+            await self._run_with_reconnect(
+                operation="ping",
+                call=lambda client: client.ping(),
+            )
+        except (RedisConnectionError, RedisTimeoutError, RedisError, OSError) as exc:
             logger.warning(f"RedisCache connection check failed: {exc}")
             return False
         return True
@@ -271,14 +360,20 @@ class RedisCache(ExternalAsyncBaseCacheService, Generic[LockType]):
     async def get(self, key, lock=None):
         if key is None:
             return CACHE_MISS
-        value = await self._client.get(str(key))
+        value = await self._run_with_reconnect(
+            operation="get",
+            call=lambda client: client.get(str(key)),
+        )
         return dill.loads(value) if value else CACHE_MISS
 
     @override
     async def set(self, key, value, lock=None) -> None:
         try:
             if pickled := dill.dumps(value, recurse=True):
-                result = await self._client.setex(str(key), self.expiration_time, pickled)
+                result = await self._run_with_reconnect(
+                    operation="setex",
+                    call=lambda client: client.setex(str(key), self.expiration_time, pickled),
+                )
                 if not result:
                     msg = "RedisCache could not set the value."
                     raise ValueError(msg)
@@ -308,18 +403,28 @@ class RedisCache(ExternalAsyncBaseCacheService, Generic[LockType]):
 
     @override
     async def delete(self, key, lock=None) -> None:
-        await self._client.delete(key)
+        await self._run_with_reconnect(
+            operation="delete",
+            call=lambda client: client.delete(key),
+        )
 
     @override
     async def clear(self, lock=None) -> None:
         """Clear all items from the cache."""
-        await self._client.flushdb()
+        await self._run_with_reconnect(
+            operation="flushdb",
+            call=lambda client: client.flushdb(),
+        )
 
     async def contains(self, key) -> bool:
         """Check if the key is in the cache."""
         if key is None:
             return False
-        return bool(await self._client.exists(str(key)))
+        value = await self._run_with_reconnect(
+            operation="exists",
+            call=lambda client: client.exists(str(key)),
+        )
+        return bool(value)
 
     def __repr__(self) -> str:
         """Return a string representation of the RedisCache instance."""

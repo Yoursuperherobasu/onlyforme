@@ -1,3 +1,4 @@
+import inspect
 from typing import Optional, Any
 
 import redis.asyncio as redis
@@ -19,6 +20,31 @@ _redis_credential_provider_signature: Optional[tuple] = None
 def _redis_cluster_enabled(settings_service: SettingsService) -> bool:
     # Cluster-only deployment: always use RedisCluster client.
     return True
+
+
+def _get_redis_host_port(settings_service: SettingsService) -> tuple[str, int]:
+    host = str(settings_service.settings.redis_host or "").strip().strip("'\"")
+    if not host:
+        msg = "REDIS_HOST must be set for Redis cache."
+        raise ValueError(msg)
+
+    raw_port = settings_service.settings.redis_port
+    try:
+        port = int(raw_port)
+    except (TypeError, ValueError) as exc:
+        msg = f"REDIS_PORT must be a valid integer. Got: {raw_port!r}"
+        raise ValueError(msg) from exc
+    if port <= 0:
+        msg = f"REDIS_PORT must be > 0. Got: {port}"
+        raise ValueError(msg)
+    return host, port
+
+
+def _get_redis_ssl(settings_service: SettingsService) -> bool:
+    raw_ssl = settings_service.settings.redis_ssl
+    if isinstance(raw_ssl, bool):
+        return raw_ssl
+    return str(raw_ssl or "").strip().lower() in {"1", "true", "yes", "on"}
 
 def _get_redis_entra_scope(settings_service: SettingsService) -> str:
     redis_entra_scope = (settings_service.settings.redis_entra_scope or "").strip()
@@ -56,14 +82,76 @@ def get_redis_credential_provider(settings_service: SettingsService) -> Credenti
     return _redis_credential_provider
 
 
+async def _close_resource(resource: Any) -> None:
+    close_fn = getattr(resource, "aclose", None) or getattr(resource, "close", None)
+    if not callable(close_fn):
+        return
+    try:
+        result = close_fn()
+        if inspect.isawaitable(result):
+            await result
+    except Exception:
+        return
+
+
+async def reset_redis_client(*, reset_credential_provider: bool = True) -> None:
+    """Clear cached Redis client/provider so next access recreates fresh connections."""
+    global _redis_client, _redis_signature
+    global _redis_credential_provider, _redis_credential_provider_signature
+
+    stale_client = _redis_client
+    _redis_client = None
+    _redis_signature = None
+    if stale_client is not None:
+        await _close_resource(stale_client)
+
+    if reset_credential_provider:
+        stale_provider = _redis_credential_provider
+        _redis_credential_provider = None
+        _redis_credential_provider_signature = None
+        if stale_provider is not None:
+            await _close_resource(stale_provider)
+
+
+def _build_cluster_kwargs(common_kwargs: dict[str, Any]) -> dict[str, Any]:
+    """Build RedisCluster kwargs compatible with the installed redis-py version."""
+    supported = inspect.signature(RedisCluster.__init__).parameters
+    kwargs = dict(common_kwargs)
+    if "cluster_error_retry_attempts" in supported:
+        kwargs["cluster_error_retry_attempts"] = 3
+    if "connection_error_retry_attempts" in supported:
+        kwargs["connection_error_retry_attempts"] = 3
+    if "dynamic_startup_nodes" in supported:
+        # Keep bootstrap endpoint stable when shard nodes are not directly routable.
+        kwargs["dynamic_startup_nodes"] = False
+    return kwargs
+
+
+def _should_use_cluster_address_remap(redis_host: str, redis_ssl: bool) -> bool:
+    if not redis_ssl:
+        return False
+    host = redis_host.lower()
+    return host.endswith(".redis.azure.net") or host.endswith(".redis.cache.windows.net")
+
+
+def _cluster_address_remap_factory(redis_host: str, redis_port: int):
+    def _address_remap(_address):
+        # Route all cluster nodes through the configured TLS endpoint host/port.
+        return redis_host, redis_port
+
+    return _address_remap
+
+
 def get_redis_client(settings_service: SettingsService):
     global _redis_client, _redis_signature
     cluster_enabled = _redis_cluster_enabled(settings_service)
+    redis_host, redis_port = _get_redis_host_port(settings_service)
+    redis_ssl = _get_redis_ssl(settings_service)
     signature = (
-        settings_service.settings.redis_host,
-        settings_service.settings.redis_port,
+        redis_host,
+        redis_port,
         settings_service.settings.redis_db,
-        settings_service.settings.redis_ssl,
+        redis_ssl,
         cluster_enabled,
         _get_redis_entra_scope(settings_service),
         (settings_service.settings.redis_entra_object_id or "").strip(),
@@ -72,9 +160,9 @@ def get_redis_client(settings_service: SettingsService):
     if _redis_client is None or _redis_signature != signature:
         redis_credential_provider = get_redis_credential_provider(settings_service)
         common_kwargs = {
-            "host": settings_service.settings.redis_host,
-            "port": settings_service.settings.redis_port,
-            "ssl": settings_service.settings.redis_ssl,
+            "host": redis_host,
+            "port": redis_port,
+            "ssl": redis_ssl,
             "credential_provider": redis_credential_provider,
             "decode_responses": True,
             "socket_connect_timeout": 5,
@@ -86,11 +174,15 @@ def get_redis_client(settings_service: SettingsService):
             "retry_on_error": [ConnectionError, TimeoutError, OSError],
         }
         if cluster_enabled:
-            _redis_client = RedisCluster(
-                **common_kwargs,
-                cluster_error_retry_attempts=3,
-                connection_error_retry_attempts=3,
-            )
+            cluster_kwargs = _build_cluster_kwargs(common_kwargs)
+            if (
+                "address_remap" in inspect.signature(RedisCluster.__init__).parameters
+                and _should_use_cluster_address_remap(redis_host, redis_ssl)
+            ):
+                cluster_kwargs["address_remap"] = _cluster_address_remap_factory(
+                    redis_host, redis_port
+                )
+            _redis_client = RedisCluster(**cluster_kwargs)
         else:
             _redis_client = redis.StrictRedis(
                 **common_kwargs,
