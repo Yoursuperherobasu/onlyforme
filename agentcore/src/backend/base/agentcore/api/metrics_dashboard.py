@@ -43,14 +43,20 @@ GRAFANA_URL = os.getenv("GRAFANA_URL", "http://localhost:3000")
 GRAFANA_API_KEY = os.getenv("GRAFANA_API_KEY", "")
 
 # Azure Managed Prometheus settings (optional)
+# Preferred: set only RESOURCE_ID — auth via AKS Managed Identity (DefaultAzureCredential).
+# Fallback: set all four vars — auth via client_credentials grant (legacy).
 AZURE_PROMETHEUS_RESOURCE_ID = os.getenv("AZURE_PROMETHEUS_RESOURCE_ID", "")
 AZURE_PROMETHEUS_TENANT_ID = os.getenv("AZURE_PROMETHEUS_TENANT_ID", "")
 AZURE_PROMETHEUS_CLIENT_ID = os.getenv("AZURE_PROMETHEUS_CLIENT_ID", "")
 AZURE_PROMETHEUS_CLIENT_SECRET = os.getenv("AZURE_PROMETHEUS_CLIENT_SECRET", "")
 
-# Token cache for Azure AD
+# Lazy-initialized credential for Azure Managed Prometheus MI path (reused across requests).
+_azure_credential = None
+_azure_credential_lock = asyncio.Lock()
+
+# Token cache for client-secret fallback path.
 _azure_token_cache: dict = {"token": "", "expires_at": 0.0}
-_azure_token_lock = asyncio.Lock()
+_azure_token_cache_lock = asyncio.Lock()
 
 router = APIRouter(
     prefix="/metrics-dashboard",
@@ -308,19 +314,42 @@ _CHART_PRESET_MAP: dict[str, dict] = {p["id"]: p for p in CHART_PRESETS}
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _is_azure_prometheus() -> bool:
-    """Return True if Azure Managed Prometheus credentials are configured."""
+def _has_client_secret_config() -> bool:
+    """Return True if legacy client-secret credentials are fully configured."""
     return bool(
-        AZURE_PROMETHEUS_RESOURCE_ID
-        and AZURE_PROMETHEUS_TENANT_ID
+        AZURE_PROMETHEUS_TENANT_ID
         and AZURE_PROMETHEUS_CLIENT_ID
         and AZURE_PROMETHEUS_CLIENT_SECRET
     )
 
 
-async def _get_azure_token() -> str:
-    """Fetch or return a cached Azure AD Bearer token for Prometheus."""
-    async with _azure_token_lock:
+def _is_azure_prometheus() -> bool:
+    """Return True if Azure Managed Prometheus is configured (MI or client-secret)."""
+    return bool(AZURE_PROMETHEUS_RESOURCE_ID) or _has_client_secret_config()
+
+
+async def _get_azure_token_via_mi() -> str:
+    """Get token via DefaultAzureCredential (Managed Identity on AKS, Azure CLI locally)."""
+    global _azure_credential
+    async with _azure_credential_lock:
+        if _azure_credential is None:
+            from azure.identity import DefaultAzureCredential
+
+            _azure_credential = DefaultAzureCredential(
+                exclude_environment_credential=True,
+                exclude_interactive_browser_credential=True,
+            )
+
+    token = await asyncio.to_thread(
+        _azure_credential.get_token,
+        "https://prometheus.monitor.azure.com/.default",
+    )
+    return token.token
+
+
+async def _get_azure_token_via_client_secret() -> str:
+    """Get token via OAuth2 client_credentials grant (legacy fallback)."""
+    async with _azure_token_cache_lock:
         now = time.time()
         if _azure_token_cache["token"] and _azure_token_cache["expires_at"] > now + 60:
             return _azure_token_cache["token"]
@@ -343,8 +372,27 @@ async def _get_azure_token() -> str:
 
         _azure_token_cache["token"] = data["access_token"]
         _azure_token_cache["expires_at"] = now + data.get("expires_in", 3600)
-        logger.debug("Azure Prometheus token refreshed, expires in %ss", data.get("expires_in"))
+        logger.debug("Azure Prometheus token refreshed (client-secret), expires in %ss", data.get("expires_in"))
         return _azure_token_cache["token"]
+
+
+async def _get_azure_token() -> str:
+    """Get an Azure AD Bearer token for Prometheus.
+
+    Strategy: try Managed Identity first (preferred, more secure).
+    If MI fails and client-secret credentials are configured, fall back to
+    the legacy client_credentials grant.
+    """
+    if _has_client_secret_config():
+        # Client-secret is configured — try MI first, fall back to client-secret.
+        try:
+            return await _get_azure_token_via_mi()
+        except Exception as mi_err:
+            logger.info("MI token failed (%s), falling back to client-secret", mi_err)
+            return await _get_azure_token_via_client_secret()
+
+    # No client-secret configured — MI is the only option.
+    return await _get_azure_token_via_mi()
 
 
 async def _prometheus_headers() -> dict:
@@ -353,7 +401,8 @@ async def _prometheus_headers() -> dict:
     if _is_azure_prometheus():
         token = await _get_azure_token()
         headers["Authorization"] = f"Bearer {token}"
-        headers["x-ms-azure-resource-id"] = AZURE_PROMETHEUS_RESOURCE_ID
+        if AZURE_PROMETHEUS_RESOURCE_ID:
+            headers["x-ms-azure-resource-id"] = AZURE_PROMETHEUS_RESOURCE_ID
     return headers
 
 
