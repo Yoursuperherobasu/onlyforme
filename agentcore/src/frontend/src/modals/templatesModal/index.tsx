@@ -1,15 +1,39 @@
+import { useContext } from "react";
 import { useParams } from "react-router-dom";
 import ForwardedIconComponent from "@/components/common/genericIconComponent";
 import { Button } from "@/components/ui/button";
+import { WRONG_FILE_ERROR_ALERT } from "@/constants/alerts_constants";
+import { AuthContext } from "@/contexts/authContext";
+import { usePostUploadAgentToFolder } from "@/controllers/API/queries/folders/use-post-upload-to-folder";
 import { useCustomNavigate } from "@/customization/hooks/use-custom-navigate";
 import { track } from "@/customization/utils/analytics";
+import { createFileUpload } from "@/helpers/create-file-upload";
 import useAddAgent from "@/hooks/agents/use-add-agent";
+import useAlertStore from "@/stores/alertStore";
 import { useFolderStore } from "@/stores/foldersStore";
 import type { newAgentModalPropsType } from "../../types/components";
 import BaseModal from "../baseModal";
 import TemplateContentComponent from "./components/TemplateContentComponent";
-import { useContext } from "react";
-import { AuthContext } from "@/contexts/authContext";
+
+const MAX_IMPORT_FILE_SIZE_BYTES = 5 * 1024 * 1024;
+
+const hasValidAgentGraph = (payload: unknown) => {
+  if (!payload || typeof payload !== "object") return false;
+
+  const data = (payload as { data?: { nodes?: unknown; edges?: unknown } })
+    .data;
+  if (!data) return false;
+
+  const hasNodesArray = Array.isArray(data.nodes);
+  const hasEdgesArray = Array.isArray(data.edges);
+  const hasNonEmptyArrays =
+    hasNodesArray &&
+    hasEdgesArray &&
+    (data.nodes as unknown[]).length > 0 &&
+    (data.edges as unknown[]).length > 0;
+
+  return hasNonEmptyArrays;
+};
 
 export default function TemplatesModal({
   open,
@@ -20,25 +44,28 @@ export default function TemplatesModal({
   const { folderId } = useParams();
   const myCollectionId = useFolderStore((state) => state.myCollectionId);
   const folders = useFolderStore((state) => state.folders);
+  const setSuccessData = useAlertStore((state) => state.setSuccessData);
+  const setErrorData = useAlertStore((state) => state.setErrorData);
+  const { mutate: uploadAgentToFolder, isPending: isImporting } =
+    usePostUploadAgentToFolder();
 
   const { permissions } = useContext(AuthContext);
   const can = (permissionKey: string) => permissions?.includes(permissionKey);
   const canCreateAgent =
-    can("edit_agents") ||
-    can("view_projects_page") ||
-    can("view_project_page");
+    can("edit_agents") || can("view_projects_page") || can("view_project_page");
   const hasValidProject =
     Boolean(folderId) ||
     Boolean(
-      myCollectionId &&
-        folders?.some((folder) => folder.id === myCollectionId),
+      myCollectionId && folders?.some((folder) => folder.id === myCollectionId),
     );
 
   const createBlankAgent = async (projectId?: string) => {
     const id = await addAgent({ projectId });
     if (!id) return;
     const targetFolderId = projectId ?? folderId;
-    navigate(`/agent/${id}${targetFolderId ? `/folder/${targetFolderId}` : ""}`);
+    navigate(
+      `/agent/${id}${targetFolderId ? `/folder/${targetFolderId}` : ""}`,
+    );
     track("New Agent Created", { template: "Blank Agent" });
   };
 
@@ -54,6 +81,164 @@ export default function TemplatesModal({
     } catch {}
   };
 
+  const handleImportAgentClick = async () => {
+    if (!hasValidProject) {
+      setOpen(false);
+      navigate("/agents?openCreateProject=1");
+      return;
+    }
+
+    const selectedFiles = await createFileUpload({
+      accept: ".json,application/json",
+      multiple: false,
+    });
+
+    if (selectedFiles.length === 0) {
+      return;
+    }
+
+    const file = selectedFiles[0];
+    const hasJsonExtension = file.name.toLowerCase().endsWith(".json");
+    const hasValidJsonMime =
+      file.type === "application/json" || file.type === "";
+
+    if (!hasJsonExtension || !hasValidJsonMime) {
+      setErrorData({
+        title: WRONG_FILE_ERROR_ALERT,
+        list: ["Only JSON files are allowed (.json, application/json)."],
+      });
+      return;
+    }
+
+    if (file.size > MAX_IMPORT_FILE_SIZE_BYTES) {
+      setErrorData({
+        title: "File too large",
+        list: ["Maximum allowed file size is 5 MB."],
+      });
+      return;
+    }
+
+    let parsedPayload: unknown;
+    try {
+      const fileContent = await file.text();
+      parsedPayload = JSON.parse(fileContent);
+    } catch {
+      setErrorData({
+        title: WRONG_FILE_ERROR_ALERT,
+        list: ["The selected file is not valid JSON."],
+      });
+      return;
+    }
+
+    if (
+      parsedPayload === null ||
+      parsedPayload === undefined ||
+      (Array.isArray(parsedPayload) && parsedPayload.length === 0) ||
+      (typeof parsedPayload === "object" &&
+        !Array.isArray(parsedPayload) &&
+        Object.keys(parsedPayload as object).length === 0)
+    ) {
+      setErrorData({
+        title: "Invalid import payload",
+        list: ["Import payload cannot be empty."],
+      });
+      return;
+    }
+
+    if (
+      typeof parsedPayload === "object" &&
+      !Array.isArray(parsedPayload) &&
+      "agents" in (parsedPayload as object)
+    ) {
+      const agentsPayload = (parsedPayload as { agents?: unknown }).agents;
+      if (!Array.isArray(agentsPayload) || agentsPayload.length === 0) {
+        setErrorData({
+          title: "Invalid import payload",
+          list: ["`agents` must be a non-empty array."],
+        });
+        return;
+      }
+
+      const invalidAgentIndex = agentsPayload.findIndex(
+        (agent) => !hasValidAgentGraph(agent),
+      );
+      if (invalidAgentIndex !== -1) {
+        setErrorData({
+          title: "Invalid import payload",
+          list: [
+            `Agent at index ${invalidAgentIndex} must include non-empty data.nodes and data.edges arrays.`,
+          ],
+        });
+        return;
+      }
+    } else if (!hasValidAgentGraph(parsedPayload)) {
+      setErrorData({
+        title: "Invalid import payload",
+        list: [
+          "Agent JSON must include non-empty data.nodes and data.edges arrays.",
+        ],
+      });
+      return;
+    }
+
+    const targetFolderId = folderId ?? myCollectionId;
+    if (!targetFolderId) {
+      setErrorData({
+        title: "Project selection is required.",
+      });
+      return;
+    }
+
+    const formData = new FormData();
+    formData.append("file", file);
+
+    uploadAgentToFolder(
+      {
+        agents: formData,
+        folderId: targetFolderId,
+      },
+      {
+        onSuccess: (importedAgents) => {
+          if (Array.isArray(importedAgents) && importedAgents.length > 0) {
+            const importedCount = importedAgents.length;
+            setSuccessData({
+              title:
+                importedCount === 1
+                  ? "Agent imported successfully"
+                  : `${importedCount} agents imported successfully`,
+            });
+
+            if (importedCount === 1 && importedAgents[0]?.id) {
+              navigate(
+                `/agent/${importedAgents[0].id}/folder/${targetFolderId}`,
+              );
+            }
+          } else {
+            setSuccessData({ title: "Agent imported successfully" });
+          }
+
+          track("Agent Imported", { projectId: targetFolderId });
+          setOpen(false);
+        },
+        onError: (error: any) => {
+          const detail = error?.response?.data?.detail;
+          const list = Array.isArray(detail)
+            ? detail.map((item) => String(item))
+            : detail
+              ? [String(detail)]
+              : [
+                  "Unable to import agent. Please check the JSON file and try again.",
+                ];
+
+          setErrorData({
+            title: "Agent import failed",
+            list,
+          });
+        },
+      },
+    );
+  };
+
   return (
     <BaseModal size="templates" open={open} setOpen={setOpen} className="p-0">
       <BaseModal.Content className="flex flex-col p-0 h-full overflow-hidden">
@@ -66,7 +251,11 @@ export default function TemplatesModal({
               <TemplateContentComponent
                 currentTab="all-templates"
                 categories={[
-                  { title: "All templates", icon: "LayoutPanelTop", id: "all-templates" },
+                  {
+                    title: "All templates",
+                    icon: "LayoutPanelTop",
+                    id: "all-templates",
+                  },
                 ]}
               />
             </div>
@@ -78,20 +267,38 @@ export default function TemplatesModal({
                     Begin with a fresh agent to build from scratch.
                   </div>
                 </div>
-                 {canCreateAgent && (
-                <Button
-                  onClick={handleBlankAgentClick}
-                  size="sm"
-                  data-testid="blank-agent"
-                  className="shrink-0"
-                >
-                  <ForwardedIconComponent
-                    name="Plus"
-                    className="h-4 w-4 shrink-0"
-                  />
-                  {hasValidProject ? "Blank Agent" : "Create Project First"}
-                </Button>
-                 )}
+                {canCreateAgent && (
+                  <div className="flex items-center gap-2">
+                    <Button
+                      variant="outline"
+                      onClick={handleImportAgentClick}
+                      size="sm"
+                      data-testid="import-agent"
+                      className="shrink-0"
+                      loading={isImporting}
+                    >
+                      <ForwardedIconComponent
+                        name="Upload"
+                        className="h-4 w-4 shrink-0"
+                      />
+                      {hasValidProject
+                        ? "Import Agent"
+                        : "Create Project First"}
+                    </Button>
+                    <Button
+                      onClick={handleBlankAgentClick}
+                      size="sm"
+                      data-testid="blank-agent"
+                      className="shrink-0"
+                    >
+                      <ForwardedIconComponent
+                        name="Plus"
+                        className="h-4 w-4 shrink-0"
+                      />
+                      {hasValidProject ? "Blank Agent" : "Create Project First"}
+                    </Button>
+                  </div>
+                )}
               </div>
             </BaseModal.Footer>
           </main>
