@@ -315,14 +315,52 @@ class RabbitMQService(Service):
         await self._safe_process(message, self.config.run_queue, self._handle_run)
 
     async def _handle_run(self, message: AbstractIncomingMessage, start_time: float) -> str:
-        from agentcore.services.deps import get_queue_service
+        from agentcore.events.event_manager import create_default_event_manager
+        from agentcore.services.deps import get_queue_service, get_settings_service
+        from agentcore.services.job_queue.redis_build_events import get_redis_job_event_store
 
         job_data = json.loads(message.body.decode("utf-8"))
         job_id = job_data["job_id"]
         logger.info(f"[RabbitMQ] Processing run job: {job_id}")
 
-        queue_service = get_queue_service()
+        # Distributed path: use Redis-backed job registry so any pod
+        # can process the run message without stale in-memory ownership issues.
+        event_store = get_redis_job_event_store(get_settings_service(), namespace="run_events")
+        if event_store is not None:
+            try:
+                if not await event_store.job_exists(job_id):
+                    raise JobQueueNotFoundError(job_id)
+                event_manager = create_default_event_manager(asyncio.Queue())
+                event_manager.configure_redis_mirror(redis_store=event_store, job_id=job_id)
+            except JobQueueNotFoundError:
+                logger.warning(f"[RabbitMQ] Stale run job {job_id} - discarding (not in current session)")
+                await message.nack(requeue=False)
+                return job_id
 
+            run_status = "completed"
+            run_error: str | None = None
+            try:
+                run_ok = await self._execute_run_job(job_data, event_manager, queue_service=None)
+                if not run_ok:
+                    run_status = "failed"
+                    run_error = "Run worker reported failure"
+            except Exception as exc:  # noqa: BLE001
+                run_status = "failed"
+                run_error = str(exc)
+                logger.exception(f"[RabbitMQ] Distributed run job error: {job_id}")
+            finally:
+                await event_manager.finalize_redis_mirror(status=run_status, error=run_error)
+
+            if run_status == "completed":
+                self._track(self.config.run_queue, "completed")
+                logger.info(f"[RabbitMQ] Run job completed: {job_id} ({time.time() - start_time:.2f}s)")
+            else:
+                self._track(self.config.run_queue, "failed")
+                logger.warning(f"[RabbitMQ] Run job failed: {job_id} ({time.time() - start_time:.2f}s)")
+            return job_id
+
+        # Legacy in-memory path (single-process ownership)
+        queue_service = get_queue_service()
         try:
             _, event_manager, _, _ = queue_service.get_queue_data(job_id)
         except JobQueueNotFoundError:
@@ -330,10 +368,13 @@ class RabbitMQService(Service):
             await message.nack(requeue=False)
             return job_id
 
-        await self._execute_run_job(job_data, event_manager, queue_service)
-
-        self._track(self.config.run_queue, "completed")
-        logger.info(f"[RabbitMQ] Run job completed: {job_id} ({time.time() - start_time:.2f}s)")
+        run_ok = await self._execute_run_job(job_data, event_manager, queue_service)
+        if run_ok:
+            self._track(self.config.run_queue, "completed")
+            logger.info(f"[RabbitMQ] Run job completed: {job_id} ({time.time() - start_time:.2f}s)")
+        else:
+            self._track(self.config.run_queue, "failed")
+            logger.warning(f"[RabbitMQ] Run job failed: {job_id} ({time.time() - start_time:.2f}s)")
         return job_id
 
     async def _on_schedule_message(self, message: AbstractIncomingMessage) -> None:
@@ -485,7 +526,7 @@ class RabbitMQService(Service):
         if job_ready is not None:
             job_ready.set()
 
-    async def _execute_run_job(self, job_data: dict[str, Any], event_manager: Any, queue_service: Any) -> None:
+    async def _execute_run_job(self, job_data: dict[str, Any], event_manager: Any, queue_service: Any) -> bool:
         """Execute a run job. Handles both streaming and non-streaming."""
         from agentcore.api.endpoints import simple_run_agent
         from agentcore.api.v1_schemas import SimplifiedAPIRequest
@@ -501,7 +542,7 @@ class RabbitMQService(Service):
 
         if agent is None:
             logger.error(f"[RabbitMQ] Agent not found for run job {job_id}")
-            return
+            return False
 
         if job_data.get("agent_data"):
             agent.data = job_data["agent_data"]
@@ -525,12 +566,36 @@ class RabbitMQService(Service):
             async with session_scope() as session:
                 uat_deployment = await session.get(AgentDeploymentUAT, uuid.UUID(job_data["uat_deployment_id"]))
 
+        def _extract_text_from_payload(payload: Any) -> str:
+            candidates: list[str] = []
+
+            def _visit(value: Any) -> None:
+                if isinstance(value, dict):
+                    for key in ("text", "message"):
+                        candidate = value.get(key)
+                        if isinstance(candidate, str) and candidate.strip():
+                            candidates.append(candidate.strip())
+                    for nested in value.values():
+                        if isinstance(nested, (dict, list)):
+                            _visit(nested)
+                elif isinstance(value, list):
+                    for item in value:
+                        _visit(item)
+                elif isinstance(value, str) and value.strip():
+                    candidates.append(value.strip())
+
+            _visit(payload)
+            if not candidates:
+                return ""
+            return max(candidates, key=len)
+
         if is_stream:
             # Streaming: run the agent directly with event_manager for token streaming.
             # Do NOT use run_agent_generator here - it waits on a client_consumed_queue
             # that only the HTTP streaming response writes to.  In the RabbitMQ path the
             # HTTP response reads from the shared asyncio.Queue independently, so the
             # consumer must not block on client consumption.
+            stream_ok = True
             try:
                 result = await simple_run_agent(
                     agent=agent,
@@ -546,14 +611,45 @@ class RabbitMQService(Service):
                     orch_dept_id=orch_dept_id,
                     orch_user_id=orch_user_id,
                 )
-                event_manager.on_end(data={"result": result.model_dump()})
+
+                try:
+                    result_payload = result.model_dump(mode="json")
+                except Exception:
+                    try:
+                        result_payload = json.loads(json.dumps(result.model_dump(), default=str))
+                    except Exception:
+                        result_payload = {"session_id": getattr(result, "session_id", None), "outputs": []}
+
+                final_text = _extract_text_from_payload(result_payload)
+                end_data: dict[str, Any] = {"result": result_payload}
+                if final_text:
+                    end_data["text"] = final_text
+
+                try:
+                    event_manager.on_end(data=end_data)
+                except Exception as end_exc:  # noqa: BLE001
+                    logger.warning(f"[RabbitMQ] end event serialization failed for run job {job_id}: {end_exc}")
+                    fallback_end = {
+                        "text": final_text,
+                        "result": {
+                            "session_id": result_payload.get("session_id"),
+                            "outputs": [],
+                        },
+                    }
+                    event_manager.on_end(data=fallback_end)
             except Exception as exc:
+                stream_ok = False
                 logger.exception(f"[RabbitMQ] Streaming run job error: {job_id}")
-                event_manager.on_error(data={"error": str(exc)})
+                try:
+                    event_manager.on_error(data={"error": str(exc)})
+                except Exception:
+                    pass
             finally:
                 await event_manager.queue.put((None, None, time.time()))
+            return stream_ok
         else:
             # Non-streaming: run agent directly and send result back via queue
+            non_stream_ok = True
             try:
                 result = await simple_run_agent(
                     agent=agent,
@@ -571,10 +667,12 @@ class RabbitMQService(Service):
                 result_event = json.dumps({"event": "end", "data": {"result": result.model_dump()}}, default=str) + "\n\n"
                 event_manager.queue.put_nowait(("end", result_event.encode("utf-8"), time.time()))
             except Exception as exc:
+                non_stream_ok = False
                 error_event = json.dumps({"event": "error", "data": {"error": str(exc)}}) + "\n\n"
                 event_manager.queue.put_nowait(("error", error_event.encode("utf-8"), time.time()))
             finally:
                 event_manager.queue.put_nowait((None, None, time.time()))
+            return non_stream_ok
 
     async def _execute_orchestrator_job(self, job_data: dict[str, Any], event_manager: Any) -> bool:
         # Get queue FIRST so the finally sentinel always works, even if imports fail

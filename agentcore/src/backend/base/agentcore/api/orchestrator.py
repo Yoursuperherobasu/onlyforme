@@ -244,6 +244,36 @@ def _extract_text(payload: Any) -> str:
         return str(payload)
 
 
+def _pick_best_text(candidates: list[str]) -> str:
+    """Choose the most human-readable candidate text from multiple options."""
+    cleaned: list[str] = []
+    for candidate in candidates:
+        if not isinstance(candidate, str):
+            continue
+        text = candidate.strip()
+        if text:
+            cleaned.append(text)
+
+    if not cleaned:
+        return ""
+
+    def _score(text: str) -> tuple[int, int]:
+        score = 0
+        if any(ch.isalpha() for ch in text):
+            score += 2
+        if any(ch.isspace() for ch in text):
+            score += 3
+        if any(ch in ".!?" for ch in text):
+            score += 1
+        if text.startswith("{") or text.startswith("["):
+            score -= 4
+        if text.count("-") >= 4 and " " not in text and len(text) >= 32:
+            score -= 3
+        return score, len(text)
+
+    return max(cleaned, key=_score)
+
+
 def _is_interrupted_payload(payload: Any) -> bool:
     """Return True when a /run payload indicates a HITL interrupt."""
     if not isinstance(payload, dict):
@@ -296,21 +326,67 @@ async def _create_orchestrator_redis_response(
     event_store: RedisBuildEventStore,
 ) -> StreamingResponse:
     async def consume_and_yield():
+        def _has_end_event(payload: bytes | str) -> bool:
+            try:
+                text = payload.decode("utf-8") if isinstance(payload, bytes) else str(payload)
+            except Exception:
+                return False
+            for raw_line in text.splitlines():
+                line = raw_line.strip()
+                if not line:
+                    continue
+                if line.startswith("event:"):
+                    if line.split(":", 1)[1].strip() == "end":
+                        return True
+                    continue
+                if line.startswith("data:"):
+                    line = line.split(":", 1)[1].strip()
+                if "\"event\"" not in line:
+                    continue
+                try:
+                    parsed = json.loads(line)
+                    if isinstance(parsed, dict) and parsed.get("event") == "end":
+                        return True
+                except Exception:
+                    if "\"event\":\"end\"" in line or "\"event\": \"end\"" in line:
+                        return True
+            return False
+
         cursor = 0
+        saw_end_event = False
+        terminal_idle_polls = 0
+        last_total = -1
         while True:
             try:
                 events = await event_store.get_events_from(job_id, cursor)
                 for payload in events:
+                    if not saw_end_event and _has_end_event(payload):
+                        saw_end_event = True
                     yield payload
                 cursor += len(events)
 
                 status = await event_store.get_status(job_id)
                 if status in RedisBuildEventStore.TERMINAL_STATUSES:
                     total = await event_store.get_events_count(job_id)
-                    if cursor >= total:
+                    if total != last_total:
+                        terminal_idle_polls = 0
+                        last_total = total
+                    elif not events:
+                        terminal_idle_polls += 1
+
+                    if cursor >= total and saw_end_event:
+                        break
+                    if cursor >= total and terminal_idle_polls >= 20:
+                        logger.warning(
+                            f"[ORCH-STREAM] Redis stream closed without end event for job {job_id} "
+                            f"(status={status}, total={total}, cursor={cursor})"
+                        )
                         break
                 elif not events and status is None and not await event_store.job_exists(job_id):
                     break
+                else:
+                    terminal_idle_polls = 0
+                    last_total = -1
 
                 await asyncio.sleep(0.05)
             except Exception as exc:  # noqa: BLE001
@@ -393,32 +469,149 @@ async def _orch_call_run_api(
 
     # --- Streaming: forward SSE events to event_manager, collect final text ---
     final_text = ""
+    token_chunks: list[str] = []
+    latest_agent_add_message_text = ""
+    message_text_by_id: dict[str, str] = {}
+    active_message_id: str | None = None
+    saw_end_event = False
+    pending_sse_event_type = ""
     was_interrupted = False
+
+    def _extract_stream_text(data: Any) -> str:
+        if isinstance(data, str):
+            return data
+        if not isinstance(data, dict):
+            return ""
+        candidates = [
+            data.get("chunk"),
+            data.get("text"),
+            data.get("token"),
+            data.get("message"),
+            data.get("data", {}).get("text") if isinstance(data.get("data"), dict) else None,
+            data.get("data", {}).get("chunk") if isinstance(data.get("data"), dict) else None,
+        ]
+        for candidate in candidates:
+            if isinstance(candidate, str) and candidate:
+                return candidate
+        return ""
+
+    def _reconstructed_stream_text() -> str:
+        token_text = "".join(token_chunks).strip()
+        message_candidates = [
+            text.strip()
+            for text in message_text_by_id.values()
+            if isinstance(text, str) and text.strip()
+        ]
+        combined_text = ""
+        if latest_agent_add_message_text and token_text:
+            if token_text.startswith(latest_agent_add_message_text):
+                combined_text = token_text
+            elif latest_agent_add_message_text.endswith(token_text):
+                combined_text = latest_agent_add_message_text
+            else:
+                combined_text = f"{latest_agent_add_message_text}{token_text}"
+        return _pick_best_text(
+            [*message_candidates, combined_text, token_text, latest_agent_add_message_text]
+        )
+
     async with httpx.AsyncClient(timeout=300, verify=False) as client:
         async with client.stream("POST", url, json=body, headers=headers) as resp:
             logger.info(f"[ORCH] stream started: status={resp.status_code}")
             resp.raise_for_status()
-            async for line in resp.aiter_lines():
-                line = line.strip()
+            async for raw_line in resp.aiter_lines():
+                line = raw_line.strip()
                 if not line:
+                    pending_sse_event_type = ""
                     continue
+
+                if line.startswith("event:"):
+                    pending_sse_event_type = line.split(":", 1)[1].strip()
+                    continue
+
+                payload_line = line.split(":", 1)[1].strip() if line.startswith("data:") else line
+
                 try:
-                    evt = json.loads(line)
+                    parsed = json.loads(payload_line)
                 except Exception:  # noqa: BLE001
                     continue
+
+                if isinstance(parsed, dict) and "event" in parsed:
+                    evt = parsed
+                elif isinstance(parsed, dict) and pending_sse_event_type:
+                    evt = {"event": pending_sse_event_type, "data": parsed}
+                else:
+                    continue
+
                 etype = evt.get("event", "")
                 edata = evt.get("data", {})
-                if etype == "token" and event_manager:
-                    event_manager.on_token(data=edata)
-                elif etype == "add_message" and event_manager:
-                    event_manager.on_message(data=edata)
+                if etype == "token":
+                    chunk = _extract_stream_text(edata)
+                    if isinstance(chunk, str) and chunk:
+                        token_chunks.append(chunk)
+                        token_id = ""
+                        if isinstance(edata, dict):
+                            token_id = str(edata.get("id") or edata.get("message_id") or "").strip()
+                        target_id = token_id or active_message_id
+                        if target_id:
+                            existing = message_text_by_id.get(target_id, "")
+                            if not existing.endswith(chunk):
+                                message_text_by_id[target_id] = f"{existing}{chunk}" if existing else chunk
+                            active_message_id = target_id
+                    if event_manager:
+                        event_manager.on_token(data=edata)
+                elif etype == "add_message":
+                    msg_text = _extract_stream_text(edata)
+                    sender = (
+                        str(edata.get("sender") or edata.get("sender_name") or "").lower()
+                        if isinstance(edata, dict)
+                        else ""
+                    )
+                    if isinstance(msg_text, str) and msg_text.strip() and "user" not in sender:
+                        latest_agent_add_message_text = msg_text
+                        msg_id = ""
+                        if isinstance(edata, dict):
+                            msg_id = str(edata.get("id") or edata.get("message_id") or "").strip()
+                        target_id = msg_id or active_message_id or "__orch_agent_msg__"
+                        message_text_by_id[target_id] = msg_text
+                        active_message_id = target_id
+                    if event_manager:
+                        event_manager.on_message(data=edata)
                 elif etype == "end":
-                    result = edata.get("result", edata)
+                    saw_end_event = True
+                    result = edata.get("result", edata) if isinstance(edata, dict) else edata
                     was_interrupted = _is_interrupted_payload(result)
-                    final_text = "" if was_interrupted else _extract_text(result)
-                    logger.info(f"[ORCH] stream ended | interrupted={was_interrupted} | response_length={len(final_text)}")
+                    if was_interrupted:
+                        final_text = ""
+                    else:
+                        parsed_text = _extract_text(result)
+                        parsed_text = parsed_text if isinstance(parsed_text, str) else str(parsed_text)
+                        end_text = _extract_stream_text(edata) if isinstance(edata, dict) else ""
+                        reconstructed_text = _reconstructed_stream_text()
+                        token_text = "".join(token_chunks).strip()
+                        final_text = _pick_best_text(
+                            [parsed_text, end_text, reconstructed_text, token_text, latest_agent_add_message_text]
+                        )
+                    logger.info(
+                        "[ORCH] stream ended | "
+                        f"interrupted={was_interrupted} "
+                        f"response_length={len(final_text)} "
+                        f"token_chars={len(''.join(token_chunks))}"
+                    )
                 elif etype == "error":
                     raise ValueError(edata.get("error", "Stream error from /run"))
+
+    reconstructed_text = _reconstructed_stream_text()
+    if not was_interrupted:
+        final_text = _pick_best_text([final_text, reconstructed_text])
+
+    if not saw_end_event:
+        logger.warning(
+            "[ORCH] stream closed without end event | "
+            f"token_chars={len(''.join(token_chunks))} "
+            f"add_message_chars={len(latest_agent_add_message_text)} "
+            f"reconstructed_chars={len(reconstructed_text)} "
+            f"final_chars={len(final_text)}"
+        )
 
     return final_text, was_interrupted, []
 

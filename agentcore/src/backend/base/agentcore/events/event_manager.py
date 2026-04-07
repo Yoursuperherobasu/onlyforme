@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import json
+import os
 import time
 import uuid
 from functools import partial
@@ -71,17 +72,40 @@ class EventManager:
         if mirror_queue is None or redis_store is None or not job_id:
             return
 
+        max_batch_size = 64
+        append_batch = getattr(redis_store, "append_events_batch", None)
+
         while True:
             item = await mirror_queue.get()
             if item is None:
                 break
+
+            batch: list[str] = [item]
+            saw_sentinel = False
+            while len(batch) < max_batch_size:
+                try:
+                    next_item = mirror_queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
+                if next_item is None:
+                    saw_sentinel = True
+                    break
+                batch.append(next_item)
+
             try:
-                await redis_store.append_event(job_id, item)
+                if callable(append_batch) and len(batch) > 1:
+                    await append_batch(job_id, batch)
+                else:
+                    for payload in batch:
+                        await redis_store.append_event(job_id, payload)
             except Exception as exc:  # noqa: BLE001
                 logger.warning(f"Failed to mirror build event to Redis for job {job_id}: {exc}")
                 # Disable Redis mirroring for this job to avoid noisy logs.
                 self.__dict__.pop("_redis_event_store", None)
                 self.__dict__.pop("_redis_job_id", None)
+                break
+
+            if saw_sentinel:
                 break
 
     def configure_redis_mirror(self, *, redis_store, job_id: str) -> None:
@@ -109,8 +133,56 @@ class EventManager:
 
         if mirror_queue is not None and mirror_task is not None and not mirror_task.done():
             mirror_queue.put_nowait(None)
+            pending_hint = mirror_queue.qsize()
+            base_timeout = max(int(os.environ.get("REDIS_MIRROR_FINALIZE_TIMEOUT_SECONDS", "120")), 10)
+            # Wait up to 2 minutes (120s), scaled by backlog.
+            timeout_seconds = min(120, max(base_timeout, base_timeout + (pending_hint // 64)))
             try:
-                await asyncio.wait_for(mirror_task, timeout=3)
+                # Shield prevents wait_for timeout from cancelling the drain task.
+                await asyncio.wait_for(asyncio.shield(mirror_task), timeout=timeout_seconds)
+            except asyncio.TimeoutError:
+                pending = mirror_queue.qsize()
+                logger.warning(
+                    f"Timed out waiting for Redis mirror flush for job {job_id}; "
+                    f"attempting forced drain of {pending} queued events"
+                )
+                try:
+                    mirror_task.cancel()
+                    await asyncio.gather(mirror_task, return_exceptions=True)
+                except Exception:
+                    pass
+
+                # Best-effort fallback: synchronously drain whatever is still queued.
+                # This prevents losing terminal `end` events when Redis is slow.
+                if redis_store is not None and job_id:
+                    forced_payloads: list[str] = []
+                    while True:
+                        try:
+                            item = mirror_queue.get_nowait()
+                        except asyncio.QueueEmpty:
+                            break
+                        if item is None:
+                            continue
+                        forced_payloads.append(item)
+
+                    if forced_payloads:
+                        append_batch = getattr(redis_store, "append_events_batch", None)
+                        forced = 0
+                        try:
+                            if callable(append_batch):
+                                chunk_size = 256
+                                for i in range(0, len(forced_payloads), chunk_size):
+                                    chunk = forced_payloads[i : i + chunk_size]
+                                    await append_batch(job_id, chunk)
+                                    forced += len(chunk)
+                            else:
+                                for payload in forced_payloads:
+                                    await redis_store.append_event(job_id, payload)
+                                    forced += 1
+                        except Exception as exc:  # noqa: BLE001
+                            logger.debug(f"Forced Redis mirror append failed for job {job_id}: {exc}")
+                        if forced:
+                            logger.info(f"Forced Redis mirror drain appended {forced} event(s) for job {job_id}")
             except Exception as exc:  # noqa: BLE001
                 logger.debug(f"Error finalizing Redis mirror task for job {job_id}: {exc}")
 

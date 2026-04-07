@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import time
 from datetime import date
@@ -855,12 +856,19 @@ async def simplified_run_agent(
         # competing consumers stealing a job whose job_id is in this pod's memory.
         _is_agent_pod = bool(os.environ.get("AGENTCORE_IS_POD"))
         if rabbitmq_service.is_enabled() and not _is_agent_pod:
-            from agentcore.services.deps import get_queue_service
+            from agentcore.services.deps import get_queue_service, get_settings_service
+            from agentcore.services.job_queue.redis_build_events import get_redis_job_event_store
 
             queue_service = get_queue_service()
             job_id = str(uuid.uuid4())
-            # Register the queue so the RabbitMQ consumer can find it
-            queue_service._queues[job_id] = (asyncio_queue, event_manager, None, None)
+
+            # Register the job in Redis so any pod's RabbitMQ consumer can find it
+            redis_event_store = get_redis_job_event_store(get_settings_service(), namespace="run_events")
+            if redis_event_store is not None:
+                await redis_event_store.init_job(job_id)
+            else:
+                # Legacy in-memory fallback when Redis is unavailable.
+                queue_service._queues[job_id] = (asyncio_queue, event_manager, None, None)
 
             job_data = {
                 "job_id": job_id,
@@ -883,6 +891,85 @@ async def simplified_run_agent(
                 adjust_active_sessions(-1)
                 record_session_duration((time.perf_counter() - start_time) * 1000)
                 await queue_service.cleanup_job(job_id)
+
+            if redis_event_store is not None:
+                async def consume_redis_events():
+                    def _has_end_event(payload: bytes | str) -> bool:
+                        try:
+                            text = payload.decode("utf-8") if isinstance(payload, bytes) else str(payload)
+                        except Exception:
+                            return False
+                        for raw_line in text.splitlines():
+                            line = raw_line.strip()
+                            if not line:
+                                continue
+                            if line.startswith("event:"):
+                                if line.split(":", 1)[1].strip() == "end":
+                                    return True
+                                continue
+                            if line.startswith("data:"):
+                                line = line.split(":", 1)[1].strip()
+                            if "\"event\"" not in line:
+                                continue
+                            try:
+                                parsed = json.loads(line)
+                                if isinstance(parsed, dict) and parsed.get("event") == "end":
+                                    return True
+                            except Exception:
+                                if "\"event\":\"end\"" in line or "\"event\": \"end\"" in line:
+                                    return True
+                        return False
+
+                    cursor = 0
+                    saw_end_event = False
+                    terminal_idle_polls = 0
+                    last_total = -1
+                    while True:
+                        try:
+                            events = await redis_event_store.get_events_from(job_id, cursor)
+                            for payload in events:
+                                if not saw_end_event and _has_end_event(payload):
+                                    saw_end_event = True
+                                if isinstance(payload, bytes):
+                                    yield payload
+                                else:
+                                    yield str(payload).encode("utf-8")
+                            cursor += len(events)
+
+                            status = await redis_event_store.get_status(job_id)
+                            if status in redis_event_store.TERMINAL_STATUSES:
+                                total = await redis_event_store.get_events_count(job_id)
+                                if total != last_total:
+                                    terminal_idle_polls = 0
+                                    last_total = total
+                                elif not events:
+                                    terminal_idle_polls += 1
+
+                                if cursor >= total and saw_end_event:
+                                    break
+                                if cursor >= total and terminal_idle_polls >= 20:
+                                    logger.warning(
+                                        "Redis run event stream closed without end event for job "
+                                        f"{job_id} (status={status}, total={total}, cursor={cursor})"
+                                    )
+                                    break
+                            elif not events and status is None and not await redis_event_store.job_exists(job_id):
+                                break
+                            else:
+                                terminal_idle_polls = 0
+                                last_total = -1
+
+                            await asyncio.sleep(0.05)
+                        except Exception as exc:  # noqa: BLE001
+                            logger.exception(f"Error streaming Redis run events for job {job_id}: {exc}")
+                            break
+
+                return StreamingResponse(
+                    consume_redis_events(),
+                    background=on_disconnect_rmq,
+                    media_type="text/event-stream",
+                    headers={"X-Session-Id": input_request.session_id},
+                )
 
             return StreamingResponse(
                 consume_and_yield(asyncio_queue, asyncio_queue_client_consumed),
@@ -929,7 +1016,8 @@ async def simplified_run_agent(
     rabbitmq_service_ns = get_rabbitmq_service()
     _is_agent_pod_ns = bool(os.environ.get("AGENTCORE_IS_POD"))
     if rabbitmq_service_ns.is_enabled() and not _is_agent_pod_ns:
-        from agentcore.services.deps import get_queue_service
+        from agentcore.services.deps import get_queue_service, get_settings_service
+        from agentcore.services.job_queue.redis_build_events import get_redis_job_event_store
 
         queue_service = get_queue_service()
         job_id = str(uuid.uuid4())
@@ -937,6 +1025,13 @@ async def simplified_run_agent(
         # Create a queue + event to receive the result back
         asyncio_queue_ns: asyncio.Queue = asyncio.Queue()
         event_manager_ns = create_stream_tokens_event_manager(queue=asyncio_queue_ns)
+
+        # Register the job in Redis so any pod's RabbitMQ consumer can find it
+        redis_event_store = get_redis_job_event_store(get_settings_service(), namespace="run_events")
+        if redis_event_store is not None:
+            await redis_event_store.init_job(job_id)
+
+        # Also register in-memory for legacy/same-pod fallback
         queue_service._queues[job_id] = (asyncio_queue_ns, event_manager_ns, None, None)
 
         job_data = {
