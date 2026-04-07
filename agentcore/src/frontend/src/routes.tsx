@@ -40,6 +40,7 @@ import ApprovalPage from "./pages/ApprovalPage";
 import ApprovalPreviewPage from "./pages/ApprovalPreviewPage";
 import ModelCatalogue from "./pages/ModelCatalogue";
 import AgentOrchestrator from "./pages/OrchestratorChat";
+import SharePointCallback from "./pages/SharePointCallback";
 import AgentCatalogueView from "./pages/AgentCatalogue";
 import AgentCataloguePreviewPage from "./pages/AgentCataloguePreview";
 import { Workflow } from "lucide-react";
@@ -105,6 +106,7 @@ const PlaygroundPage = lazy(() => import("./pages/Playground"));
 
 const router = createBrowserRouter(
   createRoutesFromElements([
+    <Route path="/sharepoint-callback" element={<SharePointCallback />} />,
     <Route path="/playground/:id/">
       <Route
         path=""
@@ -112,7 +114,7 @@ const router = createBrowserRouter(
           <ContextWrapper key={1}>
 
               <PlaygroundPage />
-            
+
           </ContextWrapper>
         }
       />

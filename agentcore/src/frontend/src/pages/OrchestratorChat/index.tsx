@@ -1,6 +1,6 @@
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
-import { Send, Sparkles, ChevronDown, Plus, MessageSquare, PanelLeftClose, PanelLeft, User, Loader2, Trash2, Check, ImagePlus, X, Clock } from "lucide-react";
+import { Send, Sparkles, ChevronDown, Plus, MessageSquare, PanelLeftClose, PanelLeft, User, Loader2, Trash2, Check, ImagePlus, X, Clock, Search, Image, Archive, ChevronRight, Globe, BookOpen, Headphones, Info, HelpCircle, Mic, AudioLines, FileUp, Paintbrush, Lightbulb, Upload, MoreVertical, Folder, ArrowLeft, File, Shield, CheckCircle2, SquarePen } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import {
   useGetOrchAgents,
@@ -21,6 +21,7 @@ import { AuthContext } from "@/contexts/authContext";
 import { MarkdownField } from "@/modals/IOModal/components/chatView/chatMessage/components/edit-message";
 import { ContentBlockDisplay } from "@/components/core/chatComponents/ContentBlockDisplay";
 import type { ContentBlock } from "@/types/chat";
+import SharePointFilePicker from "./SharePointFilePicker";
 
 /* ------------------ TYPES ------------------ */
 
@@ -187,6 +188,26 @@ function groupSessionsByDate(
   return groups;
 }
 
+/* ------------------ AI MODEL OPTIONS (Addon) ------------------ */
+
+interface AiModelOption {
+  id: string;
+  name: string;
+  icon: string;        // color for the dot/icon
+  group: "main" | "more";
+}
+
+const AI_MODELS: AiModelOption[] = [
+  { id: "mibuddy",    name: "MiBuddy AI",       icon: "#ef4146", group: "main" },
+  { id: "gemini",     name: "Gemini 3.1 Pro",   icon: "#4285f4", group: "main" },
+  { id: "websearch",  name: "Web Search",       icon: "#34a853", group: "main" },
+  { id: "nanobanana", name: "Nano Banana",       icon: "#8b5cf6", group: "main" },
+  { id: "gpt52",      name: "GPT 5.2",          icon: "#10a37f", group: "main" },
+  { id: "mistral",    name: "Mistral Medium 3", icon: "#f97316", group: "more" },
+  { id: "grok",       name: "Grok-3-mini",      icon: "#6b7280", group: "more" },
+  { id: "dalle",      name: "DALL-E",           icon: "#000000", group: "more" },
+];
+
 /* ------------------ COMPONENT ------------------ */
 
 export default function AgentOrchestrator() {
@@ -209,11 +230,28 @@ export default function AgentOrchestrator() {
   const [hitlLoadingId, setHitlLoadingId] = useState<string | null>(null);
   const [hitlLoadingAction, setHitlLoadingAction] = useState<string | null>(null);
   const [uploadFiles, setUploadFiles] = useState<FilePreview[]>([]);
+  // Addon UI state
+  const [showPlusMenu, setShowPlusMenu] = useState(false);
+  const [plusMenuPos, setPlusMenuPos] = useState<{ bottom: number; left: number }>({ bottom: 0, left: 0 });
+  const [cotReasoning, setCotReasoning] = useState(false);
+  const [showChatHistoryExpand, setShowChatHistoryExpand] = useState(false);
+  const [showArchiveChatExpand, setShowArchiveChatExpand] = useState(false);
+  const [sidebarSearchQuery, setSidebarSearchQuery] = useState("");
+  const [chatMenuOpenId, setChatMenuOpenId] = useState<string | null>(null);
+  const [chatMenuPos, setChatMenuPos] = useState<{ top: number; left: number }>({ top: 0, left: 0 });
+  // Addon: AI Model selector state
+  const [showAiModelPicker, setShowAiModelPicker] = useState(false);
+  const [showMoreModels, setShowMoreModels] = useState(false);
+  const [selectedAiModel, setSelectedAiModel] = useState<string | null>(null);
+  const [noAgentMode, setNoAgentMode] = useState(false);
+  // Addon: SharePoint file picker
+  const [spPickerOpen, setSpPickerOpen] = useState(false);
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const modelPickerRef = useRef<HTMLDivElement>(null);
+  const aiModelPickerRef = useRef<HTMLDivElement>(null);
   const hitlSessionRef = useRef<string | null>(null);
 
   /* ------------------ FILE UPLOAD ------------------ */
@@ -268,6 +306,14 @@ export default function AgentOrchestrator() {
 
   const removeFile = (id: string) => {
     setUploadFiles((prev) => prev.filter((f) => f.id !== id));
+  };
+
+  /* ------------------ SHAREPOINT FILE PICKER (Addon) ------------------ */
+
+  const handleSpFilesSelected = (files: File[]) => {
+    for (const file of files) {
+      uploadFile(file);
+    }
   };
 
   /* ------------------ API HOOKS ------------------ */
@@ -404,12 +450,12 @@ export default function AgentOrchestrator() {
     };
   }, [messages]);
 
-  // Set default selected model when agents load
+  // Set default selected model when agents load (skip if user chose "No Agent" mode)
   useEffect(() => {
-    if (agents.length > 0 && !selectedModelId) {
+    if (agents.length > 0 && !selectedModelId && !noAgentMode) {
       setSelectedModelId(agents[0].id);
     }
-  }, [agents, selectedModelId]);
+  }, [agents, selectedModelId, noAgentMode]);
 
   // Update filteredAgents when agents load
   useEffect(() => {
@@ -428,6 +474,17 @@ export default function AgentOrchestrator() {
     const handleClickOutside = (e: MouseEvent) => {
       if (modelPickerRef.current && !modelPickerRef.current.contains(e.target as Node)) {
         setShowModelPicker(false);
+      }
+      if (!(e.target as Element)?.closest?.("[data-plus-menu]")) {
+        setShowPlusMenu(false);
+      }
+      if (aiModelPickerRef.current && !aiModelPickerRef.current.contains(e.target as Node)) {
+        setShowAiModelPicker(false);
+        setShowMoreModels(false);
+      }
+      // Close three-dot chat menu when clicking outside
+      if (!(e.target as Element)?.closest?.("[data-chat-menu]")) {
+        setChatMenuOpenId(null);
       }
     };
     document.addEventListener("mousedown", handleClickOutside);
@@ -567,7 +624,44 @@ export default function AgentOrchestrator() {
 
   const handleSend = useCallback(async () => {
     const hasFiles = uploadFiles.some((f) => f.path && !f.loading && !f.error);
-    if (!canInteract || (!input.trim() && !hasFiles) || isSending || agents.length === 0) return;
+    if (!canInteract || (!input.trim() && !hasFiles) || isSending) return;
+
+    // Detect explicit @mention — auto-select the agent if user typed @agent_name
+    // Sort by name length descending so "rag agent_new" matches before "rag agent".
+    const explicitAgent = [...agents]
+      .sort((a, b) => b.name.length - a.name.length)
+      .find((a) => input.includes(`@${a.name}`));
+
+    // If user @mentioned an agent, switch out of noAgentMode and select it
+    if (explicitAgent) {
+      if (noAgentMode) setNoAgentMode(false);
+      if (explicitAgent.id !== selectedModelId) setSelectedModelId(explicitAgent.id);
+    }
+
+    // Block send when no agent or model is selected (and no @mention detected)
+    if (!explicitAgent) {
+      const needsAgent = !noAgentMode && !selectedModelId;
+      const needsModel = noAgentMode && !selectedAiModel;
+      if (needsAgent || needsModel || (!noAgentMode && agents.length === 0)) {
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: crypto.randomUUID(),
+            sender: "user" as const,
+            content: input,
+            timestamp: timeNow(),
+          },
+          {
+            id: crypto.randomUUID(),
+            sender: "agent" as const,
+            content: t("Please select an agent or model first to start chatting."),
+            timestamp: timeNow(),
+          },
+        ]);
+        setInput("");
+        return;
+      }
+    }
 
     // Collect uploaded file paths and clear previews
     const filePaths = uploadFiles
@@ -575,17 +669,7 @@ export default function AgentOrchestrator() {
       .map((f) => f.path!);
     setUploadFiles([]);
 
-    // Detect explicit @mention vs implicit (sticky) routing.
-    // Sort by name length descending so "rag agent_new" matches before "rag agent".
-    const explicitAgent = [...agents]
-      .sort((a, b) => b.name.length - a.name.length)
-      .find((a) => input.includes(`@${a.name}`));
     const fallbackAgent = selectedAgent || agents[0];
-
-    // If user explicitly @mentioned an agent, update the selected model (sticky switch)
-    if (explicitAgent && explicitAgent.id !== selectedModelId) {
-      setSelectedModelId(explicitAgent.id);
-    }
 
     // Target agent: explicit @mention wins, otherwise use sticky (selectedModel)
     const targetAgent = explicitAgent || fallbackAgent;
@@ -858,7 +942,7 @@ export default function AgentOrchestrator() {
       setStreamingAgentName("");
       setStreamingMsgId(null);
     }
-  }, [canInteract, input, isSending, agents, selectedAgent, selectedModelId, currentSessionId, effectiveSessionId, refetchSessions, refetchMessages]);
+  }, [canInteract, input, isSending, agents, selectedAgent, selectedModelId, noAgentMode, selectedAiModel, currentSessionId, effectiveSessionId, refetchSessions, refetchMessages]);
 
   /* ------------------ SESSION MANAGEMENT ------------------ */
 
@@ -866,6 +950,8 @@ export default function AgentOrchestrator() {
     setCurrentSessionId(crypto.randomUUID());
     setActiveSessionId(null);
     setMessages([]);
+    setSelectedModelId("");
+    setNoAgentMode(true);
   };
 
   const handleSelectSession = (sessionId: string) => {
@@ -886,10 +972,36 @@ export default function AgentOrchestrator() {
     );
   };
 
+  const handleArchiveSession = async (sessionId: string, isArchived: boolean) => {
+    try {
+      await api.post(`${getURL("ORCHESTRATOR")}/sessions/${sessionId}/archive`, {
+        is_archived: isArchived,
+      });
+      if (currentSessionId === sessionId && isArchived) {
+        handleNewChat();
+      }
+      refetchSessions();
+    } catch (err) {
+      console.error("Failed to archive session:", err);
+    }
+  };
+
   /* ---- group chat history by date ---- */
+  const activeSessions = useMemo(
+    () => (apiSessions || []).filter((s) => !s.is_archived),
+    [apiSessions],
+  );
+  const archivedSessions = useMemo(
+    () => (apiSessions || []).filter((s) => s.is_archived),
+    [apiSessions],
+  );
   const grouped = useMemo(
-    () => groupSessionsByDate(apiSessions || [], t),
-    [apiSessions, t],
+    () => groupSessionsByDate(activeSessions, t),
+    [activeSessions, t],
+  );
+  const groupedArchived = useMemo(
+    () => groupSessionsByDate(archivedSessions, t),
+    [archivedSessions, t],
   );
 
   /* ------------------ RENDER ------------------ */
@@ -910,55 +1022,186 @@ export default function AgentOrchestrator() {
           >
             <PanelLeftClose size={18} />
           </button>
-          <button
-            onClick={handleNewChat}
-            className="flex items-center rounded-md p-1.5 text-muted-foreground hover:bg-accent"
-          >
-            <Plus size={18} />
-          </button>
         </div>
 
-        {/* Chat History */}
-        <div className="flex min-h-0 flex-1 flex-col">
-          <div className="shrink-0 px-4 pb-1 pt-2 text-xxs font-semibold uppercase tracking-wide text-muted-foreground">
-            {t("Conversations")}
+        {/* ---- Addon: Sidebar Navigation Items ---- */}
+        <div className="flex flex-col gap-0.5 px-2 pb-2">
+          {/* New chat */}
+          <button
+            onClick={handleNewChat}
+            className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm text-foreground hover:bg-accent"
+          >
+            <SquarePen size={16} className="shrink-0 text-muted-foreground" />
+            <span>{t("New chat")}</span>
+          </button>
+
+          {/* Search chats */}
+          <div className="relative">
+            <button
+              onClick={() => setSidebarSearchQuery(sidebarSearchQuery ? "" : " ")}
+              className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm text-foreground hover:bg-accent"
+            >
+              <Search size={16} className="shrink-0 text-muted-foreground" />
+              <span>{t("Search chats")}</span>
+            </button>
+            {sidebarSearchQuery !== "" && (
+              <input
+                type="text"
+                value={sidebarSearchQuery.trim()}
+                onChange={(e) => setSidebarSearchQuery(e.target.value)}
+                placeholder={t("Search...")}
+                className="mx-3 mb-1 mt-0.5 w-[calc(100%-1.5rem)] rounded-md border border-border bg-background px-2.5 py-1.5 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+                autoFocus
+              />
+            )}
           </div>
-          <div className="flex-1 overflow-y-auto scroll-smooth px-2" style={{ scrollbarWidth: "thin" }}>
-            {Object.entries(grouped).map(([date, chats]) => (
-              <div key={date} className="mb-4">
-                <div className="px-2 pb-1 pt-2 text-xxs font-semibold uppercase tracking-wide text-muted-foreground">
-                  {date}
-                </div>
-                {chats.map((chat) => (
-                  <div
-                    key={chat.session_id}
-                    className="group relative flex items-center"
-                  >
-                    <button
-                      onClick={() => handleSelectSession(chat.session_id)}
-                      className={`flex min-w-0 flex-1 items-center gap-2 truncate rounded-lg px-2 py-2.5 pr-8 text-left text-sm text-foreground hover:bg-accent ${
-                        currentSessionId === chat.session_id ? "bg-accent" : ""
-                      }`}
-                    >
-                      <MessageSquare size={14} className="shrink-0 opacity-50" />
-                      <span className="truncate">{chat.preview || t("New conversation")}</span>
-                    </button>
-                    {/* Delete button — visible on hover */}
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleDeleteSession(chat.session_id);
-                      }}
-                      className="invisible absolute right-1 shrink-0 rounded p-1 text-muted-foreground hover:bg-accent hover:text-red-500 group-hover:visible"
-                      title={t("Delete session")}
-                    >
-                      <Trash2 size={14} />
-                    </button>
+
+          {/* Image */}
+          <button className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm text-foreground hover:bg-accent">
+            <Image size={16} className="shrink-0 text-muted-foreground" />
+            <span>{t("Image")}</span>
+          </button>
+
+          {/* Chat history (collapsible) — contains all conversations */}
+          <button
+            onClick={() => setShowChatHistoryExpand(!showChatHistoryExpand)}
+            className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm text-foreground hover:bg-accent"
+          >
+            <Globe size={16} className="shrink-0 text-muted-foreground" />
+            <span className="flex-1 text-left">{t("Chat history")}</span>
+            <ChevronRight size={14} className={`text-muted-foreground transition-transform ${showChatHistoryExpand ? "rotate-90" : ""}`} />
+          </button>
+          {showChatHistoryExpand && (
+            <div className="ml-4 max-h-[40vh] overflow-y-auto scroll-smooth border-l border-border pl-1" style={{ scrollbarWidth: "thin" }}>
+              {Object.entries(grouped).map(([date, chats]) => (
+                <div key={date} className="mb-2">
+                  <div className="px-3 pb-1 pt-2 text-xxs font-semibold uppercase tracking-wide text-muted-foreground">
+                    {date}
                   </div>
-                ))}
-              </div>
-            ))}
+                  {chats.map((chat) => (
+                    <div
+                      key={chat.session_id}
+                      className="group relative flex items-center"
+                    >
+                      <button
+                        onClick={() => handleSelectSession(chat.session_id)}
+                        className={`flex min-w-0 flex-1 items-center gap-2 truncate rounded-lg px-3 py-2 pr-8 text-left text-sm text-foreground hover:bg-accent ${
+                          currentSessionId === chat.session_id ? "bg-accent" : ""
+                        }`}
+                      >
+                        <MessageSquare size={14} className="shrink-0 opacity-50" />
+                        <span className="truncate">{chat.preview || t("New conversation")}</span>
+                      </button>
+                      {/* Three-dot menu button — visible on hover */}
+                      <button
+                        data-chat-menu
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (chatMenuOpenId === chat.session_id) {
+                            setChatMenuOpenId(null);
+                          } else {
+                            const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                            setChatMenuPos({ top: rect.bottom + 4, left: rect.right - 140 });
+                            setChatMenuOpenId(chat.session_id);
+                          }
+                        }}
+                        className="invisible absolute right-1 shrink-0 rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground group-hover:visible"
+                        title={t("Options")}
+                      >
+                        <MoreVertical size={14} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Archive Chat (collapsible) */}
+          <button
+            onClick={() => setShowArchiveChatExpand(!showArchiveChatExpand)}
+            className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm text-foreground hover:bg-accent"
+          >
+            <Archive size={16} className="shrink-0 text-muted-foreground" />
+            <span className="flex-1 text-left">{t("Archive Chat")}</span>
+            <ChevronRight size={14} className={`text-muted-foreground transition-transform ${showArchiveChatExpand ? "rotate-90" : ""}`} />
+          </button>
+          {showArchiveChatExpand && (
+            <div className="ml-4 max-h-[30vh] overflow-y-auto scroll-smooth border-l border-border pl-1" style={{ scrollbarWidth: "thin" }}>
+              {archivedSessions.length === 0 ? (
+                <div className="px-3 py-4 text-center text-xs text-muted-foreground">
+                  {t("No archived chats")}
+                </div>
+              ) : (
+                Object.entries(groupedArchived).map(([date, chats]) => (
+                  <div key={date} className="mb-2">
+                    <div className="px-3 pb-1 pt-2 text-xxs font-semibold uppercase tracking-wide text-muted-foreground">
+                      {date}
+                    </div>
+                    {chats.map((chat) => (
+                      <div
+                        key={chat.session_id}
+                        className="group relative flex items-center"
+                      >
+                        <button
+                          onClick={() => handleSelectSession(chat.session_id)}
+                          className={`flex min-w-0 flex-1 items-center gap-2 truncate rounded-lg px-3 py-2 pr-8 text-left text-sm text-muted-foreground hover:bg-accent ${
+                            currentSessionId === chat.session_id ? "bg-accent" : ""
+                          }`}
+                        >
+                          <Archive size={14} className="shrink-0 opacity-50" />
+                          <span className="truncate">{chat.preview || t("New conversation")}</span>
+                        </button>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleArchiveSession(chat.session_id, false);
+                          }}
+                          className="invisible absolute right-1 shrink-0 rounded p-1 text-xs text-muted-foreground hover:bg-accent hover:text-foreground group-hover:visible"
+                          title={t("Unarchive")}
+                        >
+                          <ArrowLeft size={14} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                ))
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* ---- Addon: Applications Section ---- */}
+        <div className="border-t border-border px-2 pb-2 pt-2">
+          <div className="px-3 pb-1 text-xxs font-semibold uppercase tracking-wide text-muted-foreground">
+            {t("Applications")}
           </div>
+          <div className="flex flex-col gap-0.5">
+            <button className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm text-foreground hover:bg-accent">
+              <Globe size={16} className="shrink-0 text-blue-500" />
+              <span>{t("AI Translator")}</span>
+            </button>
+            <button className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm text-foreground hover:bg-accent">
+              <Image size={16} className="shrink-0 text-green-500" />
+              <span>{t("DO33")}</span>
+            </button>
+            <button className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm text-foreground hover:bg-accent">
+              <Headphones size={16} className="shrink-0 text-red-500" />
+              <span>{t("NotebookLM")}</span>
+            </button>
+          </div>
+        </div>
+
+        {/* ---- Addon: Information & Help ---- */}
+        <div className="border-t border-border px-2 pb-3 pt-2">
+          <button className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm text-foreground hover:bg-accent">
+            <Info size={16} className="shrink-0 text-muted-foreground" />
+            <span>{t("Information")}</span>
+          </button>
+          <button className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm text-foreground hover:bg-accent">
+            <HelpCircle size={16} className="shrink-0 text-muted-foreground" />
+            <span>{t("Help")}</span>
+          </button>
         </div>
 
         {/* Agents Panel */}
@@ -995,6 +1238,100 @@ export default function AgentOrchestrator() {
         </div>
       </div>
 
+      {/* ---- Addon: Plus menu dropdown — rendered fixed to escape input overflow ---- */}
+      {showPlusMenu && (
+        <div
+          data-plus-menu
+          className="fixed z-[100] min-w-[220px] rounded-xl border border-border bg-popover p-1 shadow-lg"
+          style={{ bottom: plusMenuPos.bottom, left: plusMenuPos.left }}
+        >
+          <button
+            onClick={() => setShowPlusMenu(false)}
+            className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm text-foreground hover:bg-accent"
+          >
+            <Paintbrush size={16} className="text-muted-foreground" />
+            <span>{t("Create image")}</span>
+          </button>
+          <button
+            onClick={() => setShowPlusMenu(false)}
+            className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm text-foreground hover:bg-accent"
+          >
+            <BookOpen size={16} className="text-muted-foreground" />
+            <span>{t("Canvas")}</span>
+          </button>
+          <button
+            onClick={() => {
+              setShowPlusMenu(false);
+              fileInputRef.current?.click();
+            }}
+            className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm text-foreground hover:bg-accent"
+          >
+            <Upload size={16} className="text-muted-foreground" />
+            <span>{t("Upload from this device")}</span>
+          </button>
+          <button
+            onClick={() => {
+              setShowPlusMenu(false);
+              setSpPickerOpen(true);
+            }}
+            className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm text-foreground hover:bg-accent"
+          >
+            <FileUp size={16} className="text-green-500" />
+            <span>{t("Upload from SharePoint")}</span>
+          </button>
+          <div className="my-1 h-px bg-border" />
+          <button
+            onClick={() => setCotReasoning(!cotReasoning)}
+            className="flex w-full items-center justify-between rounded-lg px-3 py-2.5 text-left text-sm text-foreground hover:bg-accent"
+          >
+            <div className="flex items-center gap-3">
+              <Lightbulb size={16} className="text-muted-foreground" />
+              <span>{t("COT reasoning")}</span>
+            </div>
+            <div
+              className={`relative h-5 w-9 rounded-full transition-colors ${cotReasoning ? "bg-primary" : "bg-muted-foreground/30"}`}
+            >
+              <div
+                className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow-sm transition-transform ${cotReasoning ? "translate-x-4" : "translate-x-0.5"}`}
+              />
+            </div>
+          </button>
+        </div>
+      )}
+
+      {/* Three-dot chat menu dropdown — rendered fixed to escape scroll container */}
+      {chatMenuOpenId && (
+        <div
+          data-chat-menu
+          className="fixed z-[100] min-w-[140px] rounded-lg border border-border bg-popover p-1 shadow-lg"
+          style={{ top: chatMenuPos.top, left: chatMenuPos.left }}
+        >
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              const sessionId = chatMenuOpenId;
+              setChatMenuOpenId(null);
+              handleDeleteSession(sessionId);
+            }}
+            className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm text-red-500 hover:bg-accent"
+          >
+            <Trash2 size={14} />
+            <span>{t("Delete")}</span>
+          </button>
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              setChatMenuOpenId(null);
+              handleArchiveSession(chatMenuOpenId!, true);
+            }}
+            className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm text-foreground hover:bg-accent"
+          >
+            <Archive size={14} />
+            <span>{t("Archive")}</span>
+          </button>
+        </div>
+      )}
+
       {/* ================ MAIN AREA ================ */}
       <div className="relative flex flex-1 flex-col">
         {/* Top Bar */}
@@ -1008,14 +1345,16 @@ export default function AgentOrchestrator() {
             </button>
           )}
 
-          {/* Model selector */}
+          {/* Agent selector */}
           <div ref={modelPickerRef} className="relative">
             <button
               onClick={() => setShowModelPicker(!showModelPicker)}
               className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[15px] font-semibold text-foreground hover:bg-accent"
             >
-              <Sparkles size={16} style={{ color: selectedAgent?.color || "#10a37f" }} />
-              {selectedAgent ? (
+              <Sparkles size={16} style={{ color: noAgentMode ? "#6b7280" : (selectedAgent?.color || "#10a37f") }} />
+              {noAgentMode ? (
+                <span className="text-muted-foreground">{t("No Agent")}</span>
+              ) : selectedAgent ? (
                 <span className="flex items-center">
                   <span>{selectedAgent.name}</span>
                   {versionBadge(selectedAgent.version_label)}
@@ -1029,15 +1368,41 @@ export default function AgentOrchestrator() {
 
             {showModelPicker && (
               <div className="absolute left-0 top-full z-50 mt-1 min-w-[240px] rounded-xl border border-border bg-popover p-1 shadow-lg">
+                {/* No Agent option */}
+                <button
+                  onClick={() => {
+                    setNoAgentMode(true);
+                    setSelectedModelId("");
+                    setShowModelPicker(false);
+                    if (!selectedAiModel) setSelectedAiModel("mibuddy");
+                  }}
+                  className={`flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-left text-sm text-foreground hover:bg-accent ${
+                    noAgentMode ? "bg-accent" : ""
+                  }`}
+                >
+                  <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-muted">
+                    <User size={14} className="text-muted-foreground" />
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <div className="font-medium">{t("No Agent")}</div>
+                    <div className="text-xs text-muted-foreground">{t("Chat with AI model directly")}</div>
+                  </div>
+                  {noAgentMode && (
+                    <span className="ml-auto text-primary"><Check size={14} /></span>
+                  )}
+                </button>
+                <div className="my-1 h-px bg-border" />
                 {agents.map((agent) => (
                   <button
                     key={agent.id}
                     onClick={() => {
                       setSelectedModelId(agent.id);
+                      setNoAgentMode(false);
+                      setSelectedAiModel(null);
                       setShowModelPicker(false);
                     }}
                     className={`flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-left text-sm text-foreground hover:bg-accent ${
-                      selectedModelId === agent.id ? "bg-accent" : ""
+                      !noAgentMode && selectedModelId === agent.id ? "bg-accent" : ""
                     }`}
                   >
                     <span
@@ -1056,13 +1421,115 @@ export default function AgentOrchestrator() {
                         {agent.description}
                       </div>
                     </div>
-                    {selectedModelId === agent.id && (
+                    {!noAgentMode && selectedModelId === agent.id && (
                       <span className="ml-auto text-primary">
                         <Check size={14} />
                       </span>
                     )}
                   </button>
                 ))}
+              </div>
+            )}
+          </div>
+
+          {/* ---- Addon: AI Model selector (beside agent dropdown) ---- */}
+          <div ref={aiModelPickerRef} className="relative">
+            <button
+              onClick={() => {
+                setShowAiModelPicker(!showAiModelPicker);
+                setShowMoreModels(false);
+              }}
+              className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[15px] font-semibold hover:bg-accent ${
+                noAgentMode ? "text-foreground" : "text-muted-foreground"
+              }`}
+            >
+              <span
+                className="h-3 w-3 shrink-0 rounded-full"
+                style={{ background: noAgentMode && selectedAiModel ? AI_MODELS.find((m) => m.id === selectedAiModel)?.icon || "#6b7280" : "#6b7280" }}
+              />
+              <span>{noAgentMode && selectedAiModel ? AI_MODELS.find((m) => m.id === selectedAiModel)?.name || t("Choose AI Model") : t("Choose AI Model")}</span>
+              <ChevronDown size={14} className="opacity-50" />
+            </button>
+
+            {showAiModelPicker && (
+              <div className="absolute left-0 top-full z-50 mt-1 min-w-[220px] rounded-xl border border-border bg-popover p-1 shadow-lg">
+                <div className="px-3 pb-1 pt-2 text-xxs font-semibold uppercase tracking-wide text-muted-foreground">
+                  {t("Choose Your AI Model")}
+                </div>
+                {AI_MODELS.filter((m) => m.group === "main").map((model) => (
+                  <button
+                    key={model.id}
+                    disabled={!noAgentMode}
+                    onClick={() => {
+                      if (!noAgentMode) return;
+                      setSelectedAiModel(model.id);
+                      setShowAiModelPicker(false);
+                    }}
+                    className={`flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm ${
+                      !noAgentMode
+                        ? "cursor-not-allowed text-muted-foreground/50"
+                        : selectedAiModel === model.id
+                          ? "bg-accent text-foreground"
+                          : "text-foreground hover:bg-accent"
+                    }`}
+                  >
+                    <span
+                      className={`h-4 w-4 shrink-0 rounded-full ${!noAgentMode ? "opacity-30" : ""}`}
+                      style={{ background: model.icon }}
+                    />
+                    <span className="flex-1">{model.name}</span>
+                    {noAgentMode && selectedAiModel === model.id && (
+                      <Check size={14} className="text-primary" />
+                    )}
+                  </button>
+                ))}
+                {/* More submenu */}
+                <div className="relative">
+                  <button
+                    disabled={!noAgentMode}
+                    onClick={() => {
+                      if (!noAgentMode) return;
+                      setShowMoreModels(!showMoreModels);
+                    }}
+                    className={`flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm ${
+                      !noAgentMode
+                        ? "cursor-not-allowed text-muted-foreground/50"
+                        : "text-foreground hover:bg-accent"
+                    }`}
+                  >
+                    <MoreVertical size={14} className={!noAgentMode ? "opacity-30" : ""} />
+                    <span className="flex-1">{t("More")}</span>
+                    <ChevronRight size={14} className="opacity-50" />
+                  </button>
+                  {showMoreModels && noAgentMode && (
+                    <div className="absolute left-full top-0 z-50 ml-1 min-w-[180px] rounded-xl border border-border bg-popover p-1 shadow-lg">
+                      {AI_MODELS.filter((m) => m.group === "more").map((model) => (
+                        <button
+                          key={model.id}
+                          onClick={() => {
+                            setSelectedAiModel(model.id);
+                            setShowAiModelPicker(false);
+                            setShowMoreModels(false);
+                          }}
+                          className={`flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm ${
+                            selectedAiModel === model.id
+                              ? "bg-accent text-foreground"
+                              : "text-foreground hover:bg-accent"
+                          }`}
+                        >
+                          <span
+                            className="h-4 w-4 shrink-0 rounded-full"
+                            style={{ background: model.icon }}
+                          />
+                          <span className="flex-1">{model.name}</span>
+                          {selectedAiModel === model.id && (
+                            <Check size={14} className="text-primary" />
+                          )}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
             )}
           </div>
@@ -1343,14 +1810,35 @@ export default function AgentOrchestrator() {
                 className={`w-full resize-none border-none bg-transparent px-5 py-4 pr-14 text-[15px] text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-0 ${(isSending || !canInteract) ? "cursor-not-allowed opacity-50" : ""}`}
               />
               <div className="flex items-center justify-between px-3 pb-3">
-                <button
-                  onClick={() => fileInputRef.current?.click()}
-                  disabled={isSending || !canInteract}
-                  className={`flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors ${(isSending || !canInteract) ? "cursor-not-allowed opacity-50" : "hover:bg-accent hover:text-foreground"}`}
-                  title={t("Upload image")}
-                >
-                  <ImagePlus size={16} />
-                </button>
+                <div className="flex items-center gap-1">
+                  {/* ---- Addon: Plus menu button ---- */}
+                  <div data-plus-menu>
+                    <button
+                      onClick={(e) => {
+                        if (!showPlusMenu) {
+                          const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                          setPlusMenuPos({ bottom: window.innerHeight - rect.top + 8, left: rect.left });
+                        }
+                        setShowPlusMenu(!showPlusMenu);
+                      }}
+                      disabled={isSending || !canInteract}
+                      className={`flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors ${(isSending || !canInteract) ? "cursor-not-allowed opacity-50" : "hover:bg-accent hover:text-foreground"}`}
+                      title={t("More options")}
+                    >
+                      <Plus size={16} />
+                    </button>
+                  </div>
+
+                  {/* Existing: Upload image button */}
+                  <button
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={isSending || !canInteract}
+                    className={`flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors ${(isSending || !canInteract) ? "cursor-not-allowed opacity-50" : "hover:bg-accent hover:text-foreground"}`}
+                    title={t("Upload image")}
+                  >
+                    <ImagePlus size={16} />
+                  </button>
+                </div>
                 <input
                   ref={fileInputRef}
                   type="file"
@@ -1358,17 +1846,36 @@ export default function AgentOrchestrator() {
                   className="hidden"
                   onChange={handleFileChange}
                 />
-                <button
-                  onClick={handleSend}
-                  disabled={(!input.trim() && !uploadFiles.some((f) => f.path)) || isSending || !canInteract}
-                  className={`flex h-8 w-8 items-center justify-center rounded-lg transition-colors ${
-                    (input.trim() || uploadFiles.some((f) => f.path)) && !isSending && canInteract
-                      ? "bg-foreground text-background hover:opacity-90"
-                      : "bg-muted text-muted-foreground"
-                  }`}
-                >
-                  <Send size={16} className="-ml-px -mt-px" />
-                </button>
+                <div className="flex items-center gap-1">
+                  {/* ---- Addon: Microphone button ---- */}
+                  <button
+                    disabled={isSending || !canInteract}
+                    className={`flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors ${(isSending || !canInteract) ? "cursor-not-allowed opacity-50" : "hover:bg-accent hover:text-foreground"}`}
+                    title={t("Voice input")}
+                  >
+                    <Mic size={16} />
+                  </button>
+                  {/* ---- Addon: Audio/Equalizer button ---- */}
+                  <button
+                    disabled={isSending || !canInteract}
+                    className={`flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors ${(isSending || !canInteract) ? "cursor-not-allowed opacity-50" : "hover:bg-accent hover:text-foreground"}`}
+                    title={t("Audio")}
+                  >
+                    <AudioLines size={16} />
+                  </button>
+                  {/* Existing: Send button */}
+                  <button
+                    onClick={handleSend}
+                    disabled={(!input.trim() && !uploadFiles.some((f) => f.path)) || isSending || !canInteract}
+                    className={`flex h-8 w-8 items-center justify-center rounded-lg transition-colors ${
+                      (input.trim() || uploadFiles.some((f) => f.path)) && !isSending && canInteract
+                        ? "bg-foreground text-background hover:opacity-90"
+                        : "bg-muted text-muted-foreground"
+                    }`}
+                  >
+                    <Send size={16} className="-ml-px -mt-px" />
+                  </button>
+                </div>
               </div>
             </div>
 
@@ -1378,6 +1885,197 @@ export default function AgentOrchestrator() {
           </div>
         </div>
       </div>
+      {/* ---- Addon: SharePoint File Picker (MSAL-based) ---- */}
+      <SharePointFilePicker
+        isOpen={spPickerOpen}
+        onDismiss={() => setSpPickerOpen(false)}
+        onFilesSelected={handleSpFilesSelected}
+      />
+      {false && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/50">
+          <div className="flex max-h-[80vh] w-full max-w-lg flex-col rounded-2xl border border-border bg-popover shadow-2xl">
+            {/* Modal header */}
+            <div className="flex items-center justify-between border-b border-border px-5 py-4">
+              <div className="flex items-center gap-3">
+                {!spShowConsent && spFolderStack.length > 0 && (
+                  <button
+                    onClick={spGoBack}
+                    className="rounded-md p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
+                  >
+                    <ArrowLeft size={18} />
+                  </button>
+                )}
+                <div>
+                  <h2 className="text-base font-semibold text-foreground">
+                    {spShowConsent ? t("Connect to SharePoint") : t("SharePoint Files")}
+                  </h2>
+                  {!spShowConsent && spFolderStack.length > 0 && (
+                    <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                      <span>{t("OneDrive")}</span>
+                      {spFolderStack.map((f) => (
+                        <span key={f.id}>
+                          <span className="mx-0.5">/</span>
+                          <span>{f.name}</span>
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+              <button
+                onClick={() => { setSpModalOpen(false); setSpShowConsent(false); }}
+                className="rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {spShowConsent ? (
+              <div className="flex flex-1 flex-col px-6 py-6">
+                <div className="mb-5 flex items-center gap-3">
+                  <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-blue-100 dark:bg-blue-900/30">
+                    <Shield size={24} className="text-blue-600 dark:text-blue-400" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-semibold text-foreground">{t("Permissions Required")}</h3>
+                    <p className="text-xs text-muted-foreground">{t("This app needs access to your Microsoft account")}</p>
+                  </div>
+                </div>
+
+                <p className="mb-4 text-sm text-muted-foreground">
+                  {t("To browse and upload files from SharePoint, the following permissions are required:")}
+                </p>
+
+                <div className="mb-6 flex flex-col gap-3">
+                  <div className="flex items-start gap-3 rounded-lg border border-border bg-muted/30 px-4 py-3">
+                    <CheckCircle2 size={18} className="mt-0.5 shrink-0 text-green-500" />
+                    <div>
+                      <div className="text-sm font-medium text-foreground">{t("Read your profile")}</div>
+                      <div className="text-xs text-muted-foreground">{t("View your basic account information")}</div>
+                    </div>
+                  </div>
+                  <div className="flex items-start gap-3 rounded-lg border border-border bg-muted/30 px-4 py-3">
+                    <CheckCircle2 size={18} className="mt-0.5 shrink-0 text-green-500" />
+                    <div>
+                      <div className="text-sm font-medium text-foreground">{t("Access your files")}</div>
+                      <div className="text-xs text-muted-foreground">{t("Read files from your OneDrive and SharePoint")}</div>
+                    </div>
+                  </div>
+                  <div className="flex items-start gap-3 rounded-lg border border-border bg-muted/30 px-4 py-3">
+                    <CheckCircle2 size={18} className="mt-0.5 shrink-0 text-green-500" />
+                    <div>
+                      <div className="text-sm font-medium text-foreground">{t("Access SharePoint sites")}</div>
+                      <div className="text-xs text-muted-foreground">{t("Browse SharePoint sites you have access to")}</div>
+                    </div>
+                  </div>
+                </div>
+
+                {spError && (
+                  <div className="mb-4 rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-700 dark:bg-red-950/30 dark:text-red-300">
+                    {spError}
+                  </div>
+                )}
+
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={() => { setSpModalOpen(false); setSpShowConsent(false); }}
+                    className="flex-1 rounded-lg border border-border px-4 py-2.5 text-sm font-medium text-foreground hover:bg-accent"
+                  >
+                    {t("Cancel")}
+                  </button>
+                  <button
+                    onClick={handleSharePointConsent}
+                    disabled={spLoading}
+                    className="flex flex-1 items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+                  >
+                    {spLoading ? (
+                      <>
+                        <Loader2 size={16} className="animate-spin" />
+                        {t("Connecting...")}
+                      </>
+                    ) : (
+                      t("Allow & Connect")
+                    )}
+                  </button>
+                </div>
+
+                <p className="mt-4 text-center text-xs text-muted-foreground">
+                  {t("You will be redirected to Microsoft to sign in and grant access.")}
+                </p>
+              </div>
+            ) : (
+            <div className="flex-1 overflow-y-auto px-2 py-2" style={{ scrollbarWidth: "thin" }}>
+              {spError && (
+                <div className="mx-3 mb-3 rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-700 dark:bg-red-950/30 dark:text-red-300">
+                  {spError}
+                  {!spAccessToken && (
+                    <button
+                      onClick={handleSharePointAuth}
+                      className="ml-2 font-medium underline"
+                    >
+                      {t("Try again")}
+                    </button>
+                  )}
+                </div>
+              )}
+
+              {spLoading && (
+                <div className="flex items-center justify-center py-12">
+                  <Loader2 size={24} className="animate-spin text-muted-foreground" />
+                  <span className="ml-3 text-sm text-muted-foreground">{t("Loading...")}</span>
+                </div>
+              )}
+
+              {!spLoading && !spError && spItems.length === 0 && spAccessToken && (
+                <div className="py-12 text-center text-sm text-muted-foreground">
+                  {t("No files found in this location")}
+                </div>
+              )}
+
+              {!spLoading && spItems.map((item) => (
+                <button
+                  key={item.id}
+                  onClick={() => {
+                    if (item.type === "folder") {
+                      spOpenFolder(item);
+                    } else {
+                      spSelectFile(item);
+                    }
+                  }}
+                  className="flex w-full items-center gap-3 rounded-lg px-4 py-3 text-left text-sm text-foreground hover:bg-accent"
+                >
+                  {item.type === "folder" ? (
+                    <Folder size={20} className="shrink-0 text-blue-500" />
+                  ) : (
+                    <File size={20} className="shrink-0 text-muted-foreground" />
+                  )}
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate font-medium">{item.name}</div>
+                    <div className="text-xs text-muted-foreground">
+                      {item.type === "folder"
+                        ? `${item.childCount ?? 0} items`
+                        : item.size
+                          ? `${(item.size / 1024).toFixed(1)} KB`
+                          : ""}
+                    </div>
+                  </div>
+                  {item.type === "folder" && (
+                    <ChevronRight size={16} className="shrink-0 text-muted-foreground" />
+                  )}
+                </button>
+              ))}
+            </div>
+            )}
+
+            {/* Modal footer */}
+            <div className="border-t border-border px-5 py-3 text-xs text-muted-foreground">
+              {!spShowConsent && spAccessToken
+                ? t("Click a file to attach it, or open a folder to browse")
+                : t("Authenticate with your Microsoft account to browse files")}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -46,7 +46,7 @@ async def orch_get_sessions(
     user_id: UUID,
 ) -> list[dict]:
     """Return distinct session_ids for a user with the latest timestamp and first message preview."""
-    from sqlalchemy import func, case
+    from sqlalchemy import func, case, cast, Integer, Boolean
 
     stmt = (
         select(
@@ -58,6 +58,7 @@ async def orch_get_sessions(
                     else_=None,
                 )
             ).label("first_user_message"),
+            cast(func.max(cast(OrchConversationTable.is_archived, Integer)), Boolean).label("is_archived"),
         )
         .where(OrchConversationTable.user_id == user_id)
         .group_by(OrchConversationTable.session_id)
@@ -68,8 +69,9 @@ async def orch_get_sessions(
     return [
         {
             "session_id": row.session_id,
-            "last_timestamp": row.last_timestamp.isoformat() if row.last_timestamp else None,
+            "last_timestamp": (row.last_timestamp.isoformat() + "Z") if row.last_timestamp else None,
             "preview": (row.first_user_message or "")[:80],
+            "is_archived": bool(row.is_archived) if hasattr(row, "is_archived") else False,
         }
         for row in rows
     ]
@@ -111,6 +113,28 @@ async def orch_rename_session(
     if user_id:
         stmt = stmt.where(OrchConversationTable.user_id == user_id)
     stmt = stmt.values(session_id=new_session_id)
+    result = await session.execute(stmt)
+    await session.commit()
+    return result.rowcount  # type: ignore[return-value]
+
+
+async def orch_archive_session(
+    session: AsyncSession,
+    session_id: str,
+    is_archived: bool,
+    user_id: UUID | None = None,
+) -> int:
+    """Toggle the is_archived flag on all messages in a session. Returns count of updated rows.
+
+    When *user_id* is provided the update is scoped to that user.
+    """
+    stmt = (
+        update(OrchConversationTable)
+        .where(OrchConversationTable.session_id == session_id)
+    )
+    if user_id:
+        stmt = stmt.where(OrchConversationTable.user_id == user_id)
+    stmt = stmt.values(is_archived=is_archived)
     result = await session.execute(stmt)
     await session.commit()
     return result.rowcount  # type: ignore[return-value]

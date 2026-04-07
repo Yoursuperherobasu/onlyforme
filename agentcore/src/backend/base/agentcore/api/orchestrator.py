@@ -47,6 +47,7 @@ from agentcore.services.database.models.user.model import User
 from agentcore.services.database.models.orch_conversation.model import OrchConversationTable
 from agentcore.services.database.models.orch_conversation.crud import (
     orch_add_message,
+    orch_archive_session,
     orch_delete_session,
     orch_get_active_agent,
     orch_get_messages,
@@ -174,6 +175,7 @@ class OrchSessionSummary(BaseModel):
     active_agent_id: UUID | None = None
     active_deployment_id: UUID | None = None
     active_agent_name: str | None = None
+    is_archived: bool = False
 
 
 
@@ -1234,6 +1236,43 @@ async def delete_orch_session(
         await orch_delete_session_transactions(session, session_id)
     except Exception as e:
         logger.error(f"Error deleting orch session: {e}")
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 5b. Archive / unarchive a session
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class ArchiveRequest(BaseModel):
+    is_archived: bool = True
+
+
+@router.post("/sessions/{session_id}/archive", status_code=200)
+async def archive_orch_session(
+    *,
+    session: DbSession,
+    current_user: CurrentActiveUser,
+    session_id: str,
+    body: ArchiveRequest,
+):
+    """Toggle archive/unarchive for an orchestrator session."""
+    try:
+        updated = await orch_archive_session(
+            session, session_id, is_archived=body.is_archived, user_id=current_user.id,
+        )
+        if updated == 0:
+            raise HTTPException(status_code=404, detail="Session not found")
+        action = "archived" if body.is_archived else "unarchived"
+        return {
+            "session_id": session_id,
+            "is_archived": body.is_archived,
+            "message": f"Session {session_id} has been {action} successfully.",
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error archiving orch session: {e}")
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 

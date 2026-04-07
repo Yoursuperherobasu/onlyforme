@@ -27,6 +27,9 @@ from .agent_deployment_uat import AgentDeploymentUAT
 from .agent_registry import AgentRegistry, AgentRegistryRating
 from .approval_request import ApprovalRequest
 from .approval_notification import ApprovalNotification
+from .connector_catalogue import ConnectorCatalogue
+from .mcp_audit_log.model import McpAuditLog
+from .mcp_registry import McpRegistry
 from .mcp_approval_request import McpApprovalRequest
 from .model_approval_request import ModelApprovalRequest
 from .model_audit_log import ModelAuditLog
@@ -68,6 +71,9 @@ __all__ = [
     "AgentRegistry",
     "ApprovalRequest",
     "ApprovalNotification",
+    "ConnectorCatalogue",
+    "McpAuditLog",
+    "McpRegistry",
     "McpApprovalRequest",
     "ModelApprovalRequest",
     "ModelAuditLog",

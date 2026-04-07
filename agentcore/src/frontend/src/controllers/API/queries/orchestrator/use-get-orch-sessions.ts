@@ -10,6 +10,7 @@ export interface OrchSessionSummary {
   active_agent_id: string | null;
   active_deployment_id: string | null;
   active_agent_name: string | null;
+  is_archived: boolean;
 }
 
 export const useGetOrchSessions: useQueryFunctionType<

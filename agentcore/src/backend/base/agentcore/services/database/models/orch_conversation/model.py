@@ -66,6 +66,7 @@ class OrchConversationTable(OrchConversationBase, table=True):  # type: ignore[c
         default=None,
         sa_column=Column(SAUuid(), nullable=True),
     )
+    is_archived: bool = Field(default=False)
     ltm_summarized_at: datetime | None = Field(default=None, nullable=True)
     files: list[str] = Field(sa_column=Column(JSON))
     properties: dict | Properties = Field(default_factory=lambda: Properties().model_dump(), sa_column=Column(JSON))  # type: ignore[assignment]
