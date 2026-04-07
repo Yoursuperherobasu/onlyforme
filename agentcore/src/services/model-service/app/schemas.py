@@ -75,6 +75,7 @@ class ChoiceMessage(BaseModel):
     role: str = "assistant"
     content: str | None = ""
     tool_calls: list[ToolCall] | None = None
+    reasoning_content: str | None = None
 
 
 class ChatCompletionChoice(BaseModel):
@@ -96,6 +97,7 @@ class DeltaMessage(BaseModel):
     role: str | None = None
     content: str | None = None
     tool_calls: list[dict] | None = None
+    reasoning_content: str | None = None
 
 
 class ChunkChoice(BaseModel):
