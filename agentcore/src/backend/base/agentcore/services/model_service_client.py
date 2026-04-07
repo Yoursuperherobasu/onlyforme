@@ -664,6 +664,11 @@ class MicroserviceChatModel(BaseChatModel):
             finish_reason = choice.get("finish_reason", "stop")
             tool_calls_raw = msg_data.get("tool_calls")
 
+        # Extract reasoning_content from model service response
+        reasoning_content = None
+        if data.get("choices"):
+            reasoning_content = data["choices"][0].get("message", {}).get("reasoning_content")
+
         usage = data.get("usage", {})
         token_usage = {
             "prompt_tokens": usage.get("prompt_tokens", 0),
@@ -675,6 +680,7 @@ class MicroserviceChatModel(BaseChatModel):
             "token_usage": token_usage,
             "model_name": model_name,
             "finish_reason": finish_reason,
+            "reasoning_content": reasoning_content,
         }
 
         # Build AIMessage with tool_calls if present
@@ -886,6 +892,16 @@ class MicroserviceChatModel(BaseChatModel):
                         if choices:
                             delta = choices[0].get("delta", {})
                             content = delta.get("content", "")
+
+                            # Handle reasoning_content from model service
+                            reasoning = delta.get("reasoning_content", "")
+                            if reasoning:
+                                reasoning_chunk = AIMessageChunk(
+                                    content="",
+                                    response_metadata={"reasoning_content": reasoning},
+                                )
+                                yield ChatGenerationChunk(message=reasoning_chunk)
+
                             if content:
                                 msg_chunk = AIMessageChunk(content=content)
                                 gen_chunk = ChatGenerationChunk(message=msg_chunk)

@@ -197,16 +197,22 @@ interface AiModelOption {
   group: "main" | "more";
 }
 
-const AI_MODELS: AiModelOption[] = [
-  { id: "mibuddy",    name: "MiBuddy AI",       icon: "#ef4146", group: "main" },
-  { id: "gemini",     name: "Gemini 3.1 Pro",   icon: "#4285f4", group: "main" },
-  { id: "websearch",  name: "Web Search",       icon: "#34a853", group: "main" },
-  { id: "nanobanana", name: "Nano Banana",       icon: "#8b5cf6", group: "main" },
-  { id: "gpt52",      name: "GPT 5.2",          icon: "#10a37f", group: "main" },
-  { id: "mistral",    name: "Mistral Medium 3", icon: "#f97316", group: "more" },
-  { id: "grok",       name: "Grok-3-mini",      icon: "#6b7280", group: "more" },
-  { id: "dalle",      name: "DALL-E",           icon: "#000000", group: "more" },
-];
+// Provider → color mapping for model dots
+const PROVIDER_COLORS: Record<string, string> = {
+  openai: "#10a37f",
+  azure: "#0078d4",
+  anthropic: "#d97706",
+  google: "#4285f4",
+  groq: "#f97316",
+  openai_compatible: "#6b7280",
+};
+
+function providerColor(provider: string): string {
+  return PROVIDER_COLORS[provider?.toLowerCase()] || "#6b7280";
+}
+
+// Empty default — models are fetched from API on mount
+const FALLBACK_AI_MODELS: AiModelOption[] = [];
 
 /* ------------------ COMPONENT ------------------ */
 
@@ -243,6 +249,7 @@ export default function AgentOrchestrator() {
   const [showAiModelPicker, setShowAiModelPicker] = useState(false);
   const [showMoreModels, setShowMoreModels] = useState(false);
   const [selectedAiModel, setSelectedAiModel] = useState<string | null>(null);
+  const [aiModels, setAiModels] = useState<AiModelOption[]>(FALLBACK_AI_MODELS);
   const [noAgentMode, setNoAgentMode] = useState(false);
   // Addon: SharePoint file picker
   const [spPickerOpen, setSpPickerOpen] = useState(false);
@@ -380,6 +387,39 @@ export default function AgentOrchestrator() {
       }
     }
   }, [apiSessionMessages, effectiveSessionId, apiSessions, agents]);
+
+  // Fetch available models from backend
+  useEffect(() => {
+    let cancelled = false;
+    // Use native fetch to avoid axios duplicate-request interceptor
+    const modelsUrl = `${getURL("ORCHESTRATOR")}/models`;
+    const headers: Record<string, string> = {};
+    // Extract JWT from cookie (same cookie name used by axios interceptor)
+    const tokenMatch = document.cookie.match(/(?:^|;\s*)access_token_lf=([^;]*)/);
+    if (tokenMatch?.[1]) {
+      headers["Authorization"] = `Bearer ${decodeURIComponent(tokenMatch[1])}`;
+    }
+
+    fetch(modelsUrl, { headers, credentials: "include" })
+      .then((res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json();
+      })
+      .then((data: any[]) => {
+        if (cancelled || !data) return;
+        const models: AiModelOption[] = data.map((m: any, idx: number) => ({
+          id: m.model_id,
+          name: m.display_name || m.model_name,
+          icon: providerColor(m.provider),
+          group: (idx < 5 ? "main" : "more") as "main" | "more",
+        }));
+        setAiModels(models);
+      })
+      .catch((err) => {
+        console.warn("[OrchestratorChat] Failed to fetch models:", err.message);
+      });
+    return () => { cancelled = true; };
+  }, []);
 
   // Keep HITL status in sync when decisions happen on HITL Approvals page.
   // This lets orchestrator chat hide the pending banner and show final status
@@ -683,6 +723,11 @@ export default function AgentOrchestrator() {
     const agentMsgId = crypto.randomUUID();
     setStreamingMsgId(agentMsgId);
 
+    // Determine display name for the responding entity
+    const responderName = (noAgentMode && selectedAiModel)
+      ? (aiModels.find((m) => m.id === selectedAiModel)?.name || "AI Model")
+      : targetAgent.name;
+
     // Add both user message AND agent "thinking" placeholder.
     // flushSync commits the DOM update synchronously, then we await a
     // double-rAF to guarantee the browser has actually painted the
@@ -701,7 +746,7 @@ export default function AgentOrchestrator() {
         {
           id: agentMsgId,
           sender: "agent" as const,
-          agentName: targetAgent.name,
+          agentName: responderName,
           content: "",  // empty = "Thinking..." state
           timestamp: timeNow(),
         },
@@ -709,7 +754,7 @@ export default function AgentOrchestrator() {
       setInput("");
       setShowMentions(false);
       setIsSending(true);
-      setStreamingAgentName(targetAgent.name);
+      setStreamingAgentName(responderName);
     });
 
     // Wait for the browser to actually paint the thinking state.
@@ -768,16 +813,23 @@ export default function AgentOrchestrator() {
       }
     };
 
-    // Always send agent_id — explicit @mention or sticky selectedModel.
-    // Backend sticky routing acts as fallback if agent_id is somehow missing.
+    // Build request body: @agent mode sends agent_id, model mode sends model_id.
     const requestBody: any = {
       session_id: currentSessionId,
-      agent_id: targetAgent.agent_id,
-      deployment_id: targetAgent.deploy_id,
       input_value: cleanedInput,
-      version_number: targetAgent.version_number,
-      env: targetAgent.environment || "uat",
     };
+
+    if (explicitAgent || !noAgentMode) {
+      // Agent mode: send agent details
+      requestBody.agent_id = targetAgent.agent_id;
+      requestBody.deployment_id = targetAgent.deploy_id;
+      requestBody.version_number = targetAgent.version_number;
+      requestBody.env = targetAgent.environment || "uat";
+    } else if (noAgentMode && selectedAiModel) {
+      // Model mode: send model_id (UUID from registry)
+      requestBody.model_id = selectedAiModel;
+    }
+
     if (filePaths.length > 0) {
       requestBody.files = filePaths;
     }
@@ -1445,9 +1497,9 @@ export default function AgentOrchestrator() {
             >
               <span
                 className="h-3 w-3 shrink-0 rounded-full"
-                style={{ background: noAgentMode && selectedAiModel ? AI_MODELS.find((m) => m.id === selectedAiModel)?.icon || "#6b7280" : "#6b7280" }}
+                style={{ background: noAgentMode && selectedAiModel ? aiModels.find((m) => m.id === selectedAiModel)?.icon || "#6b7280" : "#6b7280" }}
               />
-              <span>{noAgentMode && selectedAiModel ? AI_MODELS.find((m) => m.id === selectedAiModel)?.name || t("Choose AI Model") : t("Choose AI Model")}</span>
+              <span>{noAgentMode && selectedAiModel ? aiModels.find((m) => m.id === selectedAiModel)?.name || t("Choose AI Model") : t("Choose AI Model")}</span>
               <ChevronDown size={14} className="opacity-50" />
             </button>
 
@@ -1456,7 +1508,7 @@ export default function AgentOrchestrator() {
                 <div className="px-3 pb-1 pt-2 text-xxs font-semibold uppercase tracking-wide text-muted-foreground">
                   {t("Choose Your AI Model")}
                 </div>
-                {AI_MODELS.filter((m) => m.group === "main").map((model) => (
+                {aiModels.filter((m) => m.group === "main").map((model) => (
                   <button
                     key={model.id}
                     disabled={!noAgentMode}
@@ -1483,8 +1535,8 @@ export default function AgentOrchestrator() {
                     )}
                   </button>
                 ))}
-                {/* More submenu */}
-                <div className="relative">
+                {/* More submenu — only show if there are "more" models */}
+                {aiModels.some((m) => m.group === "more") && <div className="relative">
                   <button
                     disabled={!noAgentMode}
                     onClick={() => {
@@ -1503,7 +1555,7 @@ export default function AgentOrchestrator() {
                   </button>
                   {showMoreModels && noAgentMode && (
                     <div className="absolute left-full top-0 z-50 ml-1 min-w-[180px] rounded-xl border border-border bg-popover p-1 shadow-lg">
-                      {AI_MODELS.filter((m) => m.group === "more").map((model) => (
+                      {aiModels.filter((m) => m.group === "more").map((model) => (
                         <button
                           key={model.id}
                           onClick={() => {
@@ -1529,7 +1581,7 @@ export default function AgentOrchestrator() {
                       ))}
                     </div>
                   )}
-                </div>
+                </div>}
               </div>
             )}
           </div>

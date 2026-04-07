@@ -332,6 +332,22 @@ class Settings(BaseSettings):
     model_service_api_key: str = ""
     """API key for authenticating with the Model microservice (sent as x-api-key header)."""
 
+    # Intent Classification & Model Chat
+    intent_classifier_model_id: str = ""
+    """UUID of the registry model used for intent classification (web_search, image_generation, general_chat).
+    If empty, intent classification is disabled and requests without @agent fall back to general_chat."""
+    default_chat_model_id: str = ""
+    """UUID of the registry model used when no model and no agent is selected and intent is general_chat.
+    If empty, requests without a model or agent will return 400."""
+    image_gen_model_id: str = ""
+    """UUID of the registry model used for image generation when intent is image_generation."""
+
+    # Web Search (Gemini)
+    gemini_api_key: str = ""
+    """Google Gemini API key for web search handler."""
+    gemini_model: str = "gemini-2.0-flash"
+    """Gemini model name for web search (e.g. gemini-2.0-flash, gemini-1.5-pro)."""
+
     # MCP Microservice
     mcp_service_url: str = ""
     """Base URL of the MCP microservice (e.g. http://localhost:8002).

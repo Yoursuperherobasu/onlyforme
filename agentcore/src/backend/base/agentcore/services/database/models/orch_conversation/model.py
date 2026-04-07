@@ -66,6 +66,14 @@ class OrchConversationTable(OrchConversationBase, table=True):  # type: ignore[c
         default=None,
         sa_column=Column(SAUuid(), nullable=True),
     )
+    model_id: UUID | None = Field(
+        default=None,
+        sa_column=Column(SAUuid(), nullable=True),
+    )
+    reasoning_content: str | None = Field(
+        default=None,
+        sa_column=Column(Text, nullable=True),
+    )
     is_archived: bool = Field(default=False)
     ltm_summarized_at: datetime | None = Field(default=None, nullable=True)
     files: list[str] = Field(sa_column=Column(JSON))
@@ -121,6 +129,8 @@ class OrchConversationRead(OrchConversationBase):
     org_id: UUID | None = None
     dept_id: UUID | None = None
     deployment_id: UUID | None = None
+    model_id: UUID | None = None
+    reasoning_content: str | None = None
 
 
 class OrchConversationCreate(OrchConversationBase):

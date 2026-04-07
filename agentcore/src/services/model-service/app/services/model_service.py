@@ -126,6 +126,54 @@ async def _resolve_registry_config(request: ChatCompletionRequest) -> ChatComple
     )
 
 
+def _extract_reasoning(raw_content, ai_message: AIMessage) -> tuple[str, str | None]:
+    """Extract reasoning/thinking content from an AIMessage.
+
+    Returns (content, reasoning_content).
+
+    Anthropic extended thinking returns content as a list of blocks:
+      [{"type": "thinking", "thinking": "..."}, {"type": "text", "text": "..."}]
+    OpenAI o1/o3 and DeepSeek put reasoning in additional_kwargs.reasoning_content.
+    """
+    reasoning_content: str | None = None
+
+    # Anthropic: content is a list of content blocks
+    if isinstance(raw_content, list):
+        text_parts = []
+        thinking_parts = []
+        for block in raw_content:
+            if isinstance(block, dict):
+                if block.get("type") == "thinking":
+                    thinking_parts.append(block.get("thinking", ""))
+                elif block.get("type") == "text":
+                    text_parts.append(block.get("text", ""))
+                else:
+                    text_parts.append(str(block.get("text", block.get("content", ""))))
+            elif hasattr(block, "type"):
+                if block.type == "thinking":
+                    thinking_parts.append(getattr(block, "thinking", ""))
+                elif block.type == "text":
+                    text_parts.append(getattr(block, "text", ""))
+        content = "\n".join(text_parts)
+        if thinking_parts:
+            reasoning_content = "\n".join(thinking_parts)
+        return content, reasoning_content
+
+    content = str(raw_content) if raw_content else ""
+
+    # OpenAI o1/o3, DeepSeek: reasoning in additional_kwargs
+    additional_kwargs = getattr(ai_message, "additional_kwargs", {}) or {}
+    if additional_kwargs.get("reasoning_content"):
+        reasoning_content = additional_kwargs["reasoning_content"]
+
+    # Also check response_metadata for reasoning
+    metadata = getattr(ai_message, "response_metadata", {}) or {}
+    if not reasoning_content and metadata.get("reasoning_content"):
+        reasoning_content = metadata["reasoning_content"]
+
+    return content, reasoning_content
+
+
 async def chat_completion(request: ChatCompletionRequest) -> ChatCompletionResponse:
     """Process a non-streaming chat completion request."""
     request = await _resolve_registry_config(request)
@@ -153,7 +201,8 @@ async def chat_completion(request: ChatCompletionRequest) -> ChatCompletionRespo
 
     ai_message = await provider.invoke(model, messages)
 
-    content = ai_message.content if hasattr(ai_message, "content") else str(ai_message)
+    raw_content = ai_message.content if hasattr(ai_message, "content") else str(ai_message)
+    content, reasoning_content = _extract_reasoning(raw_content, ai_message)
     usage = _extract_usage(ai_message)
     finish_reason = _extract_finish_reason(ai_message)
 
@@ -186,6 +235,7 @@ async def chat_completion(request: ChatCompletionRequest) -> ChatCompletionRespo
                     role="assistant",
                     content=content or "",
                     tool_calls=tool_calls_out,
+                    reasoning_content=reasoning_content,
                 ),
                 finish_reason=finish_reason,
             )
@@ -242,10 +292,42 @@ async def chat_completion_stream(request: ChatCompletionRequest) -> AsyncIterato
             pass
 
         content = ""
-        if hasattr(chunk, "content") and chunk.content:
-            content = chunk.content
-        elif isinstance(chunk, str):
-            content = chunk
+        reasoning = ""
+
+        # Check for reasoning content in streaming chunks
+        # Anthropic extended thinking: content may be a list of blocks
+        raw = chunk.content if hasattr(chunk, "content") else chunk
+        if isinstance(raw, list):
+            for block in raw:
+                if isinstance(block, dict):
+                    if block.get("type") == "thinking":
+                        reasoning += block.get("thinking", "")
+                    elif block.get("type") == "text":
+                        content += block.get("text", "")
+                elif hasattr(block, "type"):
+                    if block.type == "thinking":
+                        reasoning += getattr(block, "thinking", "")
+                    elif block.type == "text":
+                        content += getattr(block, "text", "")
+        elif raw:
+            content = str(raw) if not isinstance(raw, str) else raw
+
+        # OpenAI/DeepSeek: reasoning in additional_kwargs
+        additional_kwargs = getattr(chunk, "additional_kwargs", {}) or {}
+        if additional_kwargs.get("reasoning_content"):
+            reasoning = additional_kwargs["reasoning_content"]
+
+        if reasoning:
+            reasoning_chunk = ChatCompletionChunk(
+                model=request.model,
+                choices=[
+                    ChunkChoice(
+                        index=0,
+                        delta=DeltaMessage(reasoning_content=reasoning),
+                    )
+                ],
+            )
+            yield f"data: {reasoning_chunk.model_dump_json()}\n\n"
 
         if content:
             stream_chunk = ChatCompletionChunk(
