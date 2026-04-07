@@ -29,9 +29,11 @@ if TYPE_CHECKING:
 
 async def teardown_services() -> None:
     """Teardown all the services."""
+    from agentcore.services.cache.redis_client import reset_redis_client
     from agentcore.services.manager import service_manager
 
     await service_manager.teardown()
+    await reset_redis_client()
 
 
 def initialize_settings_service() -> None:

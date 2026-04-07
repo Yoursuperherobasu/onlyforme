@@ -222,7 +222,7 @@ class RedisCache(ExternalAsyncBaseCacheService, Generic[LockType]):
             expiration_time (int, optional): Time in seconds after which a
                 cached item expires. Default is 1 hour.
         """
-        self._host = host
+        self._host = str(host).strip().strip("'\"")
         self._port = port
         self._db = db
         self._credential_provider = credential_provider
@@ -329,6 +329,15 @@ class RedisCache(ExternalAsyncBaseCacheService, Generic[LockType]):
             return
 
     async def _reconnect_client(self) -> None:
+        # Force a token refresh before creating a new client so cluster
+        # discovery doesn't fail with an expired Entra token.
+        if self._credential_provider is not None:
+            refresh = getattr(self._credential_provider, "_get_or_refresh_token", None)
+            if callable(refresh):
+                try:
+                    refresh(force_refresh=True)
+                except Exception:
+                    pass  # best-effort; the new client will retry on its own
         stale_client = self._client
         self._client = self._create_client()
         await self._close_client(stale_client)
@@ -341,8 +350,14 @@ class RedisCache(ExternalAsyncBaseCacheService, Generic[LockType]):
                 f"RedisCache {operation} failed: {exc}. "
                 "Reconnecting Redis client and retrying once."
             )
-            await self._reconnect_client()
-            return await call(self._client)
+            try:
+                await self._reconnect_client()
+                return await call(self._client)
+            except (RedisConnectionError, RedisTimeoutError, RedisError, OSError) as retry_exc:
+                logger.error(
+                    f"RedisCache {operation} failed after reconnect: {retry_exc}"
+                )
+                raise
 
     async def is_connected(self) -> bool:
         """Check if the Redis client is connected."""
@@ -429,6 +444,9 @@ class RedisCache(ExternalAsyncBaseCacheService, Generic[LockType]):
     def __repr__(self) -> str:
         """Return a string representation of the RedisCache instance."""
         return f"RedisCache(expiration_time={self.expiration_time})"
+
+    async def teardown(self) -> None:
+        await self._close_client(self._client)
 
 
 class AsyncInMemoryCache(AsyncBaseCacheService, Generic[AsyncLockType]):
