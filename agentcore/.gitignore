@@ -5,6 +5,7 @@ logs
 *.log
 loguru/
 agentcore/loguru/
+agentcore/MiBuddy-Backend/
 loguru/**/*.jsonl
 loguru/metrics/*.prom
 npm-debug.log*

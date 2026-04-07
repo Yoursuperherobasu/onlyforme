@@ -1,6 +1,6 @@
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
-import { Send, Sparkles, ChevronDown, Plus, MessageSquare, PanelLeftClose, PanelLeft, User, Loader2, Trash2, Check, ImagePlus, X, Clock, Search, Image, Archive, ChevronRight, Globe, BookOpen, Headphones, Info, HelpCircle, Mic, AudioLines, FileUp, Paintbrush, Lightbulb, Upload, MoreVertical, Folder, ArrowLeft, File, Shield, CheckCircle2, SquarePen } from "lucide-react";
+import { Send, Sparkles, ChevronDown, Plus, MessageSquare, PanelLeftClose, PanelLeft, User, Loader2, Trash2, Check, ImagePlus, X, Clock, Search, Image, Archive, ChevronRight, Globe, BookOpen, Headphones, Info, HelpCircle, Mic, AudioLines, FileUp, Paintbrush, Lightbulb, Upload, MoreVertical, Folder, ArrowLeft, File, Shield, CheckCircle2, SquarePen, Mail } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import {
   useGetOrchAgents,
@@ -22,6 +22,7 @@ import { MarkdownField } from "@/modals/IOModal/components/chatView/chatMessage/
 import { ContentBlockDisplay } from "@/components/core/chatComponents/ContentBlockDisplay";
 import type { ContentBlock } from "@/types/chat";
 import SharePointFilePicker from "./SharePointFilePicker";
+import OutlookConnector, { useOutlookStatus } from "./OutlookConnector";
 
 /* ------------------ TYPES ------------------ */
 
@@ -246,6 +247,9 @@ export default function AgentOrchestrator() {
   const [noAgentMode, setNoAgentMode] = useState(false);
   // Addon: SharePoint file picker
   const [spPickerOpen, setSpPickerOpen] = useState(false);
+  // Addon: Outlook connector
+  const [outlookDialogOpen, setOutlookDialogOpen] = useState(false);
+  const { isConnected: isOutlookConnected, refresh: refreshOutlookStatus, setIsConnected: setOutlookConnected } = useOutlookStatus();
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -1177,15 +1181,24 @@ export default function AgentOrchestrator() {
             {t("Applications")}
           </div>
           <div className="flex flex-col gap-0.5">
-            <button className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm text-foreground hover:bg-accent">
+            <button
+              onClick={() => window.open("https://translator.motherson.com", "_blank")}
+              className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm text-foreground hover:bg-accent"
+            >
               <Globe size={16} className="shrink-0 text-blue-500" />
               <span>{t("AI Translator")}</span>
             </button>
-            <button className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm text-foreground hover:bg-accent">
+            <button
+              onClick={() => window.open("https://do33.motherson.com", "_blank")}
+              className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm text-foreground hover:bg-accent"
+            >
               <Image size={16} className="shrink-0 text-green-500" />
               <span>{t("DO33")}</span>
             </button>
-            <button className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm text-foreground hover:bg-accent">
+            <button
+              onClick={() => window.open("https://notebooklm.google.com", "_blank")}
+              className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm text-foreground hover:bg-accent"
+            >
               <Headphones size={16} className="shrink-0 text-red-500" />
               <span>{t("NotebookLM")}</span>
             </button>
@@ -1278,6 +1291,24 @@ export default function AgentOrchestrator() {
           >
             <FileUp size={16} className="text-green-500" />
             <span>{t("Upload from SharePoint")}</span>
+          </button>
+          <button
+            onClick={() => {
+              setShowPlusMenu(false);
+              setOutlookDialogOpen(true);
+            }}
+            className="flex w-full items-center justify-between rounded-lg px-3 py-2.5 text-left text-sm text-foreground hover:bg-accent"
+          >
+            <div className="flex items-center gap-3">
+              <Mail size={16} className="text-blue-500" />
+              <span>{t("Outlook Connector")}</span>
+            </div>
+            {isOutlookConnected && (
+              <span className="flex items-center gap-1 text-xs text-green-500">
+                <Check size={12} />
+                Connected
+              </span>
+            )}
           </button>
           <div className="my-1 h-px bg-border" />
           <button
@@ -1890,6 +1921,18 @@ export default function AgentOrchestrator() {
         isOpen={spPickerOpen}
         onDismiss={() => setSpPickerOpen(false)}
         onFilesSelected={handleSpFilesSelected}
+      />
+      {/* ---- Addon: Outlook Connector ---- */}
+      <OutlookConnector
+        isOpen={outlookDialogOpen}
+        onDismiss={() => setOutlookDialogOpen(false)}
+        onConnected={() => {
+          setOutlookConnected(true);
+        }}
+        onDisconnected={() => {
+          setOutlookConnected(false);
+          refreshOutlookStatus();
+        }}
       />
       {false && (
         <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/50">

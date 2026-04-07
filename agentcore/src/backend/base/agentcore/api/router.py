@@ -51,6 +51,7 @@ from agentcore.api.metrics_dashboard import router as metrics_dashboard_router
 from agentcore.api.tags import router as tags_router
 from agentcore.api.cost_limits import router as cost_limits_router
 from agentcore.api.semantic_search import router as semantic_search_router
+from agentcore.services.outlook_chat.router import router as outlook_chat_router
 
 router = APIRouter(
     prefix="/api",
@@ -106,3 +107,4 @@ router.include_router(metrics_dashboard_router)
 router.include_router(tags_router)
 router.include_router(cost_limits_router)
 router.include_router(semantic_search_router)
+router.include_router(outlook_chat_router)
