@@ -664,6 +664,11 @@ async def run_agent_generator(
         from agentcore.observability.metrics_registry import record_agent_run
         record_agent_run(agent.name or "unknown", "error", (time.perf_counter() - _gen_start) * 1000)
         event_manager.on_error(data={"error": str(e)})
+    except Exception as e:
+        logger.exception(f"Unexpected error running agent: {e}")
+        from agentcore.observability.metrics_registry import record_agent_run
+        record_agent_run(agent.name or "unknown", "error", (time.perf_counter() - _gen_start) * 1000)
+        event_manager.on_error(data={"error": f"Internal error: {str(e)}"})
     finally:
         await event_manager.queue.put((None, None, time.time))
 
@@ -843,6 +848,7 @@ async def simplified_run_agent(
     adjust_active_sessions(1)
 
     if stream:
+      try:
         logger.info(f"[RUN_AGENT] Starting streaming response for agent")
         asyncio_queue: asyncio.Queue = asyncio.Queue()
         asyncio_queue_client_consumed: asyncio.Queue = asyncio.Queue()
@@ -1009,6 +1015,13 @@ async def simplified_run_agent(
             media_type="text/event-stream",
             headers={"X-Session-Id": input_request.session_id},
         )
+      except Exception as exc:
+        logger.exception(f"[RUN_AGENT] Failed to start streaming for agent: {exc}")
+        adjust_active_sessions(-1)
+        raise APIException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to start streaming: {str(exc)}",
+        ) from exc
 
     # --- RabbitMQ path for non-streaming ---
     from agentcore.services.deps import get_rabbitmq_service

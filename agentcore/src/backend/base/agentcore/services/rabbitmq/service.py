@@ -459,7 +459,10 @@ class RabbitMQService(Service):
             return job_id
 
         success = await self._execute_orchestrator_job(job_data, event_manager)
-        await event_manager.finalize_redis_mirror(status="completed" if success else "failed")
+        try:
+            await event_manager.finalize_redis_mirror(status="completed" if success else "failed")
+        except Exception as fin_exc:
+            logger.warning(f"[RabbitMQ] finalize_redis_mirror failed for orchestrator job {job_id}: {fin_exc}")
 
         if success:
             self._track(self.config.orchestrator_queue, "completed")
