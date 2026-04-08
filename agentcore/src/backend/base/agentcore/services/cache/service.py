@@ -447,8 +447,7 @@ class RedisCache(ExternalAsyncBaseCacheService, Generic[LockType]):
 
     async def teardown(self) -> None:
         await self._close_client(self._client)
-
-
+        
 class AsyncInMemoryCache(AsyncBaseCacheService, Generic[AsyncLockType]):
     def __init__(self, max_size=None, expiration_time=3600) -> None:
         self.cache: OrderedDict = OrderedDict()

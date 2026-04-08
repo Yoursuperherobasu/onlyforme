@@ -60,6 +60,23 @@ class RedisBuildEventStore:
         await self.redis.hset(self._meta_key(job_id), mapping={"updated_at": str(time.time())})
         await self._touch(job_id)
 
+    async def append_events_batch(self, job_id: str, payloads: list[str]) -> None:
+        """Append multiple events in one Redis round-trip."""
+        if not payloads:
+            return
+        events_key = self._events_key(job_id)
+        meta_key = self._meta_key(job_id)
+        poll_cursor_key = self._poll_cursor_key(job_id)
+        now = str(time.time())
+        ttl = self.ttl_seconds
+        pipe = self.redis.pipeline(transaction=False)
+        pipe.rpush(events_key, *payloads)
+        pipe.hset(meta_key, mapping={"updated_at": now})
+        pipe.expire(events_key, ttl)
+        pipe.expire(meta_key, ttl)
+        pipe.expire(poll_cursor_key, ttl)
+        await pipe.execute()
+
     async def mark_status(self, job_id: str, *, status: str, error: str | None = None) -> None:
         mapping = {
             "status": status,

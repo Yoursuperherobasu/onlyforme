@@ -1,4 +1,5 @@
 import inspect
+import os
 from typing import Optional, Any
 
 import redis.asyncio as redis
@@ -18,7 +19,23 @@ _redis_credential_provider_signature: Optional[tuple] = None
 
 
 def _redis_cluster_enabled(settings_service: SettingsService) -> bool:
-    # Cluster-only deployment: always use RedisCluster client.
+    """Return whether Redis Cluster protocol should be used.
+
+    Priority:
+    1) REDIS_CLUSTER_POLICY: enterprise|enterprisecluster -> False, oss|osscluster -> True
+    2) REDIS_CLUSTER_ENABLED: true/false style flag
+    3) Default: True (OSS cluster behavior)
+    """
+    policy = str(os.getenv("REDIS_CLUSTER_POLICY", "")).strip().lower()
+    if policy in {"enterprise", "enterprisecluster"}:
+        return False
+    if policy in {"oss", "osscluster"}:
+        return True
+
+    raw_flag = os.getenv("REDIS_CLUSTER_ENABLED")
+    if raw_flag is not None:
+        return str(raw_flag).strip().lower() in {"1", "true", "yes", "on"}
+
     return True
 
 

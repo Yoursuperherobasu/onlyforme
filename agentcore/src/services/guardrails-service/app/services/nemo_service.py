@@ -1347,6 +1347,13 @@ async def apply_nemo_guardrail_text(
 
         llm_calls = _extract_llm_calls(generated)
         llm_usage = _summarize_llm_calls(llm_calls)
+        # Fallback: if NeMo's log didn't include model/provider names
+        # (common with certain NeMo versions or Colang 2.x), use the
+        # model registry config which always has the correct values.
+        if not llm_usage["model"] and model_config:
+            llm_usage["model"] = model_config.get("model_name")
+        if not llm_usage["provider"] and model_config:
+            llm_usage["provider"] = model_config.get("provider")
         logger.info(
             "NeMo guardrail llm usage summary: "
             f"guardrail_id={guardrail_id}, llm_calls={llm_usage['llm_calls_count']}, "
