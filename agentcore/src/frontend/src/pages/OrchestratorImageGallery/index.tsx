@@ -1,47 +1,40 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { ArrowLeft, Download, Loader2, X, Image as ImageIcon } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
-import { useGetFilesV2 } from "@/controllers/API/queries/file-management/use-get-files";
 import { BASE_URL_API } from "@/constants/constants";
-import useAuthStore from "@/stores/authStore";
-
-const IMAGE_EXTENSIONS = ["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg"];
-
-function isImageFile(name: string): boolean {
-  const ext = name.split(".").pop()?.toLowerCase() || "";
-  return IMAGE_EXTENSIONS.includes(ext);
-}
 
 export default function OrchestratorImageGallery() {
   const { t } = useTranslation();
   const navigate = useNavigate();
-  const userId = useAuthStore((s) => s.userData?.id);
-  const { data: allFiles, isLoading } = useGetFilesV2();
   const [selectedImage, setSelectedImage] = useState<{
     src: string;
     name: string;
   } | null>(null);
+  const [images, setImages] = useState<{ id: string; name: string; src: string; createdAt: string }[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
 
-  // Filter to images only, sort newest-first, take last 10
-  const images = useMemo(() => {
-    if (!allFiles) return [];
-    return allFiles
-      .filter((f: any) => isImageFile(f.path || f.name || ""))
-      .sort(
-        (a: any, b: any) =>
-          new Date(b.created_at || b.updated_at || 0).getTime() -
-          new Date(a.created_at || a.updated_at || 0).getTime(),
-      )
-      .slice(0, 10)
-      .map((f: any) => ({
-        id: f.id,
-        name: f.name || f.path,
-        path: f.path,
-        src: `${BASE_URL_API}files/images/${userId}/${f.path}`,
-        createdAt: f.created_at || f.updated_at || "",
-      }));
-  }, [allFiles, userId]);
+  // Fetch AI-generated images from dedicated MiBuddy endpoint
+  useEffect(() => {
+    const tokenMatch = document.cookie.match(/(?:^|;\s*)access_token_lf=([^;]*)/);
+    const headers: Record<string, string> = {};
+    if (tokenMatch?.[1]) headers["Authorization"] = `Bearer ${decodeURIComponent(tokenMatch[1])}`;
+
+    fetch(`${BASE_URL_API}orchestrator/generated-images`, { headers, credentials: "include" })
+      .then((res) => res.json())
+      .then((data: any[]) => {
+        setImages(
+          (data || []).map((img: any, idx: number) => ({
+            id: `gen-${idx}`,
+            name: img.name || "AI Generated Image",
+            src: img.src,
+            createdAt: "",
+          })),
+        );
+      })
+      .catch((err) => console.warn("Failed to load generated images:", err))
+      .finally(() => setIsLoading(false));
+  }, []);
 
   const handleDownload = useCallback(
     async (src: string, name: string) => {

@@ -58,18 +58,27 @@ async def embed_single(text: str) -> list[float]:
     """Generate embedding for a single text string."""
     config = _get_embedding_config()
     if not config["api_key"]:
-        logger.warning("[LTM] LTM_EMBEDDING_API_KEY not set, cannot generate embeddings")
+        logger.error("[LTM] LTM_EMBEDDING_API_KEY is empty — cannot generate embeddings")
         return []
 
     url, headers, body = _build_request(config, text)
     provider = config["provider"]
+    logger.debug(f"[LTM] Embedding single: provider={provider}, model={config['model']}, key={'***' + config['api_key'][-4:] if len(config['api_key']) > 4 else '(short)'}")
 
     try:
-        async with httpx.AsyncClient(timeout=60.0) as client:
+        async with httpx.AsyncClient(timeout=120.0) as client:
             resp = await client.post(url, headers=headers, json=body)
             resp.raise_for_status()
-    except Exception:
-        logger.warning("[LTM] Embedding request failed for single text (provider=%s)", provider, exc_info=True)
+    except httpx.HTTPStatusError as e:
+        error_detail = ""
+        try:
+            error_detail = e.response.text[:500]
+        except Exception:
+            error_detail = str(e)
+        logger.error(f"[LTM] Embedding HTTP error: {e.response.status_code} | {error_detail}")
+        return []
+    except Exception as e:
+        logger.error(f"[LTM] Embedding request failed: {type(e).__name__}: {e}")
         return []
 
     data = resp.json()
@@ -81,16 +90,26 @@ async def embed_batch(texts: list[str]) -> list[list[float]]:
     """Generate embeddings for multiple texts in a single API call."""
     config = _get_embedding_config()
     if not config["api_key"]:
+        logger.error("[LTM] LTM_EMBEDDING_API_KEY is empty — cannot generate embeddings")
         return []
 
     url, headers, body = _build_request(config, texts)
+    logger.debug(f"[LTM] Embedding request: provider={config['provider']}, model={config['model']}, texts={len(texts)}, url={url}")
 
     try:
-        async with httpx.AsyncClient(timeout=60.0) as client:
+        async with httpx.AsyncClient(timeout=120.0) as client:
             resp = await client.post(url, headers=headers, json=body)
             resp.raise_for_status()
-    except Exception:
-        logger.warning("[LTM] Embedding request failed for batch of %d texts (provider=%s)", len(texts), config["provider"], exc_info=True)
+    except httpx.HTTPStatusError as e:
+        error_detail = ""
+        try:
+            error_detail = e.response.text[:500]
+        except Exception:
+            error_detail = str(e)
+        logger.error(f"[LTM] Embedding HTTP error: {e.response.status_code} | {error_detail}")
+        return []
+    except Exception as e:
+        logger.error(f"[LTM] Embedding request failed: {type(e).__name__}: {e}")
         return []
 
     data = resp.json()

@@ -84,13 +84,29 @@ async def _build_messages_from_history(
     history: list,
     input_value: str,
     files: list[str] | None = None,
+    include_system_prompt: bool = True,
 ) -> list:
     """Build LangChain messages from OrchConversationTable rows + current input.
+
+    This is ONLY used for direct model chat (No Agent mode).
+    When include_system_prompt=True, the system identity prompt is prepended.
+    Agents have their own system prompts — this is NOT called for @agent mode.
 
     If files are provided (as storage paths), they are included as multimodal
     content (base64 images) in the current user message.
     """
     messages = []
+
+    # Inject system identity prompt (only for direct model chat)
+    if include_system_prompt:
+        try:
+            from agentcore.services.mibuddy.system_prompts import get_system_identity_prompt
+            system_prompt = get_system_identity_prompt()
+            if system_prompt.strip():
+                messages.append(SystemMessage(content=system_prompt))
+        except Exception as e:
+            logger.warning(f"Failed to load system identity prompt: {e}")
+
     for msg in history:
         sender = getattr(msg, "sender", "") or ""
         text = getattr(msg, "text", "") or ""

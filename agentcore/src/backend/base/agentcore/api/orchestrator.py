@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+from io import BytesIO
 from pathlib import Path
 from contextvars import ContextVar
 from datetime import datetime, timezone
@@ -14,7 +15,7 @@ _request_base_url: ContextVar[str | None] = ContextVar("_request_base_url", defa
 
 import httpx
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFile, status
 
 from loguru import logger
 from pydantic import BaseModel
@@ -792,7 +793,7 @@ async def _route_request(
       doc_files: list of document file paths (for document_qa mode)
       image_files: list of image file paths
     """
-    from agentcore.services.document_extractor import IMAGE_EXTENSIONS, SUPPORTED_DOC_EXTENSIONS
+    from agentcore.services.mibuddy.document_extractor import IMAGE_EXTENSIONS, SUPPORTED_DOC_EXTENSIONS
 
     # Priority 0: Document files attached → document_qa mode (highest priority)
     if body.files:
@@ -835,11 +836,21 @@ async def _route_request(
         }
 
     # Mode 2/3: No @agent — run intent classification
-    from agentcore.services.intent_classifier import IntentClassifier, Intent
+    from agentcore.services.mibuddy.intent_classifier import IntentClassifier, Intent
 
     classifier = IntentClassifier()
     intent = await classifier.classify(body.input_value)
     logger.info(f"[ORCH] Intent classified: {intent.value} for input: {body.input_value[:80]!r}")
+
+    if intent == Intent.KNOWLEDGE_BASE_SEARCH:
+        return {
+            "mode": "kb_search",
+            "agent_id": None,
+            "deployment_id": None,
+            "deployment": None,
+            "model_id": body.model_id,
+            "intent": intent.value,
+        }
 
     if intent == Intent.WEB_SEARCH:
         return {
@@ -862,6 +873,30 @@ async def _route_request(
         }
 
     # Intent is general_chat
+    # Check if session has documents in Pinecone (follow-up question about uploaded docs)
+    try:
+        from agentcore.services.mibuddy.document_processor import session_has_documents
+        if await session_has_documents(body.session_id):
+            logger.info(f"[ORCH] Session has documents in Pinecone — routing to document_qa for follow-up")
+            model_id = body.model_id
+            if not model_id:
+                settings = get_settings_service()
+                default_id = settings.settings.default_chat_model_id
+                if default_id:
+                    model_id = UUID(default_id)
+            return {
+                "mode": "document_qa",
+                "agent_id": None,
+                "deployment_id": None,
+                "deployment": None,
+                "model_id": model_id,
+                "intent": "document_followup",
+                "doc_files": [],
+                "image_files": [],
+            }
+    except Exception as e:
+        logger.debug(f"[ORCH] Document session check failed (non-critical): {e}")
+
     # Check if user selected a model
     if body.model_id:
         return {
@@ -1057,7 +1092,7 @@ async def orch_chat(
         resp_model_name = None
 
         if mode == "model_direct":
-            from agentcore.services.direct_model_chat import direct_model_chat
+            from agentcore.services.mibuddy.direct_model_chat import direct_model_chat
             result = await direct_model_chat(
                 model_id=str(resp_model_id),
                 input_value=body.input_value,
@@ -1070,35 +1105,48 @@ async def orch_chat(
             resp_model_name = result.get("model_name", "")
             sender_name = await _get_model_display_name(session, resp_model_id)
 
+        elif mode == "kb_search":
+            from agentcore.services.mibuddy.kb_search_handler import handle_kb_search
+            result = await handle_kb_search(body.input_value)
+            response_text = result["response_text"]
+            resp_model_name = result.get("model_name", "knowledge-base")
+            settings = get_settings_service()
+            sender_name = settings.settings.company_kb_name or "Knowledge Base"
+
         elif mode == "web_search":
-            from agentcore.services.web_search_handler import handle_web_search
+            from agentcore.services.mibuddy.web_search_handler import handle_web_search
             result = await handle_web_search(body.input_value)
             response_text = result["response_text"]
             resp_model_name = result.get("model_name", "gemini")
             sender_name = "Web Search"
 
         elif mode == "image_gen":
-            from agentcore.services.image_gen_handler import handle_image_generation
+            from agentcore.services.mibuddy.image_gen_handler import handle_image_generation
             result = await handle_image_generation(
                 body.input_value,
                 model_id=str(resp_model_id) if resp_model_id else None,
+                user_id=str(current_user.id),
             )
             response_text = result["response_text"]
             resp_model_name = result.get("model_name", "image-generation")
             sender_name = "Image Generator"
 
         elif mode == "document_qa":
-            from agentcore.services.document_processor import process_and_ingest, search_documents, build_doc_qa_prompt
-            from agentcore.services.direct_model_chat import direct_model_chat
+            from agentcore.services.mibuddy.document_processor import process_and_ingest, search_documents, build_doc_qa_prompt
+            from agentcore.services.mibuddy.direct_model_chat import direct_model_chat
 
             # Ingest new documents if attached
             doc_files = routing.get("doc_files", [])
             if doc_files:
                 count = await process_and_ingest(doc_files, body.session_id)
                 logger.info(f"[ORCH] Ingested {count} chunks from {len(doc_files)} files")
+                # Wait for Pinecone to index vectors (eventual consistency)
+                if count > 0:
+                    await asyncio.sleep(5)
 
             # Search for relevant chunks
             chunks = await search_documents(body.input_value, body.session_id)
+            logger.info(f"[ORCH] Document search returned {len(chunks)} chunks")
 
             # Build enriched prompt and call model
             enriched_prompt = build_doc_qa_prompt(body.input_value, chunks)
@@ -1190,7 +1238,7 @@ async def orch_chat_stream(
     logger.info(f"[ORCH-STREAM] Routing mode={mode} intent={routing.get('intent')} session={body.session_id}")
 
     # -- 2. For non-agent modes, use direct streaming --------------------
-    if mode in ("model_direct", "web_search", "image_gen", "document_qa"):
+    if mode in ("model_direct", "web_search", "image_gen", "document_qa", "kb_search"):
         # Persist user message
         stream_msg_ts = datetime.now(timezone.utc).replace(tzinfo=None)
         user_msg = OrchConversationTable(
@@ -1213,6 +1261,9 @@ async def orch_chat_stream(
         sender_name = "Assistant"
         if mode in ("model_direct", "document_qa") and resp_model_id:
             sender_name = await _get_model_display_name(session, resp_model_id)
+        elif mode == "kb_search":
+            settings_svc = get_settings_service()
+            sender_name = settings_svc.settings.company_kb_name or "Knowledge Base"
         elif mode == "web_search":
             sender_name = "Web Search"
         elif mode == "image_gen":
@@ -1233,17 +1284,39 @@ async def orch_chat_stream(
         async def _run_direct_and_persist():
             try:
                 result = {}
-                if _mode == "document_qa":
-                    from agentcore.services.document_processor import process_and_ingest, search_documents, build_doc_qa_prompt
-                    from agentcore.services.direct_model_chat import direct_model_chat_stream
+                if _mode == "kb_search":
+                    from agentcore.services.mibuddy.kb_search_handler import handle_kb_search_stream
+                    result = await handle_kb_search_stream(
+                        _input_value,
+                        event_manager=event_manager,
+                    )
+                elif _mode == "document_qa":
+                    from agentcore.services.mibuddy.document_processor import process_and_ingest, search_documents, build_doc_qa_prompt
+                    from agentcore.services.mibuddy.direct_model_chat import direct_model_chat_stream
 
-                    # Ingest new documents
+                    # Ingest new documents — show progress to user
                     if _doc_files:
+                        event_manager.on_token(data={"chunk": "📄 Processing document... "})
                         count = await process_and_ingest(_doc_files, _session_id)
                         logger.info(f"[ORCH-STREAM] Ingested {count} chunks from {len(_doc_files)} files")
+                        if count > 0:
+                            event_manager.on_token(data={"chunk": f"✅ Indexed {count} chunks. "})
+                            event_manager.on_token(data={"chunk": "🔍 Searching... "})
+                            await asyncio.sleep(5)
+                        else:
+                            event_manager.on_token(data={"chunk": "⚠️ No content extracted. "})
+                    else:
+                        event_manager.on_token(data={"chunk": "🔍 Searching documents... "})
 
                     # Search + build enriched prompt
                     chunks = await search_documents(_input_value, _session_id)
+                    logger.info(f"[ORCH-STREAM] Document search returned {len(chunks)} chunks")
+
+                    if chunks:
+                        event_manager.on_token(data={"chunk": f"Found {len(chunks)} relevant sections.\n\n"})
+                    else:
+                        event_manager.on_token(data={"chunk": "No relevant sections found.\n\n"})
+
                     enriched_prompt = build_doc_qa_prompt(_input_value, chunks)
 
                     result = await direct_model_chat_stream(
@@ -1253,7 +1326,7 @@ async def orch_chat_stream(
                         event_manager=event_manager,
                     )
                 elif _mode == "model_direct":
-                    from agentcore.services.direct_model_chat import direct_model_chat_stream
+                    from agentcore.services.mibuddy.direct_model_chat import direct_model_chat_stream
                     result = await direct_model_chat_stream(
                         model_id=str(_resp_model_id),
                         input_value=_input_value,
@@ -1263,16 +1336,17 @@ async def orch_chat_stream(
                         event_manager=event_manager,
                     )
                 elif _mode == "web_search":
-                    from agentcore.services.web_search_handler import handle_web_search_stream
+                    from agentcore.services.mibuddy.web_search_handler import handle_web_search_stream
                     result = await handle_web_search_stream(
                         _input_value,
                         event_manager=event_manager,
                     )
                 elif _mode == "image_gen":
-                    from agentcore.services.image_gen_handler import handle_image_generation_stream
+                    from agentcore.services.mibuddy.image_gen_handler import handle_image_generation_stream
                     result = await handle_image_generation_stream(
                         _input_value,
                         model_id=str(_resp_model_id) if _resp_model_id else None,
+                        user_id=str(_user_id),
                         event_manager=event_manager,
                     )
 
@@ -1669,7 +1743,7 @@ async def delete_orch_session(
         await orch_delete_session_transactions(session, session_id)
         # Cleanup document Q&A vectors from Pinecone
         try:
-            from agentcore.services.document_processor import cleanup_session_docs
+            from agentcore.services.mibuddy.document_processor import cleanup_session_docs
             await cleanup_session_docs(session_id)
         except Exception as cleanup_err:
             logger.warning(f"[DocQA] Cleanup failed for session {session_id}: {cleanup_err}")
@@ -1777,7 +1851,120 @@ async def get_active_agent(
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
-from agentcore.services.model_capabilities import detect_capabilities
+from agentcore.services.mibuddy.model_capabilities import detect_capabilities
+
+
+# ---------------------------------------------------------------------------
+# MiBuddy file upload (dedicated container)
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/upload",
+    status_code=201,
+    dependencies=[Depends(PermissionChecker(["interact_agents"]))],
+)
+async def mibuddy_upload_file(
+    *,
+    request: Request,
+    session: DbSession,
+    current_user: CurrentActiveUser,
+    file: UploadFile,
+):
+    """Upload a file to the MiBuddy dedicated container.
+
+    Used by orchestrator model chat for document uploads and chat images.
+    Files are stored in: {mibuddy_container}/{user_id}/{category}/{filename}
+
+    Returns the file_path for use in chat requests.
+    """
+    from agentcore.services.mibuddy.docqa_storage import save_file as mibuddy_save, FileCategory
+    from agentcore.services.mibuddy.document_extractor import IMAGE_EXTENSIONS, SUPPORTED_DOC_EXTENSIONS
+
+    if not file or not file.filename:
+        raise HTTPException(status_code=400, detail="No file provided")
+
+    user_id = str(current_user.id)
+    file_content = await file.read()
+    file_name = file.filename
+    ext = Path(file_name).suffix.lower()
+
+    # Determine category based on file type
+    if ext in IMAGE_EXTENSIONS:
+        category = FileCategory.CHAT_IMAGES
+    elif ext in SUPPORTED_DOC_EXTENSIONS:
+        category = FileCategory.UPLOADS
+    else:
+        category = FileCategory.UPLOADS
+
+    try:
+        file_path = await mibuddy_save(user_id, file_name, file_content, category=category)
+        logger.info(f"[MiBuddy Upload] {category.value}/{file_name} for user {user_id}")
+        return {"file_path": file_path, "category": category.value}
+    except Exception as e:
+        logger.error(f"[MiBuddy Upload] Failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+# ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# List AI-generated images from MiBuddy container
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/generated-images",
+    status_code=200,
+    dependencies=[Depends(PermissionChecker(["interact_agents"]))],
+)
+async def list_generated_images(
+    *,
+    current_user: CurrentActiveUser,
+):
+    """List AI-generated images for the current user from the MiBuddy container."""
+    try:
+        from agentcore.services.mibuddy.docqa_storage import list_files, FileCategory
+
+        user_id = str(current_user.id)
+        file_names = await list_files(user_id, category=FileCategory.GENERATED_IMAGES)
+
+        images = []
+        for name in sorted(file_names, reverse=True)[:20]:  # newest first, max 20
+            images.append({
+                "name": name,
+                "src": f"/api/files/images/{user_id}/generated-images/{name}",
+            })
+        return images
+    except Exception as e:
+        logger.error(f"Error listing generated images: {e}")
+        return []
+
+
+# ---------------------------------------------------------------------------
+# Serve MiBuddy images (generated-images, uploads, chat-images)
+# ---------------------------------------------------------------------------
+
+
+@router.get("/images/{user_id}/{subfolder}/{file_name}")
+async def serve_mibuddy_image(user_id: str, subfolder: str, file_name: str):
+    """Serve images from the MiBuddy container subfolders."""
+    from agentcore.services.mibuddy.docqa_storage import get_file_by_path
+    from agentcore.services.storage.constants import build_content_type_from_extension
+
+    extension = file_name.split(".")[-1]
+    try:
+        content_type = build_content_type_from_extension(extension)
+    except Exception:
+        content_type = "image/png"
+
+    try:
+        path = f"{user_id}/{subfolder}/{file_name}"
+        file_content = await get_file_by_path(path)
+        logger.info(f"[MiBuddy] Served image: {path}")
+        return StreamingResponse(BytesIO(file_content), media_type=content_type)
+    except Exception as e:
+        logger.warning(f"[MiBuddy] Image not found: {user_id}/{subfolder}/{file_name}")
+        raise HTTPException(status_code=404, detail=f"Image not found: {file_name}") from e
 
 
 # ---------------------------------------------------------------------------

@@ -243,29 +243,30 @@ function ImageGalleryView({
   onClosePreview: () => void;
 }) {
   const { t } = useTranslation();
-  const { data: allFiles, isLoading } = useGetFilesV2();
-  const userId = useContext(AuthContext).userData?.id;
+  const [images, setGalleryImages] = useState<{ id: string; name: string; src: string; createdAt: string }[]>([]);
+  const [isLoading, setGalleryLoading] = useState(true);
 
-  const images = useMemo(() => {
-    if (!allFiles) return [];
-    return (allFiles as any[])
-      .filter((f) => {
-        const ext = (f.path || f.name || "").split(".").pop()?.toLowerCase() || "";
-        return IMAGE_EXTENSIONS.includes(ext);
+  // Fetch AI-generated images from MiBuddy dedicated endpoint
+  useEffect(() => {
+    const tokenMatch = document.cookie.match(/(?:^|;\s*)access_token_lf=([^;]*)/);
+    const headers: Record<string, string> = {};
+    if (tokenMatch?.[1]) headers["Authorization"] = `Bearer ${decodeURIComponent(tokenMatch[1])}`;
+
+    fetch(`${getURL("ORCHESTRATOR")}/generated-images`, { headers, credentials: "include" })
+      .then((res) => res.json())
+      .then((data: any[]) => {
+        setGalleryImages(
+          (data || []).map((img: any, idx: number) => ({
+            id: `gen-${idx}`,
+            name: img.name || "AI Generated Image",
+            src: img.src,
+            createdAt: "",
+          })),
+        );
       })
-      .sort(
-        (a, b) =>
-          new Date(b.created_at || b.updated_at || 0).getTime() -
-          new Date(a.created_at || a.updated_at || 0).getTime(),
-      )
-      .slice(0, 10)
-      .map((f) => ({
-        id: f.id,
-        name: f.name || f.path,
-        src: `${BASE_URL_API}files/images/${userId}/${f.path}`,
-        createdAt: f.created_at || f.updated_at || "",
-      }));
-  }, [allFiles, userId]);
+      .catch((err) => console.warn("Failed to load generated images:", err))
+      .finally(() => setGalleryLoading(false));
+  }, []);
 
   const handleDownload = async (src: string, name: string) => {
     try {
@@ -433,13 +434,18 @@ export default function AgentOrchestrator() {
   /* ------------------ FILE UPLOAD ------------------ */
 
   const { mutate: uploadFileMutate } = usePostUploadFileV2();
-  const ALLOWED_EXTENSIONS = [
-    "png", "jpg", "jpeg",                                    // Images
+  // Model mode (No Agent): allow documents + images
+  // Agent mode: allow images only
+  const IMAGE_EXTENSIONS_LIST = ["png", "jpg", "jpeg"];
+  const DOC_EXTENSIONS_LIST = [
     "pdf", "docx", "pptx", "xlsx", "xls",                   // Documents
     "txt", "md", "csv",                                      // Text
     "py", "js", "ts", "java", "cpp", "c", "cs", "go",       // Code
     "json", "html", "css", "php", "rb", "sh", "tex",        // More code/markup
   ];
+  const ALLOWED_EXTENSIONS = noAgentMode
+    ? [...IMAGE_EXTENSIONS_LIST, ...DOC_EXTENSIONS_LIST]     // Model mode: all file types
+    : IMAGE_EXTENSIONS_LIST;                                  // Agent mode: images only
 
   const uploadFile = (file: File) => {
     const ext = file.name.split(".").pop()?.toLowerCase();
@@ -448,26 +454,77 @@ export default function AgentOrchestrator() {
     const id = crypto.randomUUID().slice(0, 10);
     setUploadFiles((prev) => [...prev, { id, file, loading: true, error: false }]);
 
-    uploadFileMutate(
-      { file },
-      {
-        onSuccess: (data: any) => {
+    if (noAgentMode) {
+      // Model mode: upload to MiBuddy dedicated container
+      const formData = new FormData();
+      formData.append("file", file);
+      const tokenMatch = document.cookie.match(/(?:^|;\s*)access_token_lf=([^;]*)/);
+      const headers: Record<string, string> = {};
+      if (tokenMatch?.[1]) headers["Authorization"] = `Bearer ${decodeURIComponent(tokenMatch[1])}`;
+
+      fetch(`${getURL("ORCHESTRATOR")}/upload`, {
+        method: "POST",
+        headers,
+        credentials: "include",
+        body: formData,
+      })
+        .then((res) => {
+          if (!res.ok) throw new Error(`Upload failed: ${res.status}`);
+          return res.json();
+        })
+        .then((data) => {
           setUploadFiles((prev) =>
             prev.map((f) => (f.id === id ? { ...f, loading: false, path: data.file_path } : f)),
           );
-        },
-        onError: () => {
+        })
+        .catch(() => {
           setUploadFiles((prev) =>
             prev.map((f) => (f.id === id ? { ...f, loading: false, error: true } : f)),
           );
+        });
+    } else {
+      // Agent mode: upload to main storage (existing flow)
+      uploadFileMutate(
+        { file },
+        {
+          onSuccess: (data: any) => {
+            setUploadFiles((prev) =>
+              prev.map((f) => (f.id === id ? { ...f, loading: false, path: data.file_path } : f)),
+            );
+          },
+          onError: () => {
+            setUploadFiles((prev) =>
+              prev.map((f) => (f.id === id ? { ...f, loading: false, error: true } : f)),
+            );
+          },
         },
-      },
-    );
+      );
+    }
   };
 
+  const MAX_FILES = 5;
+
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) uploadFile(file);
+    const files = e.target.files;
+    if (!files) return;
+
+    const currentCount = uploadFiles.length;
+    const available = MAX_FILES - currentCount;
+
+    if (available <= 0) {
+      alert(`Maximum ${MAX_FILES} files allowed.`);
+      e.target.value = "";
+      return;
+    }
+
+    const filesToUpload = Array.from(files).slice(0, available);
+    if (files.length > available) {
+      alert(`Only ${available} more file(s) can be added. Maximum is ${MAX_FILES}.`);
+    }
+
+    for (const file of filesToUpload) {
+      uploadFile(file);
+    }
     e.target.value = "";
   };
 
@@ -1085,6 +1142,7 @@ export default function AgentOrchestrator() {
     if (filePaths.length > 0) {
       requestBody.files = filePaths;
     }
+    console.log("[OrchestratorChat] Request body:", JSON.stringify(requestBody), "| filePaths:", filePaths, "| uploadFiles:", uploadFiles.map(f => ({id: f.id, path: f.path, loading: f.loading, error: f.error})));
 
     const buildController = new AbortController();
 
@@ -2082,8 +2140,8 @@ export default function AgentOrchestrator() {
                           chatMessage={msg.content}
                           editedFlag={null}
                         />
-                        {/* Text-to-Speech button */}
-                        {msg.content && !isSending && (
+                        {/* Text-to-Speech button — hide for image-only responses */}
+                        {msg.content && !isSending && !(/^\s*!\[.*\]\(.*\)\s*$/.test(msg.content.trim())) && (
                           <button
                             onClick={() => handleSpeak(msg.content)}
                             className="mt-1.5 flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
@@ -2310,7 +2368,8 @@ export default function AgentOrchestrator() {
                 <input
                   ref={fileInputRef}
                   type="file"
-                  accept=".png,.jpg,.jpeg,.pdf,.docx,.pptx,.xlsx,.xls,.txt,.md,.csv,.py,.js,.ts,.java,.cpp,.c,.cs,.go,.json,.html,.css,.php,.rb,.sh,.tex"
+                  multiple
+                  accept={ALLOWED_EXTENSIONS.map((e) => `.${e}`).join(",")}
                   className="hidden"
                   onChange={handleFileChange}
                 />

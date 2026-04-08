@@ -26,21 +26,36 @@ SUPPORTED_DOC_EXTENSIONS = {
 
 
 async def read_file_bytes(file_path: str) -> bytes:
-    """Read file bytes from agentcore storage service.
+    """Read file bytes from storage.
 
-    file_path format: "{user_id}/{filename}" — resolved via storage service.
+    Tries multiple storage locations:
+    1. Main storage (files uploaded via /api/files)
+    2. MiBuddy dedicated container (uploads folder)
+
+    file_path format: "{user_id}/{filename}".
     """
-    from agentcore.services.deps import get_storage_service
+    # Try MiBuddy container first (with full path)
+    try:
+        from agentcore.services.mibuddy.docqa_storage import get_file_by_path
+        data = await get_file_by_path(file_path)
+        logger.info(f"[DocExtractor] Read {len(data)} bytes from MiBuddy container: {file_path}")
+        return data
+    except Exception as e:
+        logger.debug(f"[DocExtractor] Not in MiBuddy container ({e}), trying main storage: {file_path}")
 
-    storage = get_storage_service()
-    # file_path is "{user_id}/{filename}"
+    # Fallback: try main storage
     parts = file_path.replace("\\", "/").split("/", 1)
     if len(parts) == 2:
         agent_id, file_name = parts
     else:
         agent_id, file_name = "", file_path
 
-    return await storage.get_file(agent_id=agent_id, file_name=file_name)
+    try:
+        from agentcore.services.deps import get_storage_service
+        storage = get_storage_service()
+        return await storage.get_file(agent_id=agent_id, file_name=file_name)
+    except Exception:
+        raise FileNotFoundError(f"File not found in any storage: {file_path}")
 
 
 def extract_text_from_bytes(file_bytes: bytes, file_ext: str) -> str:

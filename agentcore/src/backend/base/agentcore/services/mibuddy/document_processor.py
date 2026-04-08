@@ -104,7 +104,7 @@ async def process_and_ingest(
     Returns:
         Number of chunks ingested.
     """
-    from agentcore.services.document_extractor import extract_text
+    from agentcore.services.mibuddy.document_extractor import extract_text
     from agentcore.services.ltm.embeddings import embed_batch
     from agentcore.services.pinecone_service_client import async_ingest_via_service
 
@@ -133,7 +133,7 @@ async def process_and_ingest(
             chunk_id = _make_chunk_id(session_id, file_name, i, chunk)
             all_chunks.append(chunk)
             all_documents.append({
-                "text": chunk,
+                "page_content": chunk,
                 "source_file": file_name,
                 "chunk_index": i,
                 "session_id": session_id,
@@ -170,7 +170,7 @@ async def process_and_ingest(
         result = await async_ingest_via_service(
             index_name=index_name,
             namespace=session_id,
-            text_key="text",
+            text_key="page_content",
             documents=all_documents,
             embedding_vectors=all_embeddings,
             auto_create_index=True,
@@ -213,34 +213,62 @@ async def search_documents(
         top_k = settings.doc_qa_top_k
 
     # Generate query embedding
+    logger.info(f"[DocQA] Generating query embedding for: '{query[:80]}...'")
     query_embedding = await embed_single(query)
     if not query_embedding:
         logger.warning("[DocQA] Failed to generate query embedding")
         return []
+    logger.info(f"[DocQA] Query embedding generated (dim={len(query_embedding)})")
 
-    try:
-        result = await async_search_via_service(
-            index_name=index_name,
-            namespace=session_id,
-            text_key="text",
-            query=query,
-            query_embedding=query_embedding,
-            number_of_results=top_k,
-        )
+    # Retry search up to 3 times (Pinecone serverless may need time after first ingestion)
+    for attempt in range(3):
+        try:
+            logger.info(f"[DocQA] Searching Pinecone: index={index_name} namespace={session_id[:12]}... top_k={top_k} (attempt {attempt + 1}/3)")
+            result = await async_search_via_service(
+                index_name=index_name,
+                namespace=session_id,
+                text_key="page_content",
+                query=query,
+                query_embedding=query_embedding,
+                number_of_results=top_k,
+            )
 
-        matches = result.get("matches", [])
-        chunks = []
-        for match in matches:
-            text = match.get("metadata", {}).get("text", "")
-            if text:
-                chunks.append(text)
+            # Pinecone service returns {"results": [...]} not {"matches": [...]}
+            matches = result.get("results", []) or result.get("matches", [])
+            logger.info(f"[DocQA] Pinecone returned {len(matches)} matches")
+            for i, match in enumerate(matches):
+                score = match.get("score", 0)
+                meta = match.get("metadata", {})
+                source = meta.get("source_file", "?")
+                chunk_idx = meta.get("chunk_index", "?")
+                # Text may be in "text" (from search response) or "page_content" (from metadata)
+                text_preview = (match.get("text", "") or meta.get("page_content", "") or meta.get("text", ""))[:80]
+                logger.info(f"[DocQA]   Match {i+1}: score={score:.4f} source={source} chunk={chunk_idx} text='{text_preview}...'")
 
-        logger.info(f"[DocQA] Found {len(chunks)} relevant chunks for query")
-        return chunks
+            chunks = []
+            for match in matches:
+                # Pinecone service returns text in "text" field (popped from metadata by text_key)
+                text = match.get("text", "") or match.get("metadata", {}).get("page_content", "") or match.get("metadata", {}).get("text", "")
+                if text:
+                    chunks.append(text)
 
-    except Exception as e:
-        logger.error(f"[DocQA] Pinecone search failed: {e}")
-        return []
+            if chunks:
+                logger.info(f"[DocQA] Retrieved {len(chunks)} relevant chunks for query (attempt {attempt + 1})")
+                return chunks
+
+            if attempt < 2:
+                import asyncio
+                logger.info(f"[DocQA] Search returned 0 chunks, retrying in 5s (attempt {attempt + 1}/3)")
+                await asyncio.sleep(5)
+
+        except Exception as e:
+            logger.error(f"[DocQA] Pinecone search failed (attempt {attempt + 1}): {e}")
+            if attempt < 2:
+                import asyncio
+                await asyncio.sleep(5)
+
+    logger.warning("[DocQA] Search returned 0 chunks after all retries")
+    return []
 
 
 # ---------------------------------------------------------------------------
@@ -298,11 +326,29 @@ async def cleanup_session_docs(session_id: str) -> None:
 async def session_has_documents(session_id: str) -> bool:
     """Check if a session has any documents ingested in Pinecone.
 
-    Used for follow-up questions without new file uploads.
+    Checks the conversation history for messages with document file attachments.
+    This is faster than querying Pinecone on every request.
     """
-    # A simple way: try a dummy search and see if any results come back
+    from agentcore.services.mibuddy.document_extractor import SUPPORTED_DOC_EXTENSIONS
+    from pathlib import Path
+
     try:
-        chunks = await search_documents("document", session_id, top_k=1)
-        return len(chunks) > 0
+        from agentcore.services.deps import session_scope
+        from agentcore.services.database.models.orch_conversation.crud import orch_get_messages
+
+        async with session_scope() as db:
+            messages = await orch_get_messages(db, session_id=session_id)
+
+        logger.info(f"[DocQA] session_has_documents: checking {len(messages)} messages in session {session_id[:12]}...")
+        for msg in messages:
+            files = getattr(msg, "files", None) or []
+            if files:
+                logger.info(f"[DocQA] session_has_documents: found files={files}")
+            for f in files:
+                ext = Path(str(f)).suffix.lower()
+                if ext in SUPPORTED_DOC_EXTENSIONS:
+                    logger.info(f"[DocQA] session_has_documents: doc found! ext={ext} file={f}")
+                    return True
+        return False
     except Exception:
         return False

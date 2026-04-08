@@ -22,23 +22,40 @@ class Intent(str, Enum):
     GENERAL_CHAT = "general_chat"
     WEB_SEARCH = "web_search"
     IMAGE_GENERATION = "image_generation"
+    KNOWLEDGE_BASE_SEARCH = "knowledge_base_search"
 
 
-INTENT_CLASSIFICATION_PROMPT = """You are an intelligent intent classifier for an AI assistant.
+def _build_classification_prompt() -> str:
+    """Build the intent classification prompt, dynamically including company KB info."""
+    from agentcore.services.deps import get_settings_service
+    settings = get_settings_service().settings
+
+    company_name = settings.company_kb_name
+    company_keywords = settings.company_kb_keywords
+
+    kb_intent = ""
+    if company_name and company_keywords:
+        examples = ", ".join(f'"{kw.strip()}"' for kw in company_keywords.split(",")[:5])
+        kb_intent = f"""
+4. "knowledge_base_search": Use this if the user asks about {company_name} (the company), its policies, internal documents, employees, corporate information, or anything specifically related to {company_name}.
+   Keywords that indicate this intent: {examples}.
+   Examples: "What is {company_name}'s leave policy?", "Who is the CEO of {company_name}?", "{company_name} revenue"."""
+
+    return f"""You are an intelligent intent classifier for an AI assistant.
 Your job is to analyze the user's query and categorize it into EXACTLY one of the following categories:
 
 1. "image_generation": Use this if the user requests to create, generate, draw, render, modify, edit, or transform any image, picture, photo, logo, or diagram.
    Examples: "create an image of a dog", "generate a logo", "draw a sunset", "edit that image", "make the background blue".
 
 2. "web_search": Use this if the user asks for *current* information, real-time data, news, weather, stock prices, sports scores, or explicitly asks to search the web/internet.
-   Examples: "What is the weather in London?", "Latest news on AI", "Who won the game yesterday?", "Search for..."
+   Examples: "What is the weather in London?", "Latest news on AI", "Who won the game yesterday?", "Search for..."{kb_intent}
 
-3. "general_chat": Use this for everything else. This includes general knowledge, coding help, writing, summarization, translation, math, casual conversation, and any question that can be answered from training knowledge.
+{"5" if kb_intent else "3"}. "general_chat": Use this for everything else. This includes general knowledge, coding help, writing, summarization, translation, math, casual conversation, and any question that can be answered from training knowledge.
    Examples: "Write a python script", "Summarize this text", "Translate hello to spanish", "Tell me a joke", "Explain quantum computing".
 
 Output Format:
 You must output ONLY a valid JSON object containing a single key "intent".
-Example: {"intent": "web_search"}
+Example: {{"intent": "web_search"}}
 Do not include any explanation or markdown formatting."""
 
 
@@ -91,8 +108,9 @@ class IntentClassifier:
         """
         try:
             model = self._get_model()
+            prompt = _build_classification_prompt()
             messages = [
-                SystemMessage(content=INTENT_CLASSIFICATION_PROMPT),
+                SystemMessage(content=prompt),
                 HumanMessage(content=query),
             ]
             result = await model.ainvoke(messages)

@@ -20,13 +20,175 @@ import httpx
 logger = logging.getLogger(__name__)
 
 
+def _get_settings():
+    from agentcore.services.deps import get_settings_service
+    return get_settings_service().settings
+
+
+# ---------------------------------------------------------------------------
+# Image prompt safety enhancement
+# ---------------------------------------------------------------------------
+
+def _apply_safety_to_prompt(prompt: str) -> str:
+    """Apply safety rules to an image generation prompt.
+
+    Rules (applied to ALL image providers — DALL-E, Azure DALL-E, Nano Banana):
+    1. Replace real person requests with generic versions
+    2. Block trademarked logo generation
+    """
+    try:
+        company_name = _get_settings().company_kb_name or None
+    except Exception:
+        company_name = None
+
+    safety_prefix = (
+        "IMPORTANT RULES FOR THIS IMAGE: "
+        "If a specific real person, celebrity, or public figure is requested, "
+        "REPLACE them with a generic, non-identifiable person in the same role. "
+        "If a specific company logo or trademarked brand is requested, "
+        "create a generic inspired design instead."
+    )
+
+    if company_name:
+        safety_prefix += (
+            f" If {company_name} logo or branding is requested, "
+            f"do NOT generate it — official logos must come from brand guidelines."
+        )
+
+    return f"{safety_prefix}\n\n{prompt}"
+
+
+# ---------------------------------------------------------------------------
+# Save generated image to storage + DB (for My Images gallery)
+# ---------------------------------------------------------------------------
+
+async def _save_generated_image(
+    image_bytes: bytes,
+    user_id: str,
+    ext: str = "png",
+    prompt: str = "",
+) -> str:
+    """Save a generated image to storage and create a File DB record.
+
+    Returns the local serving URL: /files/images/{user_id}/{filename}
+    """
+    from datetime import datetime, timezone
+    from uuid import uuid4
+
+    from agentcore.services.deps import session_scope
+    from agentcore.services.database.models.file.model import File as UserFile
+    from agentcore.services.mibuddy.docqa_storage import save_file as mibuddy_save, FileCategory
+
+    # Generate filename
+    ts = datetime.now(tz=timezone.utc).strftime("%Y-%m-%d_%H-%M-%S")
+    file_name = f"{ts}_ai_generated_{uuid4().hex[:6]}.{ext}"
+
+    # Save to dedicated MiBuddy container → {user_id}/generated-images/{file_name}
+    file_path = await mibuddy_save(user_id, file_name, image_bytes, category=FileCategory.GENERATED_IMAGES)
+    file_size = len(image_bytes)
+
+    # Create DB record so it appears in My Images gallery
+    # Name must be unique (DB constraint) — use filename which already has timestamp + random hex
+    display_name = file_name
+    try:
+        async with session_scope() as db:
+            new_file = UserFile(
+                id=uuid4(),
+                user_id=user_id,
+                name=display_name,
+                path=file_path,
+                size=file_size,
+            )
+            db.add(new_file)
+            await db.commit()
+        logger.info(f"[ImageGen] Saved image to gallery: {file_path}")
+    except Exception as e:
+        logger.warning(f"[ImageGen] Failed to save image to DB: {e}")
+
+    # URL must be /api/files/images/{user_id}/{filename} (two segments only)
+    # The serving endpoint fallback searches generated-images/ folder automatically
+    return f"/api/files/images/{user_id}/{file_name}"
+
+
+async def _download_and_save_image(
+    image_url: str,
+    user_id: str,
+    prompt: str = "",
+) -> str | None:
+    """Download image from URL and save to storage.
+
+    Returns local serving URL or None if download fails.
+    """
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.get(image_url)
+            resp.raise_for_status()
+            image_bytes = resp.content
+
+        # Detect extension from content type
+        content_type = resp.headers.get("content-type", "image/png")
+        ext = content_type.split("/")[-1].split(";")[0]
+        if ext not in ("png", "jpg", "jpeg", "gif", "webp"):
+            ext = "png"
+
+        return await _save_generated_image(image_bytes, user_id, ext, prompt)
+    except Exception as e:
+        logger.warning(f"[ImageGen] Failed to download/save image: {e}")
+        return None
+
+
+async def _save_image_from_result(result: dict, user_id: str, prompt: str) -> dict:
+    """Extract image from result, save to storage, replace URL with local serving URL.
+
+    Handles both:
+    - DALL-E results: ![Generated Image](https://oaidalleapi...)  → download + save
+    - Nano Banana results: ![...](data:image/png;base64,...)  → decode + save
+    """
+    import re
+
+    response_text = result.get("response_text", "")
+
+    # Find markdown image: ![alt](url)
+    match = re.search(r'!\[([^\]]*)\]\(([^)]+)\)', response_text)
+    if not match:
+        return result
+
+    alt_text = match.group(1)
+    image_src = match.group(2)
+
+    try:
+        if image_src.startswith("data:image/"):
+            # Base64 inline image (Nano Banana)
+            # Format: data:image/png;base64,iVBOR...
+            header, b64_data = image_src.split(",", 1)
+            ext = header.split("/")[1].split(";")[0]
+            image_bytes = base64.b64decode(b64_data)
+            local_url = await _save_generated_image(image_bytes, user_id, ext, prompt)
+        elif image_src.startswith("http"):
+            # Remote URL (DALL-E)
+            local_url = await _download_and_save_image(image_src, user_id, prompt)
+        else:
+            return result
+
+        if local_url:
+            # Replace the URL in response text with local serving URL
+            new_response = response_text.replace(image_src, local_url)
+            result["response_text"] = new_response
+            result["image_path"] = local_url
+
+    except Exception as e:
+        logger.warning(f"[ImageGen] Failed to save image from result: {e}")
+
+    return result
+
+
 # ---------------------------------------------------------------------------
 # Fetch model config from registry
 # ---------------------------------------------------------------------------
 
 def _is_image_capable(config: dict) -> bool:
     """Check if a model config indicates image generation capability."""
-    from agentcore.services.model_capabilities import detect_capabilities
+    from agentcore.services.mibuddy.model_capabilities import detect_capabilities
     caps = detect_capabilities(
         config.get("provider", ""),
         config.get("model_name", ""),
@@ -137,6 +299,7 @@ async def _auto_discover_image_model() -> str | None:
 
 async def _generate_dalle_openai(prompt: str, config: dict) -> dict:
     """Generate image via OpenAI DALL-E API using registry config."""
+    prompt = _apply_safety_to_prompt(prompt)
     api_key = config.get("api_key", "")
     base_url = config.get("base_url", "") or "https://api.openai.com"
     model_name = config.get("model_name", "dall-e-3")
@@ -164,8 +327,6 @@ async def _generate_dalle_openai(prompt: str, config: dict) -> dict:
 
     if image_url:
         text = f"![Generated Image]({image_url})"
-        if revised_prompt:
-            text += f"\n\n*Revised prompt: {revised_prompt}*"
         return {"response_text": text, "model_name": model_name}
 
     return {"response_text": "Image generation completed but no image was returned.", "model_name": model_name}
@@ -177,6 +338,7 @@ async def _generate_dalle_openai(prompt: str, config: dict) -> dict:
 
 async def _generate_dalle_azure(prompt: str, config: dict) -> dict:
     """Generate image via Azure OpenAI DALL-E API using registry config."""
+    prompt = _apply_safety_to_prompt(prompt)
     api_key = config.get("api_key", "")
     provider_config = config.get("provider_config", {})
     endpoint = config.get("base_url", "") or provider_config.get("azure_endpoint", "")
@@ -201,15 +363,11 @@ async def _generate_dalle_azure(prompt: str, config: dict) -> dict:
         data = resp.json()
 
     image_url = ""
-    revised_prompt = ""
     if data.get("data") and len(data["data"]) > 0:
         image_url = data["data"][0].get("url", "")
-        revised_prompt = data["data"][0].get("revised_prompt", "")
 
     if image_url:
         text = f"![Generated Image]({image_url})"
-        if revised_prompt:
-            text += f"\n\n*Revised prompt: {revised_prompt}*"
         return {"response_text": text, "model_name": deployment}
 
     return {"response_text": "Image generation completed but no image was returned.", "model_name": deployment}
@@ -273,11 +431,8 @@ async def _generate_nano_banana(prompt: str, config: dict) -> dict:
         vertex_model = f"projects/{project_id}/locations/{location}/publishers/google/models/{model_name}"
         endpoint = f"https://{location}-aiplatform.googleapis.com/v1/{vertex_model}:generateContent"
 
-        enhanced_prompt = (
-            f"Generate a high-quality image of {prompt}. "
-            "IMPORTANT: If the prompt requests a specific real person, celebrity, or public figure, "
-            "REPLACE them with a generic, non-identifiable person in the same role or setting."
-        )
+        safe_prompt = _apply_safety_to_prompt(prompt)
+        enhanced_prompt = f"Generate a high-quality image of: {safe_prompt}"
 
         body = {"contents": [{"role": "user", "parts": [{"text": enhanced_prompt}]}]}
 
@@ -333,7 +488,7 @@ async def _generate_nano_banana(prompt: str, config: dict) -> dict:
 # Main handler — routes based on registry model config
 # ---------------------------------------------------------------------------
 
-async def handle_image_generation(query: str, model_id: str | None = None) -> dict:
+async def handle_image_generation(query: str, model_id: str | None = None, user_id: str | None = None) -> dict:
     """Generate an image using a model from the registry.
 
     Args:
@@ -344,6 +499,18 @@ async def handle_image_generation(query: str, model_id: str | None = None) -> di
     Returns dict with keys: response_text, model_name
     """
     try:
+        # Rate limiting — check before making the API call
+        if user_id:
+            from agentcore.services.mibuddy.rate_limiter import get_image_rate_limiter
+            limiter = get_image_rate_limiter()
+            allowed, reset_in = limiter.check(user_id)
+            if not allowed:
+                minutes = round((reset_in or 0) / 60, 1)
+                return {
+                    "response_text": f"You have exceeded the image generation limit. Please try again in {minutes} minutes.",
+                    "model_name": "rate-limited",
+                }
+
         config = await _get_image_model_config(model_id)
         provider = (config.get("provider") or "").lower()
         model_name = (config.get("model_name") or "").lower()
@@ -352,18 +519,27 @@ async def handle_image_generation(query: str, model_id: str | None = None) -> di
 
         # Route to correct backend
         if provider == "google" or "gemini" in model_name:
-            return await _generate_nano_banana(query, config)
+            result = await _generate_nano_banana(query, config)
         elif provider == "azure" and "dall" in model_name:
-            return await _generate_dalle_azure(query, config)
+            result = await _generate_dalle_azure(query, config)
         elif provider == "openai" and "dall" in model_name:
-            return await _generate_dalle_openai(query, config)
+            result = await _generate_dalle_openai(query, config)
         elif provider in ("openai", "azure"):
-            # Non-DALL-E model — might be a chat model with image capabilities
-            return await _generate_dalle_openai(query, config) if provider == "openai" else await _generate_dalle_azure(query, config)
+            result = await _generate_dalle_openai(query, config) if provider == "openai" else await _generate_dalle_azure(query, config)
         else:
-            # Unknown provider — try as chat model
             logger.warning(f"Unknown image gen provider '{provider}', falling back to chat model")
-            return await _generate_via_chat_model(query, config)
+            result = await _generate_via_chat_model(query, config)
+
+        # Record successful generation for rate limiting
+        if user_id and result.get("response_text") and "failed" not in result.get("response_text", "").lower():
+            from agentcore.services.mibuddy.rate_limiter import get_image_rate_limiter
+            get_image_rate_limiter().record(user_id)
+
+        # Save generated image to storage + DB for My Images gallery
+        if user_id and result.get("response_text"):
+            result = await _save_image_from_result(result, user_id, query)
+
+        return result
 
     except ValueError:
         raise
@@ -406,12 +582,12 @@ async def _generate_via_chat_model(query: str, config: dict) -> dict:
     return {"response_text": response_text, "model_name": metadata.get("model_name", "image-generation")}
 
 
-async def handle_image_generation_stream(query: str, model_id: str | None = None, event_manager=None) -> dict:
+async def handle_image_generation_stream(query: str, model_id: str | None = None, user_id: str | None = None, event_manager=None) -> dict:
     """Image generation with progress events (not truly streaming)."""
     if event_manager:
         event_manager.on_token(data={"chunk": "Generating image... "})
 
-    result = await handle_image_generation(query, model_id=model_id)
+    result = await handle_image_generation(query, model_id=model_id, user_id=user_id)
 
     if event_manager:
         event_manager.on_token(data={"chunk": result["response_text"]})

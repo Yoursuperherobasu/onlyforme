@@ -345,6 +345,26 @@ class Settings(BaseSettings):
     - provider=openai + dall-e model → OpenAI DALL-E API
     - provider=azure + dall-e model  → Azure OpenAI DALL-E API
     - provider=google / gemini model → Nano Banana (Vertex AI Gemini)"""
+    image_gen_rate_limit: int = 10
+    """Maximum image generation requests per user per time window."""
+    image_gen_rate_window: int = 3600
+    """Time window in seconds for image generation rate limiting (default: 1 hour)."""
+
+    # Company Knowledge Base (Azure AI Agent — same as MiBuddy Motherson search)
+    azure_ai_project_endpoint: str = ""
+    """Azure AI Project endpoint (e.g. https://resource.services.ai.azure.com/api/projects/name)."""
+    azure_ai_project_tenant_id: str = ""
+    """Azure AD tenant ID for Azure AI Project authentication."""
+    azure_ai_project_client_id: str = ""
+    """Azure AD client/app ID for Azure AI Project authentication."""
+    azure_ai_project_client_secret: str = ""
+    """Azure AD client secret for Azure AI Project authentication (from Key Vault)."""
+    azure_ai_project_agent_id: str = ""
+    """Azure AI Agent ID that has the company knowledge base connected."""
+    company_kb_keywords: str = ""
+    """Comma-separated keywords for company KB detection (e.g. 'motherson,samvardhana,sumi,wiring')."""
+    company_kb_name: str = ""
+    """Company name for display and intent classification (e.g. 'Motherson')."""
 
     # Web Search (Gemini)
     gemini_api_key: str = ""
@@ -375,6 +395,9 @@ class Settings(BaseSettings):
     # Document Q&A (Pinecone RAG for orchestrator model chat)
     doc_qa_pinecone_index: str = "agentcore-doc-qa"
     """Pinecone index name for document Q&A. Auto-created on first use."""
+    mibuddy_blob_container: str = "agentcore-mibuddy"
+    """Dedicated Azure Blob container for all MiBuddy operations.
+    Organizes files per user: {user_id}/uploads/, {user_id}/generated-images/, {user_id}/chat-images/"""
     doc_qa_chunk_size: int = 1000
     """Chunk size in characters for document splitting."""
     doc_qa_chunk_overlap: int = 200
