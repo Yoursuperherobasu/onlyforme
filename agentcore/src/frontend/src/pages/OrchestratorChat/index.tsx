@@ -1,6 +1,6 @@
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
-import { Send, Sparkles, ChevronDown, Plus, MessageSquare, PanelLeftClose, PanelLeft, User, Loader2, Trash2, Check, ImagePlus, X, Clock, Search, Image, Archive, ChevronRight, Globe, BookOpen, Headphones, Info, HelpCircle, Mic, AudioLines, FileUp, Paintbrush, Lightbulb, Upload, MoreVertical, Folder, ArrowLeft, File, Shield, CheckCircle2, SquarePen, Mail, Download } from "lucide-react";
+import { Send, Sparkles, ChevronDown, Plus, MessageSquare, PanelLeftClose, PanelLeft, User, Loader2, Trash2, Check, ImagePlus, X, Clock, Search, Image, Archive, ChevronRight, Globe, BookOpen, Headphones, Info, HelpCircle, Mic, AudioLines, FileUp, Paintbrush, Lightbulb, Upload, MoreVertical, Folder, ArrowLeft, File, FileText, Shield, CheckCircle2, SquarePen, Mail, Download } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import {
   useGetOrchAgents,
@@ -50,6 +50,7 @@ interface Message {
   contentBlocks?: ContentBlock[];
   blocksState?: string;
   files?: string[];
+  reasoningContent?: string;
   // HITL (Human-in-the-Loop) approval fields
   hitl?: boolean;
   hitlActions?: string[];
@@ -130,6 +131,12 @@ function mapApiMessages(apiMessages: OrchMessageResponse[]): Message[] {
       ? props.actions
       : extractHitlActions(m.text || "");
 
+    // Restore content_blocks (reasoning / tool-use steps) from persisted data.
+    // During streaming these arrive via SSE; on reload they come from the API.
+    const toolBlocks = (m.content_blocks ?? []).filter((block: any) =>
+      block.contents?.some((c: any) => c.type === "tool_use"),
+    );
+
     return {
       id: m.id,
       sender: m.sender as "user" | "agent" | "system",
@@ -140,6 +147,8 @@ function mapApiMessages(apiMessages: OrchMessageResponse[]): Message[] {
         : "",
       category: m.category || "message",
       files: m.files && m.files.length > 0 ? m.files : undefined,
+      contentBlocks: toolBlocks.length > 0 ? toolBlocks : undefined,
+      blocksState: toolBlocks.length > 0 ? "complete" : undefined,
       // Restore HITL metadata from persisted properties.
       // Fallback to text inference because some interrupted rows may miss fields.
       hitl: isHitl,
@@ -149,6 +158,7 @@ function mapApiMessages(apiMessages: OrchMessageResponse[]): Message[] {
       hitlIsDeployed: isHitl
         ? (props.is_deployed_run !== undefined ? !!props.is_deployed_run : true)
         : undefined,
+      reasoningContent: (m as any).reasoning_content || undefined,
     };
   });
 }
@@ -197,6 +207,7 @@ interface AiModelOption {
   name: string;
   icon: string;        // color for the dot/icon
   group: "main" | "more";
+  capabilities?: Record<string, any>;
 }
 
 // Provider → color mapping for model dots
@@ -422,7 +433,13 @@ export default function AgentOrchestrator() {
   /* ------------------ FILE UPLOAD ------------------ */
 
   const { mutate: uploadFileMutate } = usePostUploadFileV2();
-  const ALLOWED_EXTENSIONS = ["png", "jpg", "jpeg"];
+  const ALLOWED_EXTENSIONS = [
+    "png", "jpg", "jpeg",                                    // Images
+    "pdf", "docx", "pptx", "xlsx", "xls",                   // Documents
+    "txt", "md", "csv",                                      // Text
+    "py", "js", "ts", "java", "cpp", "c", "cs", "go",       // Code
+    "json", "html", "css", "php", "rb", "sh", "tex",        // More code/markup
+  ];
 
   const uploadFile = (file: File) => {
     const ext = file.name.split(".").pop()?.toLowerCase();
@@ -570,6 +587,7 @@ export default function AgentOrchestrator() {
           name: m.display_name || m.model_name,
           icon: providerColor(m.provider),
           group: (idx < 5 ? "main" : "more") as "main" | "more",
+          capabilities: m.capabilities || undefined,
         }));
         setAiModels(models);
       })
@@ -990,6 +1008,7 @@ export default function AgentOrchestrator() {
     );
 
     let accumulated = "";
+    let accumulatedReasoning = "";
     let rafHandle: number | null = null;
     let pendingContent: string | null = null;
     let hitlPauseReceived = false;
@@ -1003,12 +1022,13 @@ export default function AgentOrchestrator() {
       rafHandle = null;
       if (pendingContent === null) return;
       const content = pendingContent;
+      const reasoning = accumulatedReasoning || undefined;
       pendingContent = null;
       flushSync(() => {
         setStreamingAgentName("");
         setMessages((prev) =>
           prev.map((m) =>
-            m.id === agentMsgId ? { ...m, content } : m,
+            m.id === agentMsgId ? { ...m, content, reasoningContent: reasoning } : m,
           ),
         );
       });
@@ -1023,11 +1043,12 @@ export default function AgentOrchestrator() {
         // For final/error updates, flush synchronously
         if (rafHandle !== null) { cancelAnimationFrame(rafHandle); rafHandle = null; }
         pendingContent = null;
+        const reasoning = accumulatedReasoning || undefined;
         flushSync(() => {
           setStreamingAgentName("");
           setMessages((prev) =>
             prev.map((m) =>
-              m.id === agentMsgId ? { ...m, content } : m,
+              m.id === agentMsgId ? { ...m, content, reasoningContent: reasoning } : m,
             ),
           );
         });
@@ -1054,6 +1075,11 @@ export default function AgentOrchestrator() {
     } else if (noAgentMode && selectedAiModel) {
       // Model mode: send model_id (UUID from registry)
       requestBody.model_id = selectedAiModel;
+    }
+
+    // Send COT reasoning preference
+    if (cotReasoning) {
+      requestBody.enable_reasoning = true;
     }
 
     if (filePaths.length > 0) {
@@ -1148,12 +1174,22 @@ export default function AgentOrchestrator() {
           } else if (eventType === "token" && data?.chunk) {
             // Progressive streaming — append each token chunk (throttled)
             receivedToken = true;
-            accumulated += data.chunk;
-            updateAgentMsg(accumulated);
+            if (data.type === "reasoning") {
+              // CoT reasoning chunk — accumulate separately
+              accumulatedReasoning += data.chunk;
+              updateAgentMsg(accumulated); // trigger re-render to show reasoning
+            } else {
+              accumulated += data.chunk;
+              updateAgentMsg(accumulated);
+            }
           } else if (eventType === "error") {
             updateAgentMsg(data?.text || "An error occurred", true);
             return false;
           } else if (eventType === "end") {
+            // Capture reasoning from end event if provided
+            if (data?.reasoning_content) {
+              accumulatedReasoning = data.reasoning_content;
+            }
             // End event carries the final complete text — flush immediately.
             // BUT: if we received a HITL pause, do NOT overwrite the HITL
             // message with agent_text — the action buttons must stay visible.
@@ -1626,22 +1662,39 @@ export default function AgentOrchestrator() {
             )}
           </button>
           <div className="my-1 h-px bg-border" />
+          {(() => {
+            const selectedModel = noAgentMode && selectedAiModel ? aiModels.find((m) => m.id === selectedAiModel) : null;
+            // supports_thinking = model can show visible reasoning/thinking text
+            // reasoning = model reasons internally (but may not show it, e.g. OpenAI o1/o3)
+            const modelSupportsReasoning = !!selectedModel?.capabilities?.supports_thinking;
+            const cotDisabled = noAgentMode && !modelSupportsReasoning;
+            return (
           <button
-            onClick={() => setCotReasoning(!cotReasoning)}
-            className="flex w-full items-center justify-between rounded-lg px-3 py-2.5 text-left text-sm text-foreground hover:bg-accent"
+            onClick={() => { if (!cotDisabled) setCotReasoning(!cotReasoning); }}
+            className={`flex w-full items-center justify-between rounded-lg px-3 py-2.5 text-left text-sm ${
+              cotDisabled ? "cursor-not-allowed text-muted-foreground/50" : "text-foreground hover:bg-accent"
+            }`}
+            title={cotDisabled ? "Selected model does not support reasoning" : undefined}
           >
             <div className="flex items-center gap-3">
-              <Lightbulb size={16} className="text-muted-foreground" />
+              <Lightbulb size={16} className={cotDisabled ? "text-muted-foreground/30" : "text-muted-foreground"} />
               <span>{t("COT reasoning")}</span>
+              {cotDisabled && noAgentMode && selectedModel && (
+                <span className="text-xxs text-muted-foreground/50">({t("not supported")})</span>
+              )}
             </div>
             <div
-              className={`relative h-5 w-9 rounded-full transition-colors ${cotReasoning ? "bg-primary" : "bg-muted-foreground/30"}`}
+              className={`relative h-5 w-9 rounded-full transition-colors ${
+                cotDisabled ? "bg-muted-foreground/10" : cotReasoning ? "bg-primary" : "bg-muted-foreground/30"
+              }`}
             >
               <div
                 className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow-sm transition-transform ${cotReasoning ? "translate-x-4" : "translate-x-0.5"}`}
               />
             </div>
           </button>
+            );
+          })()}
         </div>
       )}
 
@@ -1832,7 +1885,25 @@ export default function AgentOrchestrator() {
                       className={`h-4 w-4 shrink-0 rounded-full ${!noAgentMode ? "opacity-30" : ""}`}
                       style={{ background: model.icon }}
                     />
-                    <span className="flex-1">{model.name}</span>
+                    <span className="flex-1">
+                      {model.name}
+                      {noAgentMode && model.capabilities && (
+                        <span className="ml-1.5 inline-flex gap-1">
+                          {model.capabilities.supports_thinking && (
+                            <span className="rounded bg-purple-100 px-1 text-[9px] font-medium text-purple-600 dark:bg-purple-900/30 dark:text-purple-400" title="Supports visible reasoning/thinking">COT</span>
+                          )}
+                          {model.capabilities.web_search && (
+                            <span className="rounded bg-green-100 px-1 text-[9px] font-medium text-green-600 dark:bg-green-900/30 dark:text-green-400" title="Web search">WEB</span>
+                          )}
+                          {model.capabilities.image_generation && (
+                            <span className="rounded bg-blue-100 px-1 text-[9px] font-medium text-blue-600 dark:bg-blue-900/30 dark:text-blue-400" title="Image generation">IMG</span>
+                          )}
+                          {model.capabilities.supports_vision && (
+                            <span className="rounded bg-amber-100 px-1 text-[9px] font-medium text-amber-600 dark:bg-amber-900/30 dark:text-amber-400" title="Vision/image analysis">VIS</span>
+                          )}
+                        </span>
+                      )}
+                    </span>
                     {noAgentMode && selectedAiModel === model.id && (
                       <Check size={14} className="text-primary" />
                     )}
@@ -1957,19 +2028,46 @@ export default function AgentOrchestrator() {
                         {highlightMentions(msg.content)}
                         {msg.files && msg.files.length > 0 && (
                           <div className="mt-2 flex flex-wrap gap-2">
-                            {msg.files.map((filePath, idx) => (
-                              <img
-                                key={idx}
-                                src={`${BASE_URL_API}files/images/${filePath}`}
-                                alt="uploaded"
-                                className="max-h-48 max-w-xs rounded-lg border border-border object-contain"
-                              />
-                            ))}
+                            {msg.files.map((filePath, idx) => {
+                              const ext = filePath.split(".").pop()?.toLowerCase() || "";
+                              const isImage = ["png", "jpg", "jpeg", "gif", "webp", "bmp"].includes(ext);
+                              const fileName = filePath.split("/").pop() || filePath;
+                              return isImage ? (
+                                <img
+                                  key={idx}
+                                  src={`${BASE_URL_API}files/images/${filePath}`}
+                                  alt="uploaded"
+                                  className="max-h-48 max-w-xs rounded-lg border border-border object-contain"
+                                />
+                              ) : (
+                                <div
+                                  key={idx}
+                                  className="flex items-center gap-2 rounded-lg border border-border bg-muted/50 px-3 py-2 text-xs text-muted-foreground"
+                                >
+                                  <FileText size={16} />
+                                  <span className="max-w-[200px] truncate" title={fileName}>{fileName}</span>
+                                </div>
+                              );
+                            })}
                           </div>
                         )}
                       </div>
                     ) : (
                       <div className="text-[15px] leading-relaxed text-foreground/80">
+                        {/* CoT Reasoning (collapsible) */}
+                        {cotReasoning && msg.reasoningContent && (
+                          <details className="mb-3 rounded-lg border border-border bg-muted/30 p-3" open={isSending && msg.id === streamingMsgId}>
+                            <summary className="cursor-pointer text-xs font-medium text-muted-foreground hover:text-foreground">
+                              💭 {t("Thinking")}
+                              {isSending && msg.id === streamingMsgId && (
+                                <span className="ml-2 text-xs text-muted-foreground/60">({t("streaming...")})</span>
+                              )}
+                            </summary>
+                            <div className="mt-2 whitespace-pre-wrap text-xs leading-relaxed text-muted-foreground">
+                              {msg.reasoningContent}
+                            </div>
+                          </details>
+                        )}
                         {msg.contentBlocks && msg.contentBlocks.length > 0 && (
                           <ContentBlockDisplay
                             contentBlocks={msg.contentBlocks}
@@ -2139,8 +2237,12 @@ export default function AgentOrchestrator() {
                         <Loader2 size={14} className="animate-spin text-muted-foreground" />
                       ) : f.error ? (
                         <span className="text-destructive">Failed</span>
-                      ) : (
+                      ) : ["png", "jpg", "jpeg", "gif", "webp", "bmp"].includes(
+                          f.file.name.split(".").pop()?.toLowerCase() || ""
+                        ) ? (
                         <ImagePlus size={14} className="text-muted-foreground" />
+                      ) : (
+                        <FileText size={14} className="text-muted-foreground" />
                       )}
                       <span className="max-w-[120px] truncate">{f.file.name}</span>
                       <button
@@ -2208,7 +2310,7 @@ export default function AgentOrchestrator() {
                 <input
                   ref={fileInputRef}
                   type="file"
-                  accept=".png,.jpg,.jpeg"
+                  accept=".png,.jpg,.jpeg,.pdf,.docx,.pptx,.xlsx,.xls,.txt,.md,.csv,.py,.js,.ts,.java,.cpp,.c,.cs,.go,.json,.html,.css,.php,.rb,.sh,.tex"
                   className="hidden"
                   onChange={handleFileChange}
                 />

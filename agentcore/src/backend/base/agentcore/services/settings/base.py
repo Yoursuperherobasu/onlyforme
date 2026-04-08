@@ -340,7 +340,11 @@ class Settings(BaseSettings):
     """UUID of the registry model used when no model and no agent is selected and intent is general_chat.
     If empty, requests without a model or agent will return 400."""
     image_gen_model_id: str = ""
-    """UUID of the registry model used for image generation when intent is image_generation."""
+    """UUID of the registry model for image generation (DALL-E or Gemini).
+    The handler auto-detects the provider from the registry entry:
+    - provider=openai + dall-e model → OpenAI DALL-E API
+    - provider=azure + dall-e model  → Azure OpenAI DALL-E API
+    - provider=google / gemini model → Nano Banana (Vertex AI Gemini)"""
 
     # Web Search (Gemini)
     gemini_api_key: str = ""
@@ -367,6 +371,16 @@ class Settings(BaseSettings):
     When set, Pinecone vector store operations are proxied through the microservice."""
     pinecone_service_api_key: str = ""
     """API key for authenticating with the Pinecone microservice (sent as x-api-key header)."""
+
+    # Document Q&A (Pinecone RAG for orchestrator model chat)
+    doc_qa_pinecone_index: str = "agentcore-doc-qa"
+    """Pinecone index name for document Q&A. Auto-created on first use."""
+    doc_qa_chunk_size: int = 1000
+    """Chunk size in characters for document splitting."""
+    doc_qa_chunk_overlap: int = 200
+    """Overlap between chunks in characters."""
+    doc_qa_top_k: int = 5
+    """Number of chunks to retrieve per query."""
 
     # Azure AI Search (direct SDK — no microservice needed)
     azure_ai_search_endpoint: str = ""

@@ -16,6 +16,9 @@ export interface ModelCapabilities {
   supports_thinking?: boolean;
   supports_vision?: boolean;
   supports_tool_calling?: boolean;
+  web_search?: boolean;
+  image_generation?: boolean;
+  reasoning?: boolean;
   context_window?: number;
 }
 

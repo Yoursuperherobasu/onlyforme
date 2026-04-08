@@ -97,9 +97,25 @@ class IntentClassifier:
             ]
             result = await model.ainvoke(messages)
             content = result.content if hasattr(result, "content") else str(result)
+            logger.info(f"Intent classifier raw response: {content!r}")
 
-            parsed = json.loads(content)
+            # Robust JSON extraction — handle markdown code blocks or extra text
+            json_str = content.strip()
+            if "```" in json_str:
+                # Extract JSON from markdown code block
+                json_str = json_str.split("```")[1]
+                if json_str.startswith("json"):
+                    json_str = json_str[4:]
+                json_str = json_str.strip()
+            elif "{" in json_str:
+                # Extract first JSON object
+                start = json_str.index("{")
+                end = json_str.rindex("}") + 1
+                json_str = json_str[start:end]
+
+            parsed = json.loads(json_str)
             intent_str = parsed.get("intent", "general_chat")
+            logger.info(f"Intent classified: '{query[:60]}' -> {intent_str}")
 
             try:
                 return Intent(intent_str)
@@ -107,9 +123,11 @@ class IntentClassifier:
                 logger.warning(f"Unknown intent '{intent_str}' from classifier, defaulting to general_chat")
                 return Intent.GENERAL_CHAT
 
-        except ValueError:
-            # No classifier model configured — skip classification
-            logger.info("Intent classifier not configured, defaulting to general_chat")
+        except ValueError as e:
+            if "not configured" in str(e):
+                logger.info("Intent classifier not configured, defaulting to general_chat")
+            else:
+                logger.error(f"Intent classification ValueError: {e}")
             return Intent.GENERAL_CHAT
         except Exception as e:
             logger.error(f"Intent classification failed: {e}")

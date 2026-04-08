@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+from pathlib import Path
 from contextvars import ContextVar
 from datetime import datetime, timezone
 from typing import Any
@@ -145,6 +146,7 @@ class OrchChatRequest(BaseModel):
     version_number: int | None = None
     env: str | None = None  # "uat" or "prod"
     files: list[str] | None = None
+    enable_reasoning: bool = False  # enable CoT reasoning if model supports it
 
 
 class OrchMessageResponse(BaseModel):
@@ -409,6 +411,7 @@ async def _orch_call_run_api(
     # --- Streaming: forward SSE events to event_manager, collect final text ---
     final_text = ""
     was_interrupted = False
+    collected_content_blocks: list = []
     async with httpx.AsyncClient(timeout=300, verify=False) as client:
         async with client.stream("POST", url, json=body, headers=headers) as resp:
             logger.info(f"[ORCH] stream started: status={resp.status_code}")
@@ -427,6 +430,10 @@ async def _orch_call_run_api(
                     event_manager.on_token(data=edata)
                 elif etype == "add_message" and event_manager:
                     event_manager.on_message(data=edata)
+                    # Collect content_blocks from add_message events so they
+                    # can be persisted to the database for reload/history.
+                    if isinstance(edata, dict) and edata.get("content_blocks"):
+                        collected_content_blocks = edata["content_blocks"]
                 elif etype == "end":
                     result = edata.get("result", edata)
                     was_interrupted = _is_interrupted_payload(result)
@@ -435,7 +442,7 @@ async def _orch_call_run_api(
                 elif etype == "error":
                     raise ValueError(edata.get("error", "Stream error from /run"))
 
-    return final_text, was_interrupted, []
+    return final_text, was_interrupted, collected_content_blocks
 
 
 async def _lookup_agent_project(session: DbSession, agent_id: UUID) -> tuple[str | None, str | None]:
@@ -778,11 +785,43 @@ async def _route_request(
     """Determine routing mode for a chat request.
 
     Returns dict with:
-      mode: "agent" | "model_direct" | "web_search" | "image_gen"
+      mode: "agent" | "model_direct" | "web_search" | "image_gen" | "document_qa"
       agent_id, deployment_id, deployment: for agent mode
       model_id: for model_direct mode
       intent: classified intent string
+      doc_files: list of document file paths (for document_qa mode)
+      image_files: list of image file paths
     """
+    from agentcore.services.document_extractor import IMAGE_EXTENSIONS, SUPPORTED_DOC_EXTENSIONS
+
+    # Priority 0: Document files attached → document_qa mode (highest priority)
+    if body.files:
+        doc_files = [
+            f for f in body.files
+            if Path(f).suffix.lower() in SUPPORTED_DOC_EXTENSIONS
+        ]
+        image_files = [
+            f for f in body.files
+            if Path(f).suffix.lower() in IMAGE_EXTENSIONS
+        ]
+        if doc_files:
+            model_id = body.model_id
+            if not model_id:
+                settings = get_settings_service()
+                default_id = settings.settings.default_chat_model_id
+                if default_id:
+                    model_id = UUID(default_id)
+            return {
+                "mode": "document_qa",
+                "agent_id": None,
+                "deployment_id": None,
+                "deployment": None,
+                "model_id": model_id,
+                "intent": "document_processing",
+                "doc_files": doc_files,
+                "image_files": image_files,
+            }
+
     # Mode 1: Explicit @agent mention
     if body.agent_id or body.deployment_id:
         agent_id, deployment_id, deployment = await _resolve_agent(session, current_user, body)
@@ -808,7 +847,7 @@ async def _route_request(
             "agent_id": None,
             "deployment_id": None,
             "deployment": None,
-            "model_id": None,
+            "model_id": body.model_id,
             "intent": intent.value,
         }
 
@@ -818,7 +857,7 @@ async def _route_request(
             "agent_id": None,
             "deployment_id": None,
             "deployment": None,
-            "model_id": None,
+            "model_id": body.model_id,
             "intent": intent.value,
         }
 
@@ -1024,6 +1063,7 @@ async def orch_chat(
                 input_value=body.input_value,
                 session_id=body.session_id,
                 files=body.files,
+                enable_reasoning=body.enable_reasoning,
             )
             response_text = result["response_text"]
             reasoning_content = result.get("reasoning_content")
@@ -1039,10 +1079,40 @@ async def orch_chat(
 
         elif mode == "image_gen":
             from agentcore.services.image_gen_handler import handle_image_generation
-            result = await handle_image_generation(body.input_value)
+            result = await handle_image_generation(
+                body.input_value,
+                model_id=str(resp_model_id) if resp_model_id else None,
+            )
             response_text = result["response_text"]
             resp_model_name = result.get("model_name", "image-generation")
             sender_name = "Image Generator"
+
+        elif mode == "document_qa":
+            from agentcore.services.document_processor import process_and_ingest, search_documents, build_doc_qa_prompt
+            from agentcore.services.direct_model_chat import direct_model_chat
+
+            # Ingest new documents if attached
+            doc_files = routing.get("doc_files", [])
+            if doc_files:
+                count = await process_and_ingest(doc_files, body.session_id)
+                logger.info(f"[ORCH] Ingested {count} chunks from {len(doc_files)} files")
+
+            # Search for relevant chunks
+            chunks = await search_documents(body.input_value, body.session_id)
+
+            # Build enriched prompt and call model
+            enriched_prompt = build_doc_qa_prompt(body.input_value, chunks)
+            if not resp_model_id:
+                raise HTTPException(status_code=400, detail="No model selected for document Q&A.")
+            result = await direct_model_chat(
+                model_id=str(resp_model_id),
+                input_value=enriched_prompt,
+                session_id=body.session_id,
+            )
+            response_text = result["response_text"]
+            reasoning_content = result.get("reasoning_content")
+            resp_model_name = result.get("model_name", "")
+            sender_name = await _get_model_display_name(session, resp_model_id) if resp_model_id else "Document Q&A"
 
         if not response_text or not response_text.strip():
             response_text = "No response was generated. Please try again."
@@ -1120,7 +1190,7 @@ async def orch_chat_stream(
     logger.info(f"[ORCH-STREAM] Routing mode={mode} intent={routing.get('intent')} session={body.session_id}")
 
     # -- 2. For non-agent modes, use direct streaming --------------------
-    if mode in ("model_direct", "web_search", "image_gen"):
+    if mode in ("model_direct", "web_search", "image_gen", "document_qa"):
         # Persist user message
         stream_msg_ts = datetime.now(timezone.utc).replace(tzinfo=None)
         user_msg = OrchConversationTable(
@@ -1141,7 +1211,7 @@ async def orch_chat_stream(
 
         resp_model_id = routing.get("model_id")
         sender_name = "Assistant"
-        if mode == "model_direct" and resp_model_id:
+        if mode in ("model_direct", "document_qa") and resp_model_id:
             sender_name = await _get_model_display_name(session, resp_model_id)
         elif mode == "web_search":
             sender_name = "Web Search"
@@ -1153,21 +1223,43 @@ async def orch_chat_stream(
         _input_value = body.input_value
         _session_id = body.session_id
         _user_id = current_user.id
+        _enable_reasoning = body.enable_reasoning
         _sender_name = sender_name
         _resp_model_id = resp_model_id
         _mode = mode
         _files = body.files
+        _doc_files = routing.get("doc_files", [])
 
         async def _run_direct_and_persist():
             try:
                 result = {}
-                if _mode == "model_direct":
+                if _mode == "document_qa":
+                    from agentcore.services.document_processor import process_and_ingest, search_documents, build_doc_qa_prompt
+                    from agentcore.services.direct_model_chat import direct_model_chat_stream
+
+                    # Ingest new documents
+                    if _doc_files:
+                        count = await process_and_ingest(_doc_files, _session_id)
+                        logger.info(f"[ORCH-STREAM] Ingested {count} chunks from {len(_doc_files)} files")
+
+                    # Search + build enriched prompt
+                    chunks = await search_documents(_input_value, _session_id)
+                    enriched_prompt = build_doc_qa_prompt(_input_value, chunks)
+
+                    result = await direct_model_chat_stream(
+                        model_id=str(_resp_model_id),
+                        input_value=enriched_prompt,
+                        session_id=_session_id,
+                        event_manager=event_manager,
+                    )
+                elif _mode == "model_direct":
                     from agentcore.services.direct_model_chat import direct_model_chat_stream
                     result = await direct_model_chat_stream(
                         model_id=str(_resp_model_id),
                         input_value=_input_value,
                         session_id=_session_id,
                         files=_files,
+                        enable_reasoning=_enable_reasoning,
                         event_manager=event_manager,
                     )
                 elif _mode == "web_search":
@@ -1180,6 +1272,7 @@ async def orch_chat_stream(
                     from agentcore.services.image_gen_handler import handle_image_generation_stream
                     result = await handle_image_generation_stream(
                         _input_value,
+                        model_id=str(_resp_model_id) if _resp_model_id else None,
                         event_manager=event_manager,
                     )
 
@@ -1574,6 +1667,12 @@ async def delete_orch_session(
     try:
         await orch_delete_session(session, session_id, user_id=current_user.id)
         await orch_delete_session_transactions(session, session_id)
+        # Cleanup document Q&A vectors from Pinecone
+        try:
+            from agentcore.services.document_processor import cleanup_session_docs
+            await cleanup_session_docs(session_id)
+        except Exception as cleanup_err:
+            logger.warning(f"[DocQA] Cleanup failed for session {session_id}: {cleanup_err}")
     except Exception as e:
         logger.error(f"Error deleting orch session: {e}")
         raise HTTPException(status_code=500, detail=str(e)) from e
@@ -1678,6 +1777,9 @@ async def get_active_agent(
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
+from agentcore.services.model_capabilities import detect_capabilities
+
+
 # ---------------------------------------------------------------------------
 # List available models for orchestrator chat
 # ---------------------------------------------------------------------------
@@ -1723,14 +1825,18 @@ async def list_orch_models(
                     approval = str(row.get("approval_status", "approved")).lower()
                     if approval != "approved":
                         continue
+                    provider = row.get("provider", "")
+                    model_name_val = row.get("model_name", "")
+                    explicit_caps = row.get("capabilities")
+                    merged_caps = detect_capabilities(provider, model_name_val, explicit_caps)
                     result.append(
                         OrchModelSummary(
                             model_id=UUID(str(model_id)),
-                            display_name=row.get("display_name", row.get("model_name", "")),
-                            provider=row.get("provider", ""),
-                            model_name=row.get("model_name", ""),
+                            display_name=row.get("display_name", model_name_val),
+                            provider=provider,
+                            model_name=model_name_val,
                             model_type=row.get("model_type", "llm"),
-                            capabilities=row.get("capabilities"),
+                            capabilities=merged_caps,
                         )
                     )
                 except Exception:
@@ -1756,7 +1862,7 @@ async def list_orch_models(
                 provider=row.provider,
                 model_name=row.model_name,
                 model_type=row.model_type,
-                capabilities=row.capabilities,
+                capabilities=detect_capabilities(row.provider, row.model_name, row.capabilities),
             )
             for row in rows
         ]
