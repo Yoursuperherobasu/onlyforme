@@ -488,18 +488,53 @@ async def _generate_nano_banana(prompt: str, config: dict) -> dict:
 # Main handler — routes based on registry model config
 # ---------------------------------------------------------------------------
 
+async def _find_image_model_by_name() -> dict | None:
+    """Find image model in registry by display name (IMAGE_GEN_MODEL_NAME) or auto-discover."""
+    settings = _get_settings()
+    model_name_setting = settings.image_gen_model_name
+
+    from agentcore.services.model_service_client import fetch_registry_models_async
+
+    try:
+        all_models = await fetch_registry_models_async(active_only=True)
+    except Exception as e:
+        logger.warning(f"[ImageGen] Failed to fetch registry models: {e}")
+        return None
+
+    # Search by display name or model name
+    if model_name_setting:
+        name_lower = model_name_setting.lower()
+        for m in all_models:
+            display = (m.get("display_name") or "").lower()
+            model_n = (m.get("model_name") or "").lower()
+            if name_lower == display or name_lower == model_n or name_lower in display:
+                logger.info(f"[ImageGen] Found model by name '{model_name_setting}': id={m.get('id')}")
+                return m
+
+    # Auto-discover: find first image-capable model
+    for m in all_models:
+        name = (m.get("model_name") or "").lower()
+        display = (m.get("display_name") or "").lower()
+        caps = m.get("capabilities") or {}
+        if caps.get("image_generation"):
+            return m
+        if any(kw in name or kw in display for kw in ("dall-e", "dalle", "nano-banana", "gemini-image", "flash-image")):
+            return m
+
+    return None
+
+
 async def handle_image_generation(query: str, model_id: str | None = None, user_id: str | None = None) -> dict:
     """Generate an image using a model from the registry.
 
-    Args:
-        query: The user's image generation prompt.
-        model_id: UUID from the user's dropdown selection. Falls back to
-                  IMAGE_GEN_MODEL_ID setting, then auto-discovers from registry.
+    Finds the image model by:
+    1. IMAGE_GEN_MODEL_NAME setting (display name match in registry)
+    2. Auto-discover (first model with image_generation capability)
 
     Returns dict with keys: response_text, model_name
     """
     try:
-        # Rate limiting — check before making the API call
+        # Rate limiting
         if user_id:
             from agentcore.services.mibuddy.rate_limiter import get_image_rate_limiter
             limiter = get_image_rate_limiter()
@@ -511,14 +546,26 @@ async def handle_image_generation(query: str, model_id: str | None = None, user_
                     "model_name": "rate-limited",
                 }
 
-        config = await _get_image_model_config(model_id)
+        # Find image model from registry
+        registry_model = await _find_image_model_by_name()
+        if not registry_model:
+            return {
+                "response_text": "No image generation model found in registry. Register a DALL-E or Nano Banana model.",
+                "model_name": "not-configured",
+            }
+
+        model_registry_id = str(registry_model.get("id", ""))
+        logger.info(f"[ImageGen] Using registry model: {registry_model.get('display_name')} (id={model_registry_id})")
+
+        # Fetch decrypted config from model service
+        config = await _fetch_model_config(model_registry_id)
         provider = (config.get("provider") or "").lower()
         model_name = (config.get("model_name") or "").lower()
 
-        logger.info(f"Image generation: provider={provider}, model={model_name}")
+        logger.info(f"[ImageGen] Provider={provider}, model={model_name}")
 
         # Route to correct backend
-        if provider == "google" or "gemini" in model_name:
+        if provider in ("google", "google_vertex") or "gemini" in model_name:
             result = await _generate_nano_banana(query, config)
         elif provider == "azure" and "dall" in model_name:
             result = await _generate_dalle_azure(query, config)
@@ -527,8 +574,7 @@ async def handle_image_generation(query: str, model_id: str | None = None, user_
         elif provider in ("openai", "azure"):
             result = await _generate_dalle_openai(query, config) if provider == "openai" else await _generate_dalle_azure(query, config)
         else:
-            logger.warning(f"Unknown image gen provider '{provider}', falling back to chat model")
-            result = await _generate_via_chat_model(query, config)
+            result = {"response_text": f"Unsupported image model provider: {provider}", "model_name": "unknown"}
 
         # Record successful generation for rate limiting
         if user_id and result.get("response_text") and "failed" not in result.get("response_text", "").lower():
@@ -541,18 +587,8 @@ async def handle_image_generation(query: str, model_id: str | None = None, user_
 
         return result
 
-    except ValueError:
-        raise
-    except httpx.HTTPStatusError as e:
-        detail = ""
-        try:
-            detail = e.response.json().get("error", {}).get("message", str(e))
-        except Exception:
-            detail = str(e)
-        logger.error(f"Image generation API error: {detail}")
-        return {"response_text": f"Image generation failed: {detail}", "model_name": "image-generation"}
     except Exception as e:
-        logger.error(f"Image generation failed: {e}")
+        logger.error(f"[ImageGen] Failed: {e}")
         return {"response_text": "Image generation encountered an error. Please try again.", "model_name": "image-generation"}
 
 

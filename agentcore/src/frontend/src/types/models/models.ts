@@ -3,6 +3,7 @@ export type ModelProvider =
   | "azure"
   | "anthropic"
   | "google"
+  | "google_vertex"
   | "groq"
   | "openai_compatible";
 

@@ -1011,6 +1011,45 @@ async def _route_request(
                 "image_files": image_files,
             }
 
+    # Priority 0.5: User explicitly selected a special model (Web Search, Nano Banana)
+    # Force that mode regardless of intent classification
+    if body.model_id and not body.agent_id and not body.deployment_id:
+        try:
+            from agentcore.services.mibuddy.model_capabilities import detect_capabilities
+            from agentcore.services.database.models.model_registry.model import ModelRegistry
+
+            selected_model = await session.get(ModelRegistry, body.model_id)
+            if selected_model:
+                caps = detect_capabilities(
+                    selected_model.provider,
+                    selected_model.model_name,
+                    selected_model.capabilities,
+                )
+                # If user selected a web_search model → force web search
+                if caps.get("web_search"):
+                    logger.info(f"[ORCH] User selected web search model: {selected_model.display_name}")
+                    return {
+                        "mode": "web_search",
+                        "agent_id": None,
+                        "deployment_id": None,
+                        "deployment": None,
+                        "model_id": body.model_id,
+                        "intent": "web_search_explicit",
+                    }
+                # If user selected an image gen model → force image generation
+                if caps.get("image_generation"):
+                    logger.info(f"[ORCH] User selected image gen model: {selected_model.display_name}")
+                    return {
+                        "mode": "image_gen",
+                        "agent_id": None,
+                        "deployment_id": None,
+                        "deployment": None,
+                        "model_id": body.model_id,
+                        "intent": "image_generation_explicit",
+                    }
+        except Exception as e:
+            logger.debug(f"[ORCH] Model capability check failed (non-critical): {e}")
+
     # Mode 1: Explicit @agent mention
     if body.agent_id or body.deployment_id:
         agent_id, deployment_id, deployment = await _resolve_agent(session, current_user, body)
@@ -2173,8 +2212,9 @@ async def list_orch_models(
 ):
     """List deployed LLM models available to the current user for direct chat.
 
-    Fetches models from both the Model microservice and the local registry DB,
-    then applies visibility filtering.
+    Includes:
+    - Virtual entries for configured MiBuddy features (Web Search, Nano Banana, etc.)
+    - Real models from the Model Registry
     """
     try:
         from agentcore.services.database.models.model_registry.model import (
@@ -2183,15 +2223,26 @@ async def list_orch_models(
         )
         from agentcore.services.model_service_client import fetch_registry_models_async
 
-        # Strategy 1: Fetch from model microservice (primary source)
+        result: list[OrchModelSummary] = []
+        settings = get_settings_service().settings
+
+        logger.info(f"[ORCH Models] image_gen_model_name='{settings.image_gen_model_name}', web_search_model_name='{settings.web_search_model_name}'")
+
+        # ── Virtual entries ──
+        # Web Search and Image Gen models come from registry naturally
+        # No virtual entries needed — they appear with their registry names
+        # and capabilities detected from model_capabilities.py
+        # The model registered with IMAGE_GEN_MODEL_NAME will appear naturally
+        # in the registry results with image_generation capability detected
+
+        # ── Real models from registry ──
         raw_rows = await fetch_registry_models_async(
             model_type="llm",
             active_only=True,
         )
 
         if raw_rows:
-            # Model service returned data — build response from it
-            result = []
+            # Model service returned data — append to result (which already has virtual entries)
             for row in raw_rows:
                 try:
                     model_id = row.get("id")

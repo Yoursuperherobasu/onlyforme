@@ -60,45 +60,61 @@ Do not include any explanation or markdown formatting."""
 
 
 class IntentClassifier:
-    """Classifies user queries into intents using an LLM from the model registry."""
+    """Classifies user queries into intents using an LLM.
+
+    Supports two modes:
+    1. Model name (e.g. 'gpt-5.1') — uses LTM embedding API key directly (simpler)
+    2. Registry UUID — uses model service to resolve credentials (existing flow)
+    """
 
     def __init__(self, model_id: str | None = None):
-        """Initialize the classifier.
-
-        Args:
-            model_id: UUID string of the registry model to use for classification.
-                      If None, loads from settings (intent_classifier_model_id).
-        """
         self._model_id = model_id
-        self._model: MicroserviceChatModel | None = None
+        self._model = None
 
-    def _get_model(self) -> MicroserviceChatModel:
+    def _get_model(self):
         if self._model is not None:
             return self._model
 
-        model_id = self._model_id
-        if not model_id:
-            from agentcore.services.deps import get_settings_service
-            settings = get_settings_service()
-            model_id = settings.settings.intent_classifier_model_id
+        from agentcore.services.deps import get_settings_service
+        settings = get_settings_service().settings
 
-        if not model_id:
+        model_name = settings.intent_classifier_model_name
+        logger.info(f"[IntentClassifier] Settings: model_name='{model_name}', provider='{settings.ltm_embedding_provider}', api_key={'***' + settings.ltm_embedding_api_key[-4:] if settings.ltm_embedding_api_key and len(settings.ltm_embedding_api_key) > 4 else '(empty)'}, endpoint='{settings.ltm_azure_openai_endpoint}', api_version='{settings.mibuddy_azure_api_version}'")
+
+        if not model_name:
+            logger.error("[IntentClassifier] INTENT_CLASSIFIER_MODEL_NAME is empty!")
             raise ValueError(
-                "Intent classifier model not configured. "
-                "Set INTENT_CLASSIFIER_MODEL_ID in settings."
+                "Intent classifier not configured. Set INTENT_CLASSIFIER_MODEL_NAME (e.g. 'gpt-4o')."
             )
 
-        from agentcore.services.deps import get_settings_service
-        settings = get_settings_service()
+        api_key = settings.ltm_embedding_api_key
+        if not api_key:
+            logger.error("[IntentClassifier] LTM_EMBEDDING_API_KEY is empty!")
+            raise ValueError("LTM_EMBEDDING_API_KEY is empty — needed for intent classification.")
 
-        self._model = MicroserviceChatModel(
-            service_url=settings.settings.model_service_url,
-            service_api_key=settings.settings.model_service_api_key,
-            registry_model_id=model_id,
-            provider="openai",  # placeholder — resolved from registry by model service
-            model=f"intent-classifier-{model_id[:8]}",
-            temperature=0.0,
-        )
+        provider = settings.ltm_embedding_provider or "openai"
+        logger.info(f"[IntentClassifier] Creating {provider} model: deployment='{model_name}'")
+
+        if provider == "azure_openai":
+            from langchain_openai import AzureChatOpenAI
+            self._model = AzureChatOpenAI(
+                azure_endpoint=settings.ltm_azure_openai_endpoint,
+                azure_deployment=model_name,
+                api_version=settings.mibuddy_azure_api_version,
+                api_key=api_key,
+                temperature=0.0,
+                max_tokens=100,
+            )
+            logger.info(f"[IntentClassifier] AzureChatOpenAI created: endpoint='{settings.ltm_azure_openai_endpoint}', deployment='{model_name}', api_version='{settings.mibuddy_azure_api_version}'")
+        else:
+            from langchain_openai import ChatOpenAI
+            self._model = ChatOpenAI(
+                model=model_name,
+                api_key=api_key,
+                temperature=0.0,
+                max_tokens=100,
+            )
+            logger.info(f"[IntentClassifier] ChatOpenAI created: model='{model_name}'")
         return self._model
 
     async def classify(self, query: str) -> Intent:
@@ -107,7 +123,9 @@ class IntentClassifier:
         Returns Intent.GENERAL_CHAT as fallback on any error.
         """
         try:
+            logger.info(f"[IntentClassifier] Classifying: '{query[:80]}'")
             model = self._get_model()
+            logger.info(f"[IntentClassifier] Model loaded: {type(model).__name__}")
             prompt = _build_classification_prompt()
             messages = [
                 SystemMessage(content=prompt),
@@ -115,7 +133,7 @@ class IntentClassifier:
             ]
             result = await model.ainvoke(messages)
             content = result.content if hasattr(result, "content") else str(result)
-            logger.info(f"Intent classifier raw response: {content!r}")
+            logger.info(f"[IntentClassifier] Raw response: {content!r}")
 
             # Robust JSON extraction — handle markdown code blocks or extra text
             json_str = content.strip()
@@ -142,11 +160,8 @@ class IntentClassifier:
                 return Intent.GENERAL_CHAT
 
         except ValueError as e:
-            if "not configured" in str(e):
-                logger.info("Intent classifier not configured, defaulting to general_chat")
-            else:
-                logger.error(f"Intent classification ValueError: {e}")
+            logger.error(f"[IntentClassifier] ValueError: {e}")
             return Intent.GENERAL_CHAT
         except Exception as e:
-            logger.error(f"Intent classification failed: {e}")
+            logger.error(f"[IntentClassifier] Failed: {type(e).__name__}: {e}", exc_info=True)
             return Intent.GENERAL_CHAT

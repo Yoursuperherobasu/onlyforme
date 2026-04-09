@@ -172,7 +172,7 @@ async def _test_image_model_connection(body: TestConnectionRequest, provider_con
     - OpenAI/Azure: calls images/generations endpoint
     - Google: calls Vertex AI generateContent endpoint
     """
-    if body.provider == "google":
+    if body.provider in ("google", "google_vertex"):
         return await _test_vertex_image_connection(body, provider_config)
     else:
         return await _test_dalle_connection(body, provider_config)

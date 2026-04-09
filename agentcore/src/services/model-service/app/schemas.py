@@ -15,6 +15,7 @@ class ProviderEnum(str, Enum):
     OPENAI = "openai"
     ANTHROPIC = "anthropic"
     GOOGLE = "google"
+    GOOGLE_VERTEX = "google_vertex"
     GROQ = "groq"
     OPENAI_COMPATIBLE = "openai_compatible"
 

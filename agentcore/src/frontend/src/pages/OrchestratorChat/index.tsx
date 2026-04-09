@@ -216,6 +216,7 @@ const PROVIDER_COLORS: Record<string, string> = {
   azure: "#0078d4",
   anthropic: "#d97706",
   google: "#4285f4",
+  google_vertex: "#34a853",
   groq: "#f97316",
   openai_compatible: "#6b7280",
 };
@@ -875,7 +876,7 @@ export default function AgentOrchestrator() {
 
   const handleInputChange = (value: string) => {
     setInput(value);
-    const match = value.match(/@([\w\s]*)$/);
+    const match = value.match(/@([\w\s().-]*)$/);
     if (match) {
       const query = match[1].toLowerCase();
       setFilteredAgents(agents.filter((a) => a.name.toLowerCase().includes(query)));
@@ -886,7 +887,7 @@ export default function AgentOrchestrator() {
   };
 
   const handleSelectAgent = (agent: Agent) => {
-    const updated = input.replace(/@[\w\s]*$/, `@${agent.name} `);
+    const updated = input.replace(/@[\w\s().-]*$/, `@${agent.name} `);
     setInput(updated);
     setSelectedModelId(agent.id);
     setShowMentions(false);
@@ -1016,8 +1017,11 @@ export default function AgentOrchestrator() {
     const targetAgent = explicitAgent || fallbackAgent;
 
     // Strip the @agent_name mention so the agent only receives the actual question
+    const escapedName = explicitAgent
+      ? explicitAgent.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+      : "";
     const cleanedInput = explicitAgent
-      ? input.replace(new RegExp(`@${explicitAgent.name}\\s*`, "g"), "").trim()
+      ? input.replace(new RegExp(`@${escapedName}\\s*`, "g"), "").trim()
       : input.trim();
 
     // Agent message placeholder — created upfront so "Thinking..." shows inside the bubble
