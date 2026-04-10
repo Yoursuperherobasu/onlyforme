@@ -5,7 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { Calendar, Search, X, Cpu, RefreshCw } from "lucide-react";
+import { Calendar, X, Cpu, RefreshCw } from "lucide-react";
 import { THEME } from "../theme";
 import { DATE_RANGE_LABELS } from "../utils";
 import type {
@@ -130,13 +130,13 @@ export function FilterBar({
       {/* Search */}
       <div className="flex items-center gap-2 flex-1 min-w-[200px] max-w-[400px]">
         <div className="relative flex-1">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <Input
+            icon="Search"
             placeholder="Search by trace name..."
             value={searchInput}
             onChange={(e) => setSearchInput(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && onSearch()}
-            className="pl-9 h-9 bg-muted/50 border-border"
+            className="h-9 bg-muted/50 border-border"
           />
         </div>
         <Button size="sm" onClick={onSearch} className="h-9" style={{ backgroundColor: THEME.primary }}>Search</Button>
