@@ -8,6 +8,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
+from loguru import logger
 
 from agentcore.api.utils import CurrentActiveUser, DbSession
 from agentcore.api.v1_schemas import UploadFileResponse
@@ -100,8 +101,14 @@ async def download_file(
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
+@router.get("/images/{agent_id}/{subfolder}/{file_name}")
+async def download_image_with_subfolder(file_name: str, agent_id: UUID, subfolder: str):
+    """Serve images stored in subfolders (e.g. generated-images, uploads, chat-images)."""
+    return await download_image(file_name, agent_id, subfolder=subfolder)
+
+
 @router.get("/images/{agent_id}/{file_name}")
-async def download_image(file_name: str, agent_id: UUID):
+async def download_image(file_name: str, agent_id: UUID, subfolder: str | None = None):
     storage_service = get_storage_service()
     extension = file_name.split(".")[-1]
     agent_id_str = str(agent_id)
@@ -118,11 +125,41 @@ async def download_image(file_name: str, agent_id: UUID):
     if not content_type.startswith("image"):
         raise HTTPException(status_code=500, detail=f"Content type {content_type} is not an image")
 
+    # If subfolder is provided (e.g. /images/{id}/generated-images/{name}), try MiBuddy first
+    if subfolder:
+        try:
+            from agentcore.services.mibuddy.docqa_storage import get_file_by_path
+            path = f"{agent_id_str}/{subfolder}/{file_name}"
+            file_content = await get_file_by_path(path)
+            logger.info(f"[ImageServe] Served from MIBUDDY container: {path}")
+            return StreamingResponse(BytesIO(file_content), media_type=content_type)
+        except Exception:
+            logger.debug(f"[ImageServe] Not in MiBuddy {subfolder}: {file_name}")
+
+    # Try main storage
     try:
         file_content = await storage_service.get_file(agent_id=agent_id_str, file_name=file_name)
+        logger.info(f"[ImageServe] Served from MAIN container: {agent_id_str}/{file_name}")
         return StreamingResponse(BytesIO(file_content), media_type=content_type)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e)) from e
+    except Exception:
+        logger.debug(f"[ImageServe] Not found in main container: {agent_id_str}/{file_name}")
+
+    # Fallback: try MiBuddy dedicated container (all subfolders)
+    try:
+        from agentcore.services.mibuddy.docqa_storage import get_file_by_path
+        for folder in ("generated-images", "uploads", "chat-images"):
+            try:
+                path = f"{agent_id_str}/{folder}/{file_name}"
+                file_content = await get_file_by_path(path)
+                logger.info(f"[ImageServe] Served from MIBUDDY container: {path}")
+                return StreamingResponse(BytesIO(file_content), media_type=content_type)
+            except Exception:
+                continue
+    except Exception:
+        pass
+
+    logger.warning(f"[ImageServe] Image not found in any container: {agent_id_str}/{file_name}")
+    raise HTTPException(status_code=404, detail=f"Image not found: {file_name}")
 
 
 @router.get("/profile_pictures/{folder_name}/{file_name}")

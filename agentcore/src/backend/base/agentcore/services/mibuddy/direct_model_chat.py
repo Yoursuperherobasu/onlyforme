@@ -48,15 +48,28 @@ async def _file_to_base64_url(file_path: str) -> str | None:
         return None
 
 
-def _build_chat_model(model_id: str) -> MicroserviceChatModel:
+def _build_chat_model(model_id: str, enable_reasoning: bool = False) -> MicroserviceChatModel:
     """Create a MicroserviceChatModel for the given registry model ID.
 
     NOTE: provider is set to "openai" as a placeholder — the model service's
     _resolve_registry_config() will overwrite it with the actual provider
     from the registry entry before invoking the LLM.
+
+    When enable_reasoning is True, model_kwargs includes thinking/reasoning
+    parameters that providers like Anthropic use to enable extended thinking.
     """
     from agentcore.services.deps import get_settings_service
     settings = get_settings_service()
+
+    # NOTE: reasoning/thinking params are provider-specific:
+    # - Anthropic Claude: needs model_kwargs={"thinking": {"type": "enabled", "budget_tokens": N}}
+    # - OpenAI o1/o3: reasoning is AUTOMATIC, no extra params needed
+    # - DeepSeek-R1: reasoning is AUTOMATIC, no extra params needed
+    #
+    # We do NOT pass thinking params here because we don't know the provider yet
+    # (it's resolved by the model service from the registry). The model service
+    # will handle provider-specific reasoning config via default_params in the
+    # registry entry. For OpenAI reasoning models, just calling them is enough.
 
     return MicroserviceChatModel(
         service_url=settings.settings.model_service_url,
@@ -71,13 +84,29 @@ async def _build_messages_from_history(
     history: list,
     input_value: str,
     files: list[str] | None = None,
+    include_system_prompt: bool = True,
 ) -> list:
     """Build LangChain messages from OrchConversationTable rows + current input.
+
+    This is ONLY used for direct model chat (No Agent mode).
+    When include_system_prompt=True, the system identity prompt is prepended.
+    Agents have their own system prompts — this is NOT called for @agent mode.
 
     If files are provided (as storage paths), they are included as multimodal
     content (base64 images) in the current user message.
     """
     messages = []
+
+    # Inject system identity prompt (only for direct model chat)
+    if include_system_prompt:
+        try:
+            from agentcore.services.mibuddy.system_prompts import get_system_identity_prompt
+            system_prompt = get_system_identity_prompt()
+            if system_prompt.strip():
+                messages.append(SystemMessage(content=system_prompt))
+        except Exception as e:
+            logger.warning(f"Failed to load system identity prompt: {e}")
+
     for msg in history:
         sender = getattr(msg, "sender", "") or ""
         text = getattr(msg, "text", "") or ""
@@ -133,12 +162,13 @@ async def direct_model_chat(
     input_value: str,
     session_id: str,
     files: list[str] | None = None,
+    enable_reasoning: bool = False,
 ) -> dict:
     """Call a registry model directly and return the response.
 
     Returns dict with keys: response_text, reasoning_content, model_name
     """
-    model = _build_chat_model(model_id)
+    model = _build_chat_model(model_id, enable_reasoning=enable_reasoning)
     history = await _get_conversation_history(session_id)
     messages = await _build_messages_from_history(history, input_value, files=files)
 
@@ -162,13 +192,14 @@ async def direct_model_chat_stream(
     input_value: str,
     session_id: str,
     files: list[str] | None = None,
+    enable_reasoning: bool = False,
     event_manager=None,
 ) -> dict:
     """Stream from a registry model directly, forwarding events to event_manager.
 
     Returns dict with keys: response_text, reasoning_content, model_name
     """
-    model = _build_chat_model(model_id)
+    model = _build_chat_model(model_id, enable_reasoning=enable_reasoning)
     history = await _get_conversation_history(session_id)
     messages = await _build_messages_from_history(history, input_value, files=files)
 

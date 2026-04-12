@@ -151,6 +151,32 @@ def _generate_sparse_vectors(pc, texts: list[str], sparse_model: str, input_type
 @_pinecone_retry
 def ingest_documents(req: IngestRequest) -> IngestResponse:
     pc = _get_pinecone_client()
+
+    # Auto-create index if it doesn't exist
+    if req.auto_create_index:
+        try:
+            existing = pc.list_indexes()
+            names = [idx.name for idx in existing] if existing else []
+            if req.index_name not in names:
+                from pinecone import ServerlessSpec
+                logger.info(f"Auto-creating Pinecone index: {req.index_name} (dim={req.embedding_dimension})")
+                pc.create_index(
+                    name=req.index_name,
+                    dimension=req.embedding_dimension,
+                    metric="cosine",
+                    spec=ServerlessSpec(cloud=req.cloud_provider, region=req.cloud_region),
+                )
+                # Wait for index to be ready
+                import time
+                for _ in range(30):
+                    desc = pc.describe_index(req.index_name)
+                    if desc.status and desc.status.get("ready", False):
+                        break
+                    time.sleep(2)
+                logger.info(f"Pinecone index {req.index_name} created and ready")
+        except Exception as e:
+            logger.error(f"Failed to auto-create index {req.index_name}: {e}")
+
     index = pc.Index(req.index_name)
     settings = get_settings()
 

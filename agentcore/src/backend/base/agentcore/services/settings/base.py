@@ -333,14 +333,43 @@ class Settings(BaseSettings):
     """API key for authenticating with the Model microservice (sent as x-api-key header)."""
 
     # Intent Classification & Model Chat
-    intent_classifier_model_id: str = ""
-    """UUID of the registry model used for intent classification (web_search, image_generation, general_chat).
-    If empty, intent classification is disabled and requests without @agent fall back to general_chat."""
+    intent_classifier_model_name: str = ""
+    """Azure deployment name or OpenAI model name for intent classification (e.g. 'gpt-4o').
+    Uses LTM_EMBEDDING API key/endpoint for auth."""
+    mibuddy_azure_api_version: str = "2024-12-01-preview"
+    """Azure OpenAI API version for MiBuddy LLM calls (intent classifier, etc.)."""
     default_chat_model_id: str = ""
     """UUID of the registry model used when no model and no agent is selected and intent is general_chat.
     If empty, requests without a model or agent will return 400."""
-    image_gen_model_id: str = ""
-    """UUID of the registry model used for image generation when intent is image_generation."""
+    # Image Generation (from model registry — identified by display name)
+    image_gen_model_name: str = ""
+    """Display name of the image generation model in the registry (e.g. 'Nano Banana', 'dall-e-3').
+    The handler searches the registry by this name and uses the model's credentials."""
+    image_gen_rate_limit: int = 10
+    """Maximum image generation requests per user per time window."""
+    image_gen_rate_window: int = 3600
+    """Time window in seconds for image generation rate limiting (default: 1 hour)."""
+
+    # Web Search (from model registry — identified by display name)
+    web_search_model_name: str = ""
+    """Display name of the web search model in the registry (e.g. 'Web Search', 'Gemini Web Search').
+    Must be a Google model with API key. Uses GoogleSearch grounding tool."""
+
+    # Company Knowledge Base (Azure AI Agent — same as MiBuddy Motherson search)
+    azure_ai_project_endpoint: str = ""
+    """Azure AI Project endpoint (e.g. https://resource.services.ai.azure.com/api/projects/name)."""
+    azure_ai_project_tenant_id: str = ""
+    """Azure AD tenant ID for Azure AI Project authentication."""
+    azure_ai_project_client_id: str = ""
+    """Azure AD client/app ID for Azure AI Project authentication."""
+    azure_ai_project_client_secret: str = ""
+    """Azure AD client secret for Azure AI Project authentication (from Key Vault)."""
+    azure_ai_project_agent_id: str = ""
+    """Azure AI Agent ID that has the company knowledge base connected."""
+    company_kb_keywords: str = ""
+    """Comma-separated keywords for company KB detection (e.g. 'motherson,samvardhana,sumi,wiring')."""
+    company_kb_name: str = ""
+    """Company name for display and intent classification (e.g. 'Motherson')."""
 
     # Web Search (Gemini)
     gemini_api_key: str = ""
@@ -367,6 +396,19 @@ class Settings(BaseSettings):
     When set, Pinecone vector store operations are proxied through the microservice."""
     pinecone_service_api_key: str = ""
     """API key for authenticating with the Pinecone microservice (sent as x-api-key header)."""
+
+    # Document Q&A (Pinecone RAG for orchestrator model chat)
+    doc_qa_pinecone_index: str = "agentcore-doc-qa"
+    """Pinecone index name for document Q&A. Auto-created on first use."""
+    mibuddy_blob_container: str = "agentcore-mibuddy"
+    """Dedicated Azure Blob container for all MiBuddy operations.
+    Organizes files per user: {user_id}/uploads/, {user_id}/generated-images/, {user_id}/chat-images/"""
+    doc_qa_chunk_size: int = 1000
+    """Chunk size in characters for document splitting."""
+    doc_qa_chunk_overlap: int = 200
+    """Overlap between chunks in characters."""
+    doc_qa_top_k: int = 5
+    """Number of chunks to retrieve per query."""
 
     # Azure AI Search (direct SDK — no microservice needed)
     azure_ai_search_endpoint: str = ""

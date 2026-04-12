@@ -598,6 +598,7 @@ class MicroserviceChatModel(BaseChatModel):
     max_tokens: int | None = None
     streaming: bool = False
     bound_tools: list[dict] | None = None
+    model_kwargs: dict | None = None
 
     class Config:
         arbitrary_types_allowed = True
@@ -651,6 +652,8 @@ class MicroserviceChatModel(BaseChatModel):
             payload["max_tokens"] = self.max_tokens
         if self.bound_tools:
             payload["tools"] = self.bound_tools
+        if self.model_kwargs:
+            payload["model_kwargs"] = self.model_kwargs
         return payload
 
     def _parse_response(self, data: dict) -> ChatResult:
@@ -869,7 +872,10 @@ class MicroserviceChatModel(BaseChatModel):
         # Accumulate tool call deltas from streaming chunks
         tool_call_accum: dict[int, dict] = {}  # index → {id, name, arguments}
 
-        async with httpx.AsyncClient(timeout=300.0) as client:
+        # Use explicit timeout config: reasoning models (o1/o3) may take 60s+
+        # before sending the first token while they "think" internally.
+        stream_timeout = httpx.Timeout(connect=30.0, read=600.0, write=30.0, pool=30.0)
+        async with httpx.AsyncClient(timeout=stream_timeout) as client:
             async with client.stream(
                 "POST",
                 f"{self.service_url}/v1/chat/completions",

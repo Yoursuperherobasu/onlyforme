@@ -1,6 +1,6 @@
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
-import { Send, Sparkles, ChevronDown, Plus, MessageSquare, PanelLeftClose, PanelLeft, User, Loader2, Trash2, Check, ImagePlus, X, Clock, Search, Image, Archive, ChevronRight, Globe, BookOpen, Headphones, Info, HelpCircle, Mic, AudioLines, FileUp, Paintbrush, Lightbulb, Upload, MoreVertical, Folder, ArrowLeft, File, Shield, CheckCircle2, SquarePen, Mail, Download, Pencil, Save } from "lucide-react";
+import { Send, Sparkles, ChevronDown, Plus, MessageSquare, PanelLeftClose, PanelLeft, User, Loader2, Trash2, Check, ImagePlus, X, Clock, Search, Image, Archive, ChevronRight, Globe, BookOpen, Headphones, Info, HelpCircle, Mic, AudioLines, FileUp, Paintbrush, Lightbulb, Upload, MoreVertical, Folder, ArrowLeft, File, FileText, Shield, CheckCircle2, SquarePen, Mail, Download } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import {
   useGetOrchAgents,
@@ -50,8 +50,12 @@ interface Message {
   contentBlocks?: ContentBlock[];
   blocksState?: string;
   files?: string[];
+<<<<<<< HEAD
   // Canvas
   canvasEnabled?: boolean;
+=======
+  reasoningContent?: string;
+>>>>>>> e255f869834aa85a0565d8b481a54ec8c4c372df
   // HITL (Human-in-the-Loop) approval fields
   hitl?: boolean;
   hitlActions?: string[];
@@ -132,6 +136,12 @@ function mapApiMessages(apiMessages: OrchMessageResponse[]): Message[] {
       ? props.actions
       : extractHitlActions(m.text || "");
 
+    // Restore content_blocks (reasoning / tool-use steps) from persisted data.
+    // During streaming these arrive via SSE; on reload they come from the API.
+    const toolBlocks = (m.content_blocks ?? []).filter((block: any) =>
+      block.contents?.some((c: any) => c.type === "tool_use"),
+    );
+
     return {
       id: m.id,
       sender: m.sender as "user" | "agent" | "system",
@@ -142,6 +152,8 @@ function mapApiMessages(apiMessages: OrchMessageResponse[]): Message[] {
         : "",
       category: m.category || "message",
       files: m.files && m.files.length > 0 ? m.files : undefined,
+      contentBlocks: toolBlocks.length > 0 ? toolBlocks : undefined,
+      blocksState: toolBlocks.length > 0 ? "complete" : undefined,
       // Restore HITL metadata from persisted properties.
       // Fallback to text inference because some interrupted rows may miss fields.
       hitl: isHitl,
@@ -151,6 +163,7 @@ function mapApiMessages(apiMessages: OrchMessageResponse[]): Message[] {
       hitlIsDeployed: isHitl
         ? (props.is_deployed_run !== undefined ? !!props.is_deployed_run : true)
         : undefined,
+      reasoningContent: (m as any).reasoning_content || undefined,
     };
   });
 }
@@ -199,6 +212,7 @@ interface AiModelOption {
   name: string;
   icon: string;        // color for the dot/icon
   group: "main" | "more";
+  capabilities?: Record<string, any>;
 }
 
 // Provider → color mapping for model dots
@@ -207,6 +221,7 @@ const PROVIDER_COLORS: Record<string, string> = {
   azure: "#0078d4",
   anthropic: "#d97706",
   google: "#4285f4",
+  google_vertex: "#34a853",
   groq: "#f97316",
   openai_compatible: "#6b7280",
 };
@@ -234,29 +249,30 @@ function ImageGalleryView({
   onClosePreview: () => void;
 }) {
   const { t } = useTranslation();
-  const { data: allFiles, isLoading } = useGetFilesV2();
-  const userId = useContext(AuthContext).userData?.id;
+  const [images, setGalleryImages] = useState<{ id: string; name: string; src: string; createdAt: string }[]>([]);
+  const [isLoading, setGalleryLoading] = useState(true);
 
-  const images = useMemo(() => {
-    if (!allFiles) return [];
-    return (allFiles as any[])
-      .filter((f) => {
-        const ext = (f.path || f.name || "").split(".").pop()?.toLowerCase() || "";
-        return IMAGE_EXTENSIONS.includes(ext);
+  // Fetch AI-generated images from MiBuddy dedicated endpoint
+  useEffect(() => {
+    const tokenMatch = document.cookie.match(/(?:^|;\s*)access_token_lf=([^;]*)/);
+    const headers: Record<string, string> = {};
+    if (tokenMatch?.[1]) headers["Authorization"] = `Bearer ${decodeURIComponent(tokenMatch[1])}`;
+
+    fetch(`${getURL("ORCHESTRATOR")}/generated-images`, { headers, credentials: "include" })
+      .then((res) => res.json())
+      .then((data: any[]) => {
+        setGalleryImages(
+          (data || []).map((img: any, idx: number) => ({
+            id: `gen-${idx}`,
+            name: img.name || "AI Generated Image",
+            src: img.src,
+            createdAt: "",
+          })),
+        );
       })
-      .sort(
-        (a, b) =>
-          new Date(b.created_at || b.updated_at || 0).getTime() -
-          new Date(a.created_at || a.updated_at || 0).getTime(),
-      )
-      .slice(0, 10)
-      .map((f) => ({
-        id: f.id,
-        name: f.name || f.path,
-        src: `${BASE_URL_API}files/images/${userId}/${f.path}`,
-        createdAt: f.created_at || f.updated_at || "",
-      }));
-  }, [allFiles, userId]);
+      .catch((err) => console.warn("Failed to load generated images:", err))
+      .finally(() => setGalleryLoading(false));
+  }, []);
 
   const handleDownload = async (src: string, name: string) => {
     try {
@@ -428,7 +444,18 @@ export default function AgentOrchestrator() {
   /* ------------------ FILE UPLOAD ------------------ */
 
   const { mutate: uploadFileMutate } = usePostUploadFileV2();
-  const ALLOWED_EXTENSIONS = ["png", "jpg", "jpeg"];
+  // Model mode (No Agent): allow documents + images
+  // Agent mode: allow images only
+  const IMAGE_EXTENSIONS_LIST = ["png", "jpg", "jpeg"];
+  const DOC_EXTENSIONS_LIST = [
+    "pdf", "docx", "pptx", "xlsx", "xls",                   // Documents
+    "txt", "md", "csv",                                      // Text
+    "py", "js", "ts", "java", "cpp", "c", "cs", "go",       // Code
+    "json", "html", "css", "php", "rb", "sh", "tex",        // More code/markup
+  ];
+  const ALLOWED_EXTENSIONS = noAgentMode
+    ? [...IMAGE_EXTENSIONS_LIST, ...DOC_EXTENSIONS_LIST]     // Model mode: all file types
+    : IMAGE_EXTENSIONS_LIST;                                  // Agent mode: images only
 
   const uploadFile = (file: File) => {
     const ext = file.name.split(".").pop()?.toLowerCase();
@@ -437,26 +464,77 @@ export default function AgentOrchestrator() {
     const id = crypto.randomUUID().slice(0, 10);
     setUploadFiles((prev) => [...prev, { id, file, loading: true, error: false }]);
 
-    uploadFileMutate(
-      { file },
-      {
-        onSuccess: (data: any) => {
+    if (noAgentMode) {
+      // Model mode: upload to MiBuddy dedicated container
+      const formData = new FormData();
+      formData.append("file", file);
+      const tokenMatch = document.cookie.match(/(?:^|;\s*)access_token_lf=([^;]*)/);
+      const headers: Record<string, string> = {};
+      if (tokenMatch?.[1]) headers["Authorization"] = `Bearer ${decodeURIComponent(tokenMatch[1])}`;
+
+      fetch(`${getURL("ORCHESTRATOR")}/upload`, {
+        method: "POST",
+        headers,
+        credentials: "include",
+        body: formData,
+      })
+        .then((res) => {
+          if (!res.ok) throw new Error(`Upload failed: ${res.status}`);
+          return res.json();
+        })
+        .then((data) => {
           setUploadFiles((prev) =>
             prev.map((f) => (f.id === id ? { ...f, loading: false, path: data.file_path } : f)),
           );
-        },
-        onError: () => {
+        })
+        .catch(() => {
           setUploadFiles((prev) =>
             prev.map((f) => (f.id === id ? { ...f, loading: false, error: true } : f)),
           );
+        });
+    } else {
+      // Agent mode: upload to main storage (existing flow)
+      uploadFileMutate(
+        { file },
+        {
+          onSuccess: (data: any) => {
+            setUploadFiles((prev) =>
+              prev.map((f) => (f.id === id ? { ...f, loading: false, path: data.file_path } : f)),
+            );
+          },
+          onError: () => {
+            setUploadFiles((prev) =>
+              prev.map((f) => (f.id === id ? { ...f, loading: false, error: true } : f)),
+            );
+          },
         },
-      },
-    );
+      );
+    }
   };
 
+  const MAX_FILES = 5;
+
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) uploadFile(file);
+    const files = e.target.files;
+    if (!files) return;
+
+    const currentCount = uploadFiles.length;
+    const available = MAX_FILES - currentCount;
+
+    if (available <= 0) {
+      alert(`Maximum ${MAX_FILES} files allowed.`);
+      e.target.value = "";
+      return;
+    }
+
+    const filesToUpload = Array.from(files).slice(0, available);
+    if (files.length > available) {
+      alert(`Only ${available} more file(s) can be added. Maximum is ${MAX_FILES}.`);
+    }
+
+    for (const file of filesToUpload) {
+      uploadFile(file);
+    }
     e.target.value = "";
   };
 
@@ -576,6 +654,7 @@ export default function AgentOrchestrator() {
           name: m.display_name || m.model_name,
           icon: providerColor(m.provider),
           group: (idx < 5 ? "main" : "more") as "main" | "more",
+          capabilities: m.capabilities || undefined,
         }));
         setAiModels(models);
       })
@@ -806,7 +885,7 @@ export default function AgentOrchestrator() {
 
   const handleInputChange = (value: string) => {
     setInput(value);
-    const match = value.match(/@([\w\s]*)$/);
+    const match = value.match(/@([\w\s().-]*)$/);
     if (match) {
       const query = match[1].toLowerCase();
       setFilteredAgents(agents.filter((a) => a.name.toLowerCase().includes(query)));
@@ -817,7 +896,7 @@ export default function AgentOrchestrator() {
   };
 
   const handleSelectAgent = (agent: Agent) => {
-    const updated = input.replace(/@[\w\s]*$/, `@${agent.name} `);
+    const updated = input.replace(/@[\w\s().-]*$/, `@${agent.name} `);
     setInput(updated);
     setSelectedModelId(agent.id);
     setShowMentions(false);
@@ -947,8 +1026,11 @@ export default function AgentOrchestrator() {
     const targetAgent = explicitAgent || fallbackAgent;
 
     // Strip the @agent_name mention so the agent only receives the actual question
+    const escapedName = explicitAgent
+      ? explicitAgent.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+      : "";
     const cleanedInput = explicitAgent
-      ? input.replace(new RegExp(`@${explicitAgent.name}\\s*`, "g"), "").trim()
+      ? input.replace(new RegExp(`@${escapedName}\\s*`, "g"), "").trim()
       : input.trim();
 
     // Agent message placeholder — created upfront so "Thinking..." shows inside the bubble
@@ -997,6 +1079,7 @@ export default function AgentOrchestrator() {
     );
 
     let accumulated = "";
+    let accumulatedReasoning = "";
     let rafHandle: number | null = null;
     let pendingContent: string | null = null;
     let hitlPauseReceived = false;
@@ -1010,12 +1093,13 @@ export default function AgentOrchestrator() {
       rafHandle = null;
       if (pendingContent === null) return;
       const content = pendingContent;
+      const reasoning = accumulatedReasoning || undefined;
       pendingContent = null;
       flushSync(() => {
         setStreamingAgentName("");
         setMessages((prev) =>
           prev.map((m) =>
-            m.id === agentMsgId ? { ...m, content } : m,
+            m.id === agentMsgId ? { ...m, content, reasoningContent: reasoning } : m,
           ),
         );
       });
@@ -1030,11 +1114,12 @@ export default function AgentOrchestrator() {
         // For final/error updates, flush synchronously
         if (rafHandle !== null) { cancelAnimationFrame(rafHandle); rafHandle = null; }
         pendingContent = null;
+        const reasoning = accumulatedReasoning || undefined;
         flushSync(() => {
           setStreamingAgentName("");
           setMessages((prev) =>
             prev.map((m) =>
-              m.id === agentMsgId ? { ...m, content } : m,
+              m.id === agentMsgId ? { ...m, content, reasoningContent: reasoning } : m,
             ),
           );
         });
@@ -1063,9 +1148,15 @@ export default function AgentOrchestrator() {
       requestBody.model_id = selectedAiModel;
     }
 
+    // Send COT reasoning preference
+    if (cotReasoning) {
+      requestBody.enable_reasoning = true;
+    }
+
     if (filePaths.length > 0) {
       requestBody.files = filePaths;
     }
+    console.log("[OrchestratorChat] Request body:", JSON.stringify(requestBody), "| filePaths:", filePaths, "| uploadFiles:", uploadFiles.map(f => ({id: f.id, path: f.path, loading: f.loading, error: f.error})));
 
     const buildController = new AbortController();
 
@@ -1155,12 +1246,22 @@ export default function AgentOrchestrator() {
           } else if (eventType === "token" && data?.chunk) {
             // Progressive streaming — append each token chunk (throttled)
             receivedToken = true;
-            accumulated += data.chunk;
-            updateAgentMsg(accumulated);
+            if (data.type === "reasoning") {
+              // CoT reasoning chunk — accumulate separately
+              accumulatedReasoning += data.chunk;
+              updateAgentMsg(accumulated); // trigger re-render to show reasoning
+            } else {
+              accumulated += data.chunk;
+              updateAgentMsg(accumulated);
+            }
           } else if (eventType === "error") {
             updateAgentMsg(data?.text || "An error occurred", true);
             return false;
           } else if (eventType === "end") {
+            // Capture reasoning from end event if provided
+            if (data?.reasoning_content) {
+              accumulatedReasoning = data.reasoning_content;
+            }
             // End event carries the final complete text — flush immediately.
             // BUT: if we received a HITL pause, do NOT overwrite the HITL
             // message with agent_text — the action buttons must stay visible.
@@ -1624,7 +1725,39 @@ export default function AgentOrchestrator() {
           </button>
           
           <div className="my-1 h-px bg-border" />
-          
+          {(() => {
+            const selectedModel = noAgentMode && selectedAiModel ? aiModels.find((m) => m.id === selectedAiModel) : null;
+            // supports_thinking = model can show visible reasoning/thinking text
+            // reasoning = model reasons internally (but may not show it, e.g. OpenAI o1/o3)
+            const modelSupportsReasoning = !!selectedModel?.capabilities?.supports_thinking;
+            const cotDisabled = noAgentMode && !modelSupportsReasoning;
+            return (
+          <button
+            onClick={() => { if (!cotDisabled) setCotReasoning(!cotReasoning); }}
+            className={`flex w-full items-center justify-between rounded-lg px-3 py-2.5 text-left text-sm ${
+              cotDisabled ? "cursor-not-allowed text-muted-foreground/50" : "text-foreground hover:bg-accent"
+            }`}
+            title={cotDisabled ? "Selected model does not support reasoning" : undefined}
+          >
+            <div className="flex items-center gap-3">
+              <Lightbulb size={16} className={cotDisabled ? "text-muted-foreground/30" : "text-muted-foreground"} />
+              <span>{t("COT reasoning")}</span>
+              {cotDisabled && noAgentMode && selectedModel && (
+                <span className="text-xxs text-muted-foreground/50">({t("not supported")})</span>
+              )}
+            </div>
+            <div
+              className={`relative h-5 w-9 rounded-full transition-colors ${
+                cotDisabled ? "bg-muted-foreground/10" : cotReasoning ? "bg-primary" : "bg-muted-foreground/30"
+              }`}
+            >
+              <div
+                className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow-sm transition-transform ${cotReasoning ? "translate-x-4" : "translate-x-0.5"}`}
+              />
+            </div>
+          </button>
+            );
+          })()}
         </div>
       )}
 
@@ -1815,7 +1948,25 @@ export default function AgentOrchestrator() {
                       className={`h-4 w-4 shrink-0 rounded-full ${!noAgentMode ? "opacity-30" : ""}`}
                       style={{ background: model.icon }}
                     />
-                    <span className="flex-1">{model.name}</span>
+                    <span className="flex-1">
+                      {model.name}
+                      {noAgentMode && model.capabilities && (
+                        <span className="ml-1.5 inline-flex gap-1">
+                          {model.capabilities.supports_thinking && (
+                            <span className="rounded bg-purple-100 px-1 text-[9px] font-medium text-purple-600 dark:bg-purple-900/30 dark:text-purple-400" title="Supports visible reasoning/thinking">COT</span>
+                          )}
+                          {model.capabilities.web_search && (
+                            <span className="rounded bg-green-100 px-1 text-[9px] font-medium text-green-600 dark:bg-green-900/30 dark:text-green-400" title="Web search">WEB</span>
+                          )}
+                          {model.capabilities.image_generation && (
+                            <span className="rounded bg-blue-100 px-1 text-[9px] font-medium text-blue-600 dark:bg-blue-900/30 dark:text-blue-400" title="Image generation">IMG</span>
+                          )}
+                          {model.capabilities.supports_vision && (
+                            <span className="rounded bg-amber-100 px-1 text-[9px] font-medium text-amber-600 dark:bg-amber-900/30 dark:text-amber-400" title="Vision/image analysis">VIS</span>
+                          )}
+                        </span>
+                      )}
+                    </span>
                     {noAgentMode && selectedAiModel === model.id && (
                       <Check size={14} className="text-primary" />
                     )}
@@ -1943,19 +2094,46 @@ export default function AgentOrchestrator() {
                         {highlightMentions(msg.content)}
                         {msg.files && msg.files.length > 0 && (
                           <div className="mt-2 flex flex-wrap gap-2">
-                            {msg.files.map((filePath, idx) => (
-                              <img
-                                key={idx}
-                                src={`${BASE_URL_API}files/images/${filePath}`}
-                                alt="uploaded"
-                                className="max-h-48 max-w-xs rounded-lg border border-border object-contain"
-                              />
-                            ))}
+                            {msg.files.map((filePath, idx) => {
+                              const ext = filePath.split(".").pop()?.toLowerCase() || "";
+                              const isImage = ["png", "jpg", "jpeg", "gif", "webp", "bmp"].includes(ext);
+                              const fileName = filePath.split("/").pop() || filePath;
+                              return isImage ? (
+                                <img
+                                  key={idx}
+                                  src={`${BASE_URL_API}files/images/${filePath}`}
+                                  alt="uploaded"
+                                  className="max-h-48 max-w-xs rounded-lg border border-border object-contain"
+                                />
+                              ) : (
+                                <div
+                                  key={idx}
+                                  className="flex items-center gap-2 rounded-lg border border-border bg-muted/50 px-3 py-2 text-xs text-muted-foreground"
+                                >
+                                  <FileText size={16} />
+                                  <span className="max-w-[200px] truncate" title={fileName}>{fileName}</span>
+                                </div>
+                              );
+                            })}
                           </div>
                         )}
                       </div>
                     ) : (
                       <div className="text-[15px] leading-relaxed text-foreground/80">
+                        {/* CoT Reasoning (collapsible) */}
+                        {cotReasoning && msg.reasoningContent && (
+                          <details className="mb-3 rounded-lg border border-border bg-muted/30 p-3" open={isSending && msg.id === streamingMsgId}>
+                            <summary className="cursor-pointer text-xs font-medium text-muted-foreground hover:text-foreground">
+                              💭 {t("Thinking")}
+                              {isSending && msg.id === streamingMsgId && (
+                                <span className="ml-2 text-xs text-muted-foreground/60">({t("streaming...")})</span>
+                              )}
+                            </summary>
+                            <div className="mt-2 whitespace-pre-wrap text-xs leading-relaxed text-muted-foreground">
+                              {msg.reasoningContent}
+                            </div>
+                          </details>
+                        )}
                         {msg.contentBlocks && msg.contentBlocks.length > 0 && (
                           <ContentBlockDisplay
                             contentBlocks={msg.contentBlocks}
@@ -1964,84 +2142,22 @@ export default function AgentOrchestrator() {
                             isLoading={isSending && msg.id === streamingMsgId}
                           />
                         )}
-                        {/* Canvas edit mode */}
-                        {isEditingThis ? (
-                          <div className="rounded-xl border border-border">
-                            <textarea
-                              value={canvasEditTexts[msg.id] ?? msg.content}
-                              onChange={(e) =>
-                                setCanvasEditTexts((prev) => ({ ...prev, [msg.id]: e.target.value }))
-                              }
-                              className="min-h-[200px] w-full resize-y rounded-t-xl border-none bg-transparent p-4 text-[15px] leading-relaxed text-foreground focus:outline-none focus:ring-0"
-                              autoFocus
-                            />
-                            <div className="flex items-center justify-end gap-2 border-t border-border px-4 py-2.5">
-                              <button
-                                onClick={() => {
-                                  setCanvasEditTexts((prev) => {
-                                    const next = { ...prev };
-                                    delete next[msg.id];
-                                    return next;
-                                  });
-                                  setCanvasEditingId(null);
-                                }}
-                                className="flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-muted-foreground hover:bg-accent"
-                              >
-                                <X size={13} />
-                                {t("Cancel")}
-                              </button>
-                              <button
-                                onClick={() => {
-                                  const newText = canvasEditTexts[msg.id];
-                                  if (newText !== undefined) {
-                                    setMessages((prev) =>
-                                      prev.map((m) =>
-                                        m.id === msg.id ? { ...m, content: newText } : m,
-                                      ),
-                                    );
-                                  }
-                                  setCanvasEditingId(null);
-                                }}
-                                className="flex items-center gap-1.5 rounded-lg bg-green-500 px-3 py-1.5 text-xs font-medium text-white hover:bg-green-600"
-                              >
-                                <Check size={13} />
-                                {t("Save")}
-                              </button>
-                            </div>
-                          </div>
-                        ) : (
-                          <>
-                            <MarkdownField
-                              chat={{}}
-                              isEmpty={!msg.content}
-                              chatMessage={msg.content}
-                              editedFlag={null}
-                            />
-                            {/* Action buttons: Read aloud + Edit */}
-                            {msg.content && !isSending && (
-                              <div className="mt-1.5 flex items-center gap-1">
-                                <button
-                                  onClick={() => handleSpeak(msg.content)}
-                                  className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
-                                  title={t("Read aloud")}
-                                >
-                                  <AudioLines size={13} />
-                                  <span>{t("Read aloud")}</span>
-                                </button>
-                                <button
-                                  onClick={() => {
-                                    setCanvasEditTexts((prev) => ({ ...prev, [msg.id]: msg.content }));
-                                    setCanvasEditingId(msg.id);
-                                  }}
-                                  className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
-                                  title={t("Edit in canvas")}
-                                >
-                                  <Pencil size={13} />
-                                  <span>{t("Edit")}</span>
-                                </button>
-                              </div>
-                            )}
-                          </>
+                        <MarkdownField
+                          chat={{}}
+                          isEmpty={!msg.content}
+                          chatMessage={msg.content}
+                          editedFlag={null}
+                        />
+                        {/* Text-to-Speech button — hide for image-only responses */}
+                        {msg.content && !isSending && !(/^\s*!\[.*\]\(.*\)\s*$/.test(msg.content.trim())) && (
+                          <button
+                            onClick={() => handleSpeak(msg.content)}
+                            className="mt-1.5 flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
+                            title={t("Read aloud")}
+                          >
+                            <AudioLines size={13} />
+                            <span>{t("Read aloud")}</span>
+                          </button>
                         )}
                         {/* HITL action buttons */}
                         {msg.hitl && (
@@ -2187,8 +2303,12 @@ export default function AgentOrchestrator() {
                         <Loader2 size={14} className="animate-spin text-muted-foreground" />
                       ) : f.error ? (
                         <span className="text-destructive">Failed</span>
-                      ) : (
+                      ) : ["png", "jpg", "jpeg", "gif", "webp", "bmp"].includes(
+                          f.file.name.split(".").pop()?.toLowerCase() || ""
+                        ) ? (
                         <ImagePlus size={14} className="text-muted-foreground" />
+                      ) : (
+                        <FileText size={14} className="text-muted-foreground" />
                       )}
                       <span className="max-w-[120px] truncate">{f.file.name}</span>
                       <button
@@ -2271,7 +2391,8 @@ export default function AgentOrchestrator() {
                 <input
                   ref={fileInputRef}
                   type="file"
-                  accept=".png,.jpg,.jpeg"
+                  multiple
+                  accept={ALLOWED_EXTENSIONS.map((e) => `.${e}`).join(",")}
                   className="hidden"
                   onChange={handleFileChange}
                 />

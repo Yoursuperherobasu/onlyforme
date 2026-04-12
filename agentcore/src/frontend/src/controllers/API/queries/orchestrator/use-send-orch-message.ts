@@ -23,6 +23,7 @@ export interface OrchMessageResponse {
     actions?: string[];
     [key: string]: unknown;
   };
+  content_blocks?: any[] | null;
 }
 
 export interface OrchChatResponse {

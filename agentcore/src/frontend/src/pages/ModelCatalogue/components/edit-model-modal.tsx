@@ -34,7 +34,8 @@ const PROVIDERS = [
   { value: "openai", label: "OpenAI" },
   { value: "azure", label: "Azure" },
   { value: "anthropic", label: "Anthropic" },
-  { value: "google", label: "Google" },
+  { value: "google", label: "Google (AI Studio)" },
+  { value: "google_vertex", label: "Google (Vertex AI)" },
   { value: "groq", label: "Groq" },
   { value: "openai_compatible", label: "Custom Model" },
 ];
@@ -102,6 +103,8 @@ export default function EditModelModal({
   // Provider-specific
   const [azureDeployment, setAzureDeployment] = useState("");
   const [azureApiVersion, setAzureApiVersion] = useState(DEFAULT_AZURE_API_VERSION);
+  const [vertexProjectId, setVertexProjectId] = useState("");
+  const [vertexLocation, setVertexLocation] = useState("us-central1");
   const [customHeaders, setCustomHeaders] = useState("");
 
   // Default params (LLM)
@@ -168,6 +171,8 @@ export default function EditModelModal({
       const pc = model.provider_config ?? {};
       setAzureDeployment(pc.azure_deployment ?? "");
       setAzureApiVersion(pc.api_version ?? DEFAULT_AZURE_API_VERSION);
+      setVertexProjectId(pc.project_id ?? "");
+      setVertexLocation(pc.location ?? "us-central1");
       setCustomHeaders(pc.custom_headers ? JSON.stringify(pc.custom_headers, null, 2) : "");
 
       const dp = model.default_params ?? {};
@@ -190,6 +195,8 @@ export default function EditModelModal({
       setIsActive(true);
       setAzureDeployment("");
       setAzureApiVersion(DEFAULT_AZURE_API_VERSION);
+      setVertexProjectId("");
+      setVertexLocation("us-central1");
       setCustomHeaders("");
       setTemperature("");
       setMaxTokens("");
@@ -284,6 +291,10 @@ export default function EditModelModal({
     if (provider === "azure") {
       if (azureDeployment) config.azure_deployment = azureDeployment;
       if (azureApiVersion) config.api_version = azureApiVersion;
+    }
+    if (provider === "google_vertex") {
+      if (vertexProjectId) config.project_id = vertexProjectId;
+      if (vertexLocation) config.location = vertexLocation;
     }
     if (provider === "openai_compatible" && customHeaders) {
       try {
@@ -715,6 +726,35 @@ export default function EditModelModal({
                     value={azureApiVersion}
                     onChange={(e) => setAzureApiVersion(e.target.value)}
                   />
+                </div>
+              </div>
+            )}
+
+            {/* Vertex AI-specific */}
+            {provider === "google_vertex" && (
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <Label>{t("Project ID")} *</Label>
+                  <Input
+                    required
+                    placeholder={t("my-gcp-project-id")}
+                    value={vertexProjectId}
+                    onChange={(e) => setVertexProjectId(e.target.value)}
+                  />
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {t("Google Cloud project ID")}
+                  </p>
+                </div>
+                <div>
+                  <Label>{t("Location")}</Label>
+                  <Input
+                    placeholder={t("us-central1")}
+                    value={vertexLocation}
+                    onChange={(e) => setVertexLocation(e.target.value)}
+                  />
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {t("Vertex AI region (default: us-central1)")}
+                  </p>
                 </div>
               </div>
             )}

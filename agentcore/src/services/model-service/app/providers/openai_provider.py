@@ -59,6 +59,7 @@ class OpenAIProvider(BaseProvider):
             "api_key": api_key,
             "streaming": streaming,
             "stream_usage": True,
+            "request_timeout": 600,  # 10 min — reasoning models (o1/o3) can take 60s+ to start
         }
 
         if base_url:

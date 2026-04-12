@@ -25,6 +25,7 @@ PROVIDER_LABEL_TO_KEY = {
     "Azure": "azure",
     "Anthropic": "anthropic",
     "Google": "google",
+    "Google Vertex AI": "google_vertex",
     "Groq": "groq",
     "Custom Model": "openai_compatible",
 }
