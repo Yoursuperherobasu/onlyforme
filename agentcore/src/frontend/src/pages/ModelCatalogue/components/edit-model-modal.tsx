@@ -106,6 +106,8 @@ export default function EditModelModal({
   const [vertexProjectId, setVertexProjectId] = useState("");
   const [vertexLocation, setVertexLocation] = useState("us-central1");
   const [customHeaders, setCustomHeaders] = useState("");
+  const [showInOrchestrator, setShowInOrchestrator] = useState(true);
+  const [showInAgent, setShowInAgent] = useState(true);
 
   // Default params (LLM)
   const [temperature, setTemperature] = useState<number | "">("");
@@ -174,6 +176,9 @@ export default function EditModelModal({
       setVertexProjectId(pc.project_id ?? "");
       setVertexLocation(pc.location ?? "us-central1");
       setCustomHeaders(pc.custom_headers ? JSON.stringify(pc.custom_headers, null, 2) : "");
+      const si = (model as any).show_in || ["orchestrator", "agent"];
+      setShowInOrchestrator(si.includes("orchestrator"));
+      setShowInAgent(si.includes("agent"));
 
       const dp = model.default_params ?? {};
       setTemperature(dp.temperature ?? "");
@@ -198,6 +203,8 @@ export default function EditModelModal({
       setVertexProjectId("");
       setVertexLocation("us-central1");
       setCustomHeaders("");
+      setShowInOrchestrator(true);
+      setShowInAgent(true);
       setTemperature("");
       setMaxTokens("");
       setDimensions("");
@@ -318,6 +325,13 @@ export default function EditModelModal({
     return Object.keys(params).length ? params : undefined;
   };
 
+  const buildShowIn = (): string[] | null => {
+    const arr: string[] = [];
+    if (showInOrchestrator) arr.push("orchestrator");
+    if (showInAgent) arr.push("agent");
+    return arr.length > 0 ? arr : null;
+  };
+
   const buildTestPayload = () => ({
     provider,
     model_name: modelName,
@@ -383,6 +397,7 @@ export default function EditModelModal({
           base_url: baseUrl || null,
           provider_config: buildProviderConfig() ?? null,
           default_params: buildDefaultParams() ?? null,
+          show_in: buildShowIn(),
           is_active: isActive,
         };
         if (apiKey) payload.api_key = apiKey;
@@ -523,6 +538,7 @@ export default function EditModelModal({
               : [],
           provider_config: buildProviderConfig() ?? null,
           default_params: buildDefaultParams() ?? null,
+          show_in: buildShowIn(),
           is_active: isActive,
         };
 
@@ -891,6 +907,44 @@ export default function EditModelModal({
                 {t("Visibility changes here will submit approval requests when required.")}
               </p>
             )}
+          </fieldset>
+
+          {/* ========== AVAILABILITY ========== */}
+          <fieldset className="space-y-3">
+            <legend className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
+              {t("Availability")}
+            </legend>
+            <p className="text-xs text-muted-foreground">
+              {t("Choose where this model should appear")}
+            </p>
+            <div className="flex flex-col gap-2">
+              <label className="flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={showInOrchestrator}
+                  onChange={(e) => {
+                    if (!e.target.checked && !showInAgent) return; // at least one must be checked
+                    setShowInOrchestrator(e.target.checked);
+                  }}
+                  className="h-4 w-4 rounded border-border"
+                />
+                {t("Orchestrator Chat")}
+                <span className="text-xs text-muted-foreground">({t("direct model chat")})</span>
+              </label>
+              <label className="flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={showInAgent}
+                  onChange={(e) => {
+                    if (!e.target.checked && !showInOrchestrator) return; // at least one must be checked
+                    setShowInAgent(e.target.checked);
+                  }}
+                  className="h-4 w-4 rounded border-border"
+                />
+                {t("Agent Canvas")}
+                <span className="text-xs text-muted-foreground">({t("for building agents")})</span>
+              </label>
+            </div>
           </fieldset>
 
           {/* ========== DEFAULT PARAMS ========== */}

@@ -89,6 +89,10 @@ class ModelRegistry(SQLModel, table=True):
     # Default inference parameters (temperature, max_tokens, top_p, top_k, thinking_budget, model_kwargs, etc.)
     default_params: dict | None = Field(default=None, sa_column=Column(JSON, nullable=True))
 
+    # Where this model appears: ["orchestrator"], ["agent"], or ["orchestrator", "agent"]
+    # NULL = both (backward compatible)
+    show_in: list[str] | None = Field(default=None, sa_column=Column(JSON, nullable=True))
+
     is_active: bool = Field(default=True)
     created_by: str | None = Field(default=None, nullable=True)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
@@ -118,6 +122,7 @@ class ModelRegistryCreate(BaseModel):
     provider_config: dict | None = None
     capabilities: dict | None = None
     default_params: dict | None = None
+    show_in: list[str] | None = None
     is_active: bool = True
     created_by: str | None = None
     created_by_id: UUID | None = None
@@ -150,6 +155,7 @@ class ModelRegistryUpdate(BaseModel):
     provider_config: dict | None = None
     capabilities: dict | None = None
     default_params: dict | None = None
+    show_in: list[str] | None = None
     is_active: bool | None = None
     approval_status: str | None = None
     requested_by: UUID | None = None
@@ -194,6 +200,7 @@ class ModelRegistryRead(BaseModel):
     provider_config: dict | None = None
     capabilities: dict | None = None
     default_params: dict | None = None
+    show_in: list[str] | None = None
     is_active: bool
     created_by: str | None = None
     created_by_email: str | None = None

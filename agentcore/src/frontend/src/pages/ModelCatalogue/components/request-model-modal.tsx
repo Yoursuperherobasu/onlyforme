@@ -36,7 +36,8 @@ const PROVIDERS = [
   { value: "openai", label: "OpenAI" },
   { value: "azure", label: "Azure OpenAI" },
   { value: "anthropic", label: "Anthropic" },
-  { value: "google", label: "Google" },
+  { value: "google", label: "Google (AI Studio)" },
+  { value: "google_vertex", label: "Google (Vertex AI)" },
   { value: "groq", label: "Groq" },
   { value: "openai_compatible", label: "Custom Model" },
 ];
@@ -59,6 +60,10 @@ export default function RequestModelModal({
   const [apiKey, setApiKey] = useState("");
   const [azureDeployment, setAzureDeployment] = useState("");
   const [azureApiVersion, setAzureApiVersion] = useState(DEFAULT_AZURE_API_VERSION);
+  const [vertexProjectId, setVertexProjectId] = useState("");
+  const [vertexLocation, setVertexLocation] = useState("us-central1");
+  const [showInOrchestrator, setShowInOrchestrator] = useState(true);
+  const [showInAgent, setShowInAgent] = useState(true);
   const [customHeaders, setCustomHeaders] = useState("");
   const [environmentSelection, setEnvironmentSelection] = useState<"uat" | "prod" | "both">("uat");
   const [visibilityScope, setVisibilityScope] = useState<"private" | "department" | "organization">("private");
@@ -109,6 +114,10 @@ export default function RequestModelModal({
     if (provider === "azure") {
       if (azureDeployment) config.azure_deployment = azureDeployment;
       if (azureApiVersion) config.api_version = azureApiVersion;
+    }
+    if (provider === "google_vertex") {
+      if (vertexProjectId) config.project_id = vertexProjectId;
+      if (vertexLocation) config.location = vertexLocation;
     }
     if (provider === "openai_compatible" && customHeaders) {
       try {
@@ -344,6 +353,12 @@ export default function RequestModelModal({
               ...(temperature !== "" ? { temperature: Number(temperature) } : {}),
               ...(maxTokens !== "" ? { max_tokens: Number(maxTokens) } : {}),
             },
+        show_in: (() => {
+          const arr: string[] = [];
+          if (showInOrchestrator) arr.push("orchestrator");
+          if (showInAgent) arr.push("agent");
+          return arr.length > 0 ? arr : ["orchestrator", "agent"];
+        })(),
         is_active: true,
       });
       setSuccessData({
@@ -464,6 +479,30 @@ export default function RequestModelModal({
               </div>
             )}
 
+            {provider === "google_vertex" && (
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <Label>{t("Project ID")} *</Label>
+                  <Input
+                    required
+                    placeholder={t("my-gcp-project-id")}
+                    value={vertexProjectId}
+                    onChange={(e) => setVertexProjectId(e.target.value)}
+                  />
+                  <p className="mt-1 text-xs text-muted-foreground">{t("Google Cloud project ID")}</p>
+                </div>
+                <div>
+                  <Label>{t("Location")}</Label>
+                  <Input
+                    placeholder={t("us-central1")}
+                    value={vertexLocation}
+                    onChange={(e) => setVertexLocation(e.target.value)}
+                  />
+                  <p className="mt-1 text-xs text-muted-foreground">{t("Vertex AI region")}</p>
+                </div>
+              </div>
+            )}
+
             {provider === "openai_compatible" && (
               <div>
                 <Label>{t("Custom Headers (JSON)")}</Label>
@@ -515,6 +554,35 @@ export default function RequestModelModal({
               <p className="mt-1 text-xxs text-muted-foreground">
                 {t("Selecting UAT + PROD submits a single approval for both environments.")}
               </p>
+            </div>
+          </fieldset>
+
+          <fieldset className="space-y-3">
+            <legend className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
+              {t("Availability")}
+            </legend>
+            <p className="text-xs text-muted-foreground">{t("Choose where this model should appear")}</p>
+            <div className="flex flex-col gap-2">
+              <label className="flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={showInOrchestrator}
+                  onChange={(e) => { if (!e.target.checked && !showInAgent) return; setShowInOrchestrator(e.target.checked); }}
+                  className="h-4 w-4 rounded border-border"
+                />
+                {t("Orchestrator Chat")}
+                <span className="text-xs text-muted-foreground">({t("direct model chat")})</span>
+              </label>
+              <label className="flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={showInAgent}
+                  onChange={(e) => { if (!e.target.checked && !showInOrchestrator) return; setShowInAgent(e.target.checked); }}
+                  className="h-4 w-4 rounded border-border"
+                />
+                {t("Agent Canvas")}
+                <span className="text-xs text-muted-foreground">({t("for building agents")})</span>
+              </label>
             </div>
           </fieldset>
 

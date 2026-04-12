@@ -79,42 +79,26 @@ class IntentClassifier:
         settings = get_settings_service().settings
 
         model_name = settings.intent_classifier_model_name
-        logger.info(f"[IntentClassifier] Settings: model_name='{model_name}', provider='{settings.ltm_embedding_provider}', api_key={'***' + settings.ltm_embedding_api_key[-4:] if settings.ltm_embedding_api_key and len(settings.ltm_embedding_api_key) > 4 else '(empty)'}, endpoint='{settings.ltm_azure_openai_endpoint}', api_version='{settings.mibuddy_azure_api_version}'")
+        endpoint = settings.mibuddy_endpoint
+        api_key = settings.mibuddy_api_key
+        api_version = settings.mibuddy_api_version
+
+        logger.info(f"[IntentClassifier] model='{model_name}', endpoint='{endpoint}', key={'***' + api_key[-4:] if api_key and len(api_key) > 4 else '(empty)'}")
 
         if not model_name:
-            logger.error("[IntentClassifier] INTENT_CLASSIFIER_MODEL_NAME is empty!")
-            raise ValueError(
-                "Intent classifier not configured. Set INTENT_CLASSIFIER_MODEL_NAME (e.g. 'gpt-4o')."
-            )
+            raise ValueError("Set INTENT_CLASSIFIER_MODEL_NAME in .env")
+        if not endpoint or not api_key:
+            raise ValueError("Set MIBUDDY_ENDPOINT and MIBUDDY_API_KEY in .env")
 
-        api_key = settings.ltm_embedding_api_key
-        if not api_key:
-            logger.error("[IntentClassifier] LTM_EMBEDDING_API_KEY is empty!")
-            raise ValueError("LTM_EMBEDDING_API_KEY is empty — needed for intent classification.")
-
-        provider = settings.ltm_embedding_provider or "openai"
-        logger.info(f"[IntentClassifier] Creating {provider} model: deployment='{model_name}'")
-
-        if provider == "azure_openai":
-            from langchain_openai import AzureChatOpenAI
-            self._model = AzureChatOpenAI(
-                azure_endpoint=settings.ltm_azure_openai_endpoint,
-                azure_deployment=model_name,
-                api_version=settings.mibuddy_azure_api_version,
-                api_key=api_key,
-                temperature=0.0,
-                max_tokens=100,
-            )
-            logger.info(f"[IntentClassifier] AzureChatOpenAI created: endpoint='{settings.ltm_azure_openai_endpoint}', deployment='{model_name}', api_version='{settings.mibuddy_azure_api_version}'")
-        else:
-            from langchain_openai import ChatOpenAI
-            self._model = ChatOpenAI(
-                model=model_name,
-                api_key=api_key,
-                temperature=0.0,
-                max_tokens=100,
-            )
-            logger.info(f"[IntentClassifier] ChatOpenAI created: model='{model_name}'")
+        from langchain_openai import AzureChatOpenAI
+        self._model = AzureChatOpenAI(
+            azure_endpoint=endpoint,
+            azure_deployment=model_name,
+            api_version=api_version,
+            api_key=api_key,
+            temperature=0.0,
+            max_tokens=100,
+        )
         return self._model
 
     async def classify(self, query: str) -> Intent:

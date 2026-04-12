@@ -82,6 +82,7 @@ async def create_model(
         provider_config=data.provider_config,
         capabilities=data.capabilities,
         default_params=data.default_params,
+        show_in=data.show_in,
         is_active=data.is_active,
         created_by=data.created_by,
         # Tenancy / RBAC fields

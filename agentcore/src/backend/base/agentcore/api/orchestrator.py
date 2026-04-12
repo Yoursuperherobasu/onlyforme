@@ -1124,6 +1124,28 @@ async def _route_request(
     except Exception as e:
         logger.debug(f"[ORCH] Document session check failed (non-critical): {e}")
 
+    # Check if user selected MiBuddy AI — auto-pick best model
+    if body.model_id:
+        from agentcore.services.mibuddy.smart_router import SMART_ROUTER_UUID
+        if body.model_id == SMART_ROUTER_UUID:
+            from agentcore.services.mibuddy.smart_router import route_to_best_model
+            logger.info(f"[ORCH] MiBuddy AI: analyzing query to pick best model")
+            routed = await route_to_best_model(body.input_value)
+            if routed:
+                routed_id, routed_name = routed
+                logger.info(f"[ORCH] MiBuddy AI selected: {routed_name}")
+                return {
+                    "mode": "model_direct",
+                    "agent_id": None,
+                    "deployment_id": None,
+                    "deployment": None,
+                    "model_id": UUID(routed_id),
+                    "intent": "smart_router",
+                    "routed_model_name": routed_name,
+                }
+            else:
+                logger.warning("[ORCH] MiBuddy AI failed, falling back to first available model")
+
     # Check if user selected a model
     if body.model_id:
         return {
@@ -1342,7 +1364,8 @@ async def orch_chat(
 
         elif mode == "web_search":
             from agentcore.services.mibuddy.web_search_handler import handle_web_search
-            result = await handle_web_search(body.input_value)
+            from agentcore.services.mibuddy.system_prompts import get_system_identity_prompt
+            result = await handle_web_search(body.input_value, system_message=get_system_identity_prompt())
             response_text = result["response_text"]
             resp_model_name = result.get("model_name", "gemini")
             sender_name = "Web Search"
@@ -1564,8 +1587,10 @@ async def orch_chat_stream(
                     )
                 elif _mode == "web_search":
                     from agentcore.services.mibuddy.web_search_handler import handle_web_search_stream
+                    from agentcore.services.mibuddy.system_prompts import get_system_identity_prompt
                     result = await handle_web_search_stream(
                         _input_value,
+                        system_message=get_system_identity_prompt(),
                         event_manager=event_manager,
                     )
                 elif _mode == "image_gen":
@@ -2195,6 +2220,30 @@ async def serve_mibuddy_image(user_id: str, subfolder: str, file_name: str):
 
 
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Autocomplete suggestions
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/suggestions",
+    status_code=200,
+    dependencies=[Depends(PermissionChecker(["interact_agents"]))],
+)
+async def get_suggestions(
+    q: str = "",
+):
+    """Generate autocomplete suggestions as user types."""
+    try:
+        from agentcore.services.mibuddy.suggestion_service import get_suggestions
+        suggestions = await get_suggestions(q)
+        return {"suggestions": suggestions}
+    except Exception as e:
+        logger.debug(f"Suggestions failed: {e}")
+        return {"suggestions": []}
+
+
+# ---------------------------------------------------------------------------
 # List available models for orchestrator chat
 # ---------------------------------------------------------------------------
 
@@ -2228,12 +2277,17 @@ async def list_orch_models(
 
         logger.info(f"[ORCH Models] image_gen_model_name='{settings.image_gen_model_name}', web_search_model_name='{settings.web_search_model_name}'")
 
-        # ── Virtual entries ──
-        # Web Search and Image Gen models come from registry naturally
-        # No virtual entries needed — they appear with their registry names
-        # and capabilities detected from model_capabilities.py
-        # The model registered with IMAGE_GEN_MODEL_NAME will appear naturally
-        # in the registry results with image_generation capability detected
+        # ── Virtual entry: MiBuddy AI ──
+        if settings.smart_router_enabled:
+            from agentcore.services.mibuddy.smart_router import SMART_ROUTER_UUID
+            result.append(OrchModelSummary(
+                model_id=SMART_ROUTER_UUID,
+                display_name="MiBuddy AI",
+                provider="auto",
+                model_name="smart-router",
+                model_type="llm",
+                capabilities={"smart_router": True},
+            ))
 
         # ── Real models from registry ──
         raw_rows = await fetch_registry_models_async(
@@ -2250,6 +2304,10 @@ async def list_orch_models(
                         continue
                     approval = str(row.get("approval_status", "approved")).lower()
                     if approval != "approved":
+                        continue
+                    # Filter by show_in: only show models meant for orchestrator
+                    show_in = row.get("show_in") or ["orchestrator", "agent"]
+                    if "orchestrator" not in show_in:
                         continue
                     provider = row.get("provider", "")
                     model_name_val = row.get("model_name", "")
@@ -2291,6 +2349,7 @@ async def list_orch_models(
                 capabilities=detect_capabilities(row.provider, row.model_name, row.capabilities),
             )
             for row in rows
+            if "orchestrator" in (row.show_in or ["orchestrator", "agent"])
         ]
 
     except HTTPException:

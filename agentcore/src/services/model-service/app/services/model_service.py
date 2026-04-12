@@ -171,6 +171,15 @@ def _extract_reasoning(raw_content, ai_message: AIMessage) -> tuple[str, str | N
     if not reasoning_content and metadata.get("reasoning_content"):
         reasoning_content = metadata["reasoning_content"]
 
+    # Google Gemini: thinking in metadata.thoughts or additional_kwargs.thoughts
+    if not reasoning_content:
+        thoughts = additional_kwargs.get("thoughts") or metadata.get("thoughts")
+        if thoughts:
+            if isinstance(thoughts, list):
+                reasoning_content = "\n".join(str(t) for t in thoughts)
+            else:
+                reasoning_content = str(thoughts)
+
     return content, reasoning_content
 
 

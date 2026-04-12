@@ -877,7 +877,7 @@ export default function AgentOrchestrator() {
   const handleInputChange = (value: string) => {
     setInput(value);
     const match = value.match(/@([\w\s().-]*)$/);
-    if (match) {
+    if (match && !noAgentMode) {
       const query = match[1].toLowerCase();
       setFilteredAgents(agents.filter((a) => a.name.toLowerCase().includes(query)));
       setShowMentions(true);
