@@ -138,6 +138,12 @@ export default defineConfig(({ mode }) => {
       "process.env.AZURE_REDIRECT_URI": JSON.stringify(
         envAgentCore.AZURE_REDIRECT_URI ?? msalRedirectUriDefault,
       ),
+      "process.env.SHAREPOINT_TENANT_ID": JSON.stringify(
+        envAgentCore.SHAREPOINT_TENANT_ID ?? "",
+      ),
+      "process.env.SHAREPOINT_CLIENT_ID": JSON.stringify(
+        envAgentCore.SHAREPOINT_CLIENT_ID ?? "",
+      ),
       "process.env.MSAL_AUTHORITY": JSON.stringify(
         envAgentCore.MSAL_AUTHORITY ?? msalAuthorityDefault ?? "",
       ),

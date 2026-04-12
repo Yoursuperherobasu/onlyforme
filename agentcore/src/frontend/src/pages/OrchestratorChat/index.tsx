@@ -50,7 +50,12 @@ interface Message {
   contentBlocks?: ContentBlock[];
   blocksState?: string;
   files?: string[];
+<<<<<<< HEAD
+  // Canvas
+  canvasEnabled?: boolean;
+=======
   reasoningContent?: string;
+>>>>>>> e255f869834aa85a0565d8b481a54ec8c4c372df
   // HITL (Human-in-the-Loop) approval fields
   hitl?: boolean;
   hitlActions?: string[];
@@ -418,6 +423,10 @@ export default function AgentOrchestrator() {
   // Addon: Image gallery view (replaces chat area when active)
   const [showImageGallery, setShowImageGallery] = useState(false);
   const [selectedGalleryImage, setSelectedGalleryImage] = useState<{ src: string; name: string } | null>(null);
+  // Addon: Canvas mode
+  const [isCanvasEnabled, setIsCanvasEnabled] = useState(false);
+  const [canvasEditingId, setCanvasEditingId] = useState<string | null>(null);
+  const [canvasEditTexts, setCanvasEditTexts] = useState<Record<string, string>>({});
   // Addon: Speech-to-Text (mic)
   const [isListening, setIsListening] = useState(false);
   const recognitionRef = useRef<any>(null);
@@ -1043,6 +1052,7 @@ export default function AgentOrchestrator() {
       content: input,
       timestamp: timeNow(),
       files: filePaths.length > 0 ? filePaths : undefined,
+      canvasEnabled: isCanvasEnabled || undefined,
     };
     flushSync(() => {
       setMessages((prev) => [
@@ -1679,11 +1689,19 @@ export default function AgentOrchestrator() {
             <span>{t("Create image")}</span>
           </button>
           <button
-            onClick={() => setShowPlusMenu(false)}
-            className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm text-foreground hover:bg-accent"
+            onClick={() => {
+              setShowPlusMenu(false);
+              setIsCanvasEnabled(!isCanvasEnabled);
+            }}
+            className="flex w-full items-center justify-between rounded-lg px-3 py-2.5 text-left text-sm text-foreground hover:bg-accent"
           >
-            <BookOpen size={16} className="text-muted-foreground" />
-            <span>{t("Canvas")}</span>
+            <div className="flex items-center gap-3">
+              <BookOpen size={16} className={isCanvasEnabled ? "text-red-500" : "text-muted-foreground"} />
+              <span>{t("Canvas")}</span>
+            </div>
+            {isCanvasEnabled && (
+              <span className="text-xs font-medium text-red-500">ON</span>
+            )}
           </button>
           <button
             onClick={() => {
@@ -1705,24 +1723,7 @@ export default function AgentOrchestrator() {
             <FileUp size={16} className="text-green-500" />
             <span>{t("Upload from SharePoint")}</span>
           </button>
-          <button
-            onClick={() => {
-              setShowPlusMenu(false);
-              setOutlookDialogOpen(true);
-            }}
-            className="flex w-full items-center justify-between rounded-lg px-3 py-2.5 text-left text-sm text-foreground hover:bg-accent"
-          >
-            <div className="flex items-center gap-3">
-              <Mail size={16} className="text-blue-500" />
-              <span>{t("Outlook Connector")}</span>
-            </div>
-            {isOutlookConnected && (
-              <span className="flex items-center gap-1 text-xs text-green-500">
-                <Check size={12} />
-                Connected
-              </span>
-            )}
-          </button>
+          
           <div className="my-1 h-px bg-border" />
           {(() => {
             const selectedModel = noAgentMode && selectedAiModel ? aiModels.find((m) => m.id === selectedAiModel) : null;
@@ -2042,6 +2043,9 @@ export default function AgentOrchestrator() {
 
               const isUser = msg.sender === "user";
               const isThinking = msg.sender === "agent" && msg.content === "" && isSending;
+
+              // Canvas: any agent message can be edited via canvas
+              const isEditingThis = canvasEditingId === msg.id;
               const hasFollowupAgentReply = messages
                 .slice(idx + 1)
                 .some(
@@ -2339,6 +2343,21 @@ export default function AgentOrchestrator() {
                 rows={1}
                 className={`w-full resize-none border-none bg-transparent px-5 py-4 pr-14 text-[15px] text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-0 ${(isSending || !canInteract) ? "cursor-not-allowed opacity-50" : ""}`}
               />
+              {/* Canvas indicator pill */}
+              {isCanvasEnabled && (
+                <div className="flex items-center px-4 pb-1">
+                  <div className="inline-flex items-center gap-1.5 rounded-full border border-red-200 bg-red-50 px-3 py-1 dark:border-red-800 dark:bg-red-950/30">
+                    <Pencil size={12} className="text-red-500" />
+                    <span className="text-xs font-semibold text-red-500">{t("Canvas")}</span>
+                    <button
+                      onClick={() => setIsCanvasEnabled(false)}
+                      className="ml-0.5 rounded-full p-0.5 text-red-400 hover:bg-red-100 hover:text-red-600 dark:hover:bg-red-900/50"
+                    >
+                      <X size={10} />
+                    </button>
+                  </div>
+                </div>
+              )}
               <div className="flex items-center justify-between px-3 pb-3">
                 <div className="flex items-center gap-1">
                   {/* ---- Addon: Plus menu button ---- */}

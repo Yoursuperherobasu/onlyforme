@@ -20,27 +20,47 @@ import requests
 
 logger = logging.getLogger(__name__)
 
-# Read from environment (populated by Key Vault at startup)
-AZURE_AD_TENANT_ID = os.getenv("AZURE_TENANT_ID", "")
-AZURE_AD_CLIENT_ID = os.getenv("AZURE_CLIENT_ID", "")
-AZURE_AD_CLIENT_SECRET = os.getenv("AZURE_CLIENT_SECRET", "")
+# Read from environment (populated by Key Vault at startup).
+# The orchestrator SharePoint file picker uses its own dedicated credentials
+# (SHAREPOINT_TENANT_ID / SHAREPOINT_CLIENT_ID / SHAREPOINT_CLIENT_SECRET),
+# kept separate from the main agentcore login (AZURE_*). If the SHAREPOINT_*
+# vars are not set, we fall back to AZURE_* for backward compatibility.
+SHAREPOINT_TENANT_ID = os.getenv("SHAREPOINT_TENANT_ID", "") or os.getenv("AZURE_TENANT_ID", "")
+SHAREPOINT_CLIENT_ID = os.getenv("SHAREPOINT_CLIENT_ID", "") or os.getenv("AZURE_CLIENT_ID", "")
+SHAREPOINT_CLIENT_SECRET = os.getenv("SHAREPOINT_CLIENT_SECRET", "") or os.getenv("AZURE_CLIENT_SECRET", "")
 
 
 class SharePointService:
     """Service for SharePoint/OneDrive operations via Microsoft Graph API"""
 
     GRAPH_API_ENDPOINT = "https://graph.microsoft.com/v1.0"
-    TOKEN_ENDPOINT = f"https://login.microsoftonline.com/{AZURE_AD_TENANT_ID}/oauth2/v2.0/token"
-    AUTHORIZE_ENDPOINT = f"https://login.microsoftonline.com/{AZURE_AD_TENANT_ID}/oauth2/v2.0/authorize"
+    TOKEN_ENDPOINT = f"https://login.microsoftonline.com/{SHAREPOINT_TENANT_ID}/oauth2/v2.0/token"
+    AUTHORIZE_ENDPOINT = f"https://login.microsoftonline.com/{SHAREPOINT_TENANT_ID}/oauth2/v2.0/authorize"
 
     USER_SCOPES = "User.Read Files.Read.All Sites.Read.All"
 
     @staticmethod
     def _get_credentials() -> tuple[str, str, str]:
-        """Get credentials, re-reading from env in case they were loaded after import."""
-        tenant_id = os.getenv("AZURE_TENANT_ID", "") or AZURE_AD_TENANT_ID
-        client_id = os.getenv("AZURE_CLIENT_ID", "") or AZURE_AD_CLIENT_ID
-        client_secret = os.getenv("AZURE_CLIENT_SECRET", "") or AZURE_AD_CLIENT_SECRET
+        """Get credentials, re-reading from env in case they were loaded after import.
+
+        Prefers the dedicated SHAREPOINT_* vars (used by the orchestrator file
+        picker) and falls back to AZURE_* for older deployments.
+        """
+        tenant_id = (
+            os.getenv("SHAREPOINT_TENANT_ID", "")
+            or os.getenv("AZURE_TENANT_ID", "")
+            or SHAREPOINT_TENANT_ID
+        )
+        client_id = (
+            os.getenv("SHAREPOINT_CLIENT_ID", "")
+            or os.getenv("AZURE_CLIENT_ID", "")
+            or SHAREPOINT_CLIENT_ID
+        )
+        client_secret = (
+            os.getenv("SHAREPOINT_CLIENT_SECRET", "")
+            or os.getenv("AZURE_CLIENT_SECRET", "")
+            or SHAREPOINT_CLIENT_SECRET
+        )
         return tenant_id, client_id, client_secret
 
     @staticmethod
