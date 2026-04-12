@@ -16,12 +16,37 @@ from agentcore.services.database.models.product_release.model import ProductRele
 from agentcore.services.deps import session_scope
 
 ACTIVE_END_DATE = date(9999, 12, 31)
-_PROJECT_ROOT = Path(__file__).resolve().parents[3]
 _BACKEND_SERVICE_NAME = "backend"
 
 
 def _normalize(name: str) -> str:
     return re.sub(r"[-_.]+", "-", name.strip().lower())
+
+
+def _resolve_project_file(filename: str, env_var: str) -> Path:
+    configured_path = os.getenv(env_var)
+    if configured_path:
+        return Path(configured_path).expanduser()
+
+    module_dir = Path(__file__).resolve().parent
+    search_roots = [Path.cwd(), module_dir, *module_dir.parents]
+    seen_roots: set[Path] = set()
+    for root in search_roots:
+        if root in seen_roots:
+            continue
+        seen_roots.add(root)
+        candidate = root / filename
+        if candidate.exists():
+            return candidate
+
+    fallback = Path.cwd() / filename
+    logger.warning(
+        "{} not configured via {} and not found by upward search; defaulting to {}",
+        filename,
+        env_var,
+        fallback,
+    )
+    return fallback
 
 
 def _parse_pyproject(pyproject_path: Path) -> list[dict[str, str]]:
@@ -93,8 +118,8 @@ async def sync_packages_to_db() -> None:
             logger.warning("Package table missing; skipping backend package sync")
             return
 
-    pyproject_path = _PROJECT_ROOT / "pyproject.toml"
-    uv_lock_path = _PROJECT_ROOT / "uv.lock"
+    pyproject_path = _resolve_project_file("pyproject.toml", "PYPROJECT_PATH")
+    uv_lock_path = _resolve_project_file("uv.lock", "UV_LOCK_PATH")
     declared = _parse_pyproject(pyproject_path)
     lock_pkgs = _parse_uv_lock(uv_lock_path)
 
