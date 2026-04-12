@@ -11,12 +11,8 @@ from __future__ import annotations
 
 import json
 import logging
-from uuid import UUID
 
 logger = logging.getLogger(__name__)
-
-# Smart Router UUID — used as virtual model_id in the dropdown
-SMART_ROUTER_UUID = UUID("00000000-0000-0000-0000-000000000003")
 
 
 async def _get_available_models() -> list[dict]:

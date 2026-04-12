@@ -351,6 +351,9 @@ class Settings(BaseSettings):
     default_chat_model_id: str = ""
     """UUID of the registry model used when no model and no agent is selected and intent is general_chat.
     If empty, requests without a model or agent will return 400."""
+    default_orch_model_name: str = ""
+    """Display name of the default model in the orchestrator dropdown (e.g. 'MiBuddy AI').
+    This model is auto-selected on page load and triggers smart routing when selected."""
     # Image Generation (from model registry — identified by display name)
     image_gen_model_name: str = ""
     """Display name of the image generation model in the registry (e.g. 'Nano Banana', 'dall-e-3').

@@ -182,6 +182,7 @@ class OrchModelSummary(BaseModel):
     model_name: str
     model_type: str = "llm"
     capabilities: dict | None = None
+    is_default: bool = False
 
 
 class OrchSessionSummary(BaseModel):
@@ -1124,27 +1125,42 @@ async def _route_request(
     except Exception as e:
         logger.debug(f"[ORCH] Document session check failed (non-critical): {e}")
 
-    # Check if user selected MiBuddy AI — auto-pick best model
+    # Check if user selected the default/smart-router model — auto-pick best model
     if body.model_id:
-        from agentcore.services.mibuddy.smart_router import SMART_ROUTER_UUID
-        if body.model_id == SMART_ROUTER_UUID:
-            from agentcore.services.mibuddy.smart_router import route_to_best_model
-            logger.info(f"[ORCH] MiBuddy AI: analyzing query to pick best model")
-            routed = await route_to_best_model(body.input_value)
-            if routed:
-                routed_id, routed_name = routed
-                logger.info(f"[ORCH] MiBuddy AI selected: {routed_name}")
-                return {
-                    "mode": "model_direct",
-                    "agent_id": None,
-                    "deployment_id": None,
-                    "deployment": None,
-                    "model_id": UUID(routed_id),
-                    "intent": "smart_router",
-                    "routed_model_name": routed_name,
-                }
-            else:
-                logger.warning("[ORCH] MiBuddy AI failed, falling back to first available model")
+        settings_svc = get_settings_service().settings
+        default_name = (settings_svc.default_orch_model_name or "").strip().lower()
+        if default_name and settings_svc.smart_router_enabled:
+            # Look up the selected model's display name from registry
+            is_default_model = False
+            try:
+                from agentcore.services.model_service_client import fetch_registry_models_async
+                all_models = await fetch_registry_models_async(model_type="llm", active_only=True)
+                for m in (all_models or []):
+                    if str(m.get("id", "")) == str(body.model_id):
+                        if (m.get("display_name", "")).strip().lower() == default_name:
+                            is_default_model = True
+                        break
+            except Exception:
+                pass
+
+            if is_default_model:
+                from agentcore.services.mibuddy.smart_router import route_to_best_model
+                logger.info(f"[ORCH] Default model (smart router): analyzing query to pick best model")
+                routed = await route_to_best_model(body.input_value)
+                if routed:
+                    routed_id, routed_name = routed
+                    logger.info(f"[ORCH] Smart router selected: {routed_name}")
+                    return {
+                        "mode": "model_direct",
+                        "agent_id": None,
+                        "deployment_id": None,
+                        "deployment": None,
+                        "model_id": UUID(routed_id),
+                        "intent": "smart_router",
+                        "routed_model_name": routed_name,
+                    }
+                else:
+                    logger.warning("[ORCH] Smart router failed, falling back to direct model chat")
 
     # Check if user selected a model
     if body.model_id:
@@ -2274,20 +2290,9 @@ async def list_orch_models(
 
         result: list[OrchModelSummary] = []
         settings = get_settings_service().settings
+        default_model_name = (settings.default_orch_model_name or "").strip().lower()
 
-        logger.info(f"[ORCH Models] image_gen_model_name='{settings.image_gen_model_name}', web_search_model_name='{settings.web_search_model_name}'")
-
-        # ── Virtual entry: MiBuddy AI ──
-        if settings.smart_router_enabled:
-            from agentcore.services.mibuddy.smart_router import SMART_ROUTER_UUID
-            result.append(OrchModelSummary(
-                model_id=SMART_ROUTER_UUID,
-                display_name="MiBuddy AI",
-                provider="auto",
-                model_name="smart-router",
-                model_type="llm",
-                capabilities={"smart_router": True},
-            ))
+        logger.info(f"[ORCH Models] image_gen_model_name='{settings.image_gen_model_name}', web_search_model_name='{settings.web_search_model_name}', default_orch_model_name='{settings.default_orch_model_name}'")
 
         # ── Real models from registry ──
         raw_rows = await fetch_registry_models_async(
@@ -2313,18 +2318,22 @@ async def list_orch_models(
                     model_name_val = row.get("model_name", "")
                     explicit_caps = row.get("capabilities")
                     merged_caps = detect_capabilities(provider, model_name_val, explicit_caps)
+                    display = row.get("display_name", model_name_val)
                     result.append(
                         OrchModelSummary(
                             model_id=UUID(str(model_id)),
-                            display_name=row.get("display_name", model_name_val),
+                            display_name=display,
                             provider=provider,
                             model_name=model_name_val,
                             model_type=row.get("model_type", "llm"),
                             capabilities=merged_caps,
+                            is_default=bool(default_model_name and display.strip().lower() == default_model_name),
                         )
                     )
                 except Exception:
                     continue
+            # Put default model first
+            result.sort(key=lambda m: (not m.is_default, m.display_name))
             return result
 
         # Strategy 2: Fallback to local DB if model service unavailable
@@ -2347,6 +2356,7 @@ async def list_orch_models(
                 model_name=row.model_name,
                 model_type=row.model_type,
                 capabilities=detect_capabilities(row.provider, row.model_name, row.capabilities),
+                is_default=bool(default_model_name and row.display_name.strip().lower() == default_model_name),
             )
             for row in rows
             if "orchestrator" in (row.show_in or ["orchestrator", "agent"])
