@@ -1,6 +1,6 @@
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
-import { Send, Sparkles, ChevronDown, Plus, MessageSquare, PanelLeftClose, PanelLeft, User, Loader2, Trash2, Check, ImagePlus, X, Clock, Search, Image, Archive, ChevronRight, Globe, BookOpen, Headphones, Info, HelpCircle, Mic, AudioLines, FileUp, Paintbrush, Lightbulb, Upload, MoreVertical, Folder, ArrowLeft, File, Shield, CheckCircle2, SquarePen, Mail, Download } from "lucide-react";
+import { Send, Sparkles, ChevronDown, Plus, MessageSquare, PanelLeftClose, PanelLeft, User, Loader2, Trash2, Check, ImagePlus, X, Clock, Search, Image, Archive, ChevronRight, Globe, BookOpen, Headphones, Info, HelpCircle, Mic, AudioLines, FileUp, Paintbrush, Lightbulb, Upload, MoreVertical, Folder, ArrowLeft, File, Shield, CheckCircle2, SquarePen, Mail, Download, Pencil, Save } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import {
   useGetOrchAgents,
@@ -50,6 +50,8 @@ interface Message {
   contentBlocks?: ContentBlock[];
   blocksState?: string;
   files?: string[];
+  // Canvas
+  canvasEnabled?: boolean;
   // HITL (Human-in-the-Loop) approval fields
   hitl?: boolean;
   hitlActions?: string[];
@@ -405,6 +407,10 @@ export default function AgentOrchestrator() {
   // Addon: Image gallery view (replaces chat area when active)
   const [showImageGallery, setShowImageGallery] = useState(false);
   const [selectedGalleryImage, setSelectedGalleryImage] = useState<{ src: string; name: string } | null>(null);
+  // Addon: Canvas mode
+  const [isCanvasEnabled, setIsCanvasEnabled] = useState(false);
+  const [canvasEditingId, setCanvasEditingId] = useState<string | null>(null);
+  const [canvasEditTexts, setCanvasEditTexts] = useState<Record<string, string>>({});
   // Addon: Speech-to-Text (mic)
   const [isListening, setIsListening] = useState(false);
   const recognitionRef = useRef<any>(null);
@@ -964,6 +970,7 @@ export default function AgentOrchestrator() {
       content: input,
       timestamp: timeNow(),
       files: filePaths.length > 0 ? filePaths : undefined,
+      canvasEnabled: isCanvasEnabled || undefined,
     };
     flushSync(() => {
       setMessages((prev) => [
@@ -1581,11 +1588,19 @@ export default function AgentOrchestrator() {
             <span>{t("Create image")}</span>
           </button>
           <button
-            onClick={() => setShowPlusMenu(false)}
-            className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm text-foreground hover:bg-accent"
+            onClick={() => {
+              setShowPlusMenu(false);
+              setIsCanvasEnabled(!isCanvasEnabled);
+            }}
+            className="flex w-full items-center justify-between rounded-lg px-3 py-2.5 text-left text-sm text-foreground hover:bg-accent"
           >
-            <BookOpen size={16} className="text-muted-foreground" />
-            <span>{t("Canvas")}</span>
+            <div className="flex items-center gap-3">
+              <BookOpen size={16} className={isCanvasEnabled ? "text-red-500" : "text-muted-foreground"} />
+              <span>{t("Canvas")}</span>
+            </div>
+            {isCanvasEnabled && (
+              <span className="text-xs font-medium text-red-500">ON</span>
+            )}
           </button>
           <button
             onClick={() => {
@@ -1607,41 +1622,9 @@ export default function AgentOrchestrator() {
             <FileUp size={16} className="text-green-500" />
             <span>{t("Upload from SharePoint")}</span>
           </button>
-          <button
-            onClick={() => {
-              setShowPlusMenu(false);
-              setOutlookDialogOpen(true);
-            }}
-            className="flex w-full items-center justify-between rounded-lg px-3 py-2.5 text-left text-sm text-foreground hover:bg-accent"
-          >
-            <div className="flex items-center gap-3">
-              <Mail size={16} className="text-blue-500" />
-              <span>{t("Outlook Connector")}</span>
-            </div>
-            {isOutlookConnected && (
-              <span className="flex items-center gap-1 text-xs text-green-500">
-                <Check size={12} />
-                Connected
-              </span>
-            )}
-          </button>
+          
           <div className="my-1 h-px bg-border" />
-          <button
-            onClick={() => setCotReasoning(!cotReasoning)}
-            className="flex w-full items-center justify-between rounded-lg px-3 py-2.5 text-left text-sm text-foreground hover:bg-accent"
-          >
-            <div className="flex items-center gap-3">
-              <Lightbulb size={16} className="text-muted-foreground" />
-              <span>{t("COT reasoning")}</span>
-            </div>
-            <div
-              className={`relative h-5 w-9 rounded-full transition-colors ${cotReasoning ? "bg-primary" : "bg-muted-foreground/30"}`}
-            >
-              <div
-                className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow-sm transition-transform ${cotReasoning ? "translate-x-4" : "translate-x-0.5"}`}
-              />
-            </div>
-          </button>
+          
         </div>
       )}
 
@@ -1909,6 +1892,9 @@ export default function AgentOrchestrator() {
 
               const isUser = msg.sender === "user";
               const isThinking = msg.sender === "agent" && msg.content === "" && isSending;
+
+              // Canvas: any agent message can be edited via canvas
+              const isEditingThis = canvasEditingId === msg.id;
               const hasFollowupAgentReply = messages
                 .slice(idx + 1)
                 .some(
@@ -1978,22 +1964,84 @@ export default function AgentOrchestrator() {
                             isLoading={isSending && msg.id === streamingMsgId}
                           />
                         )}
-                        <MarkdownField
-                          chat={{}}
-                          isEmpty={!msg.content}
-                          chatMessage={msg.content}
-                          editedFlag={null}
-                        />
-                        {/* Text-to-Speech button */}
-                        {msg.content && !isSending && (
-                          <button
-                            onClick={() => handleSpeak(msg.content)}
-                            className="mt-1.5 flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
-                            title={t("Read aloud")}
-                          >
-                            <AudioLines size={13} />
-                            <span>{t("Read aloud")}</span>
-                          </button>
+                        {/* Canvas edit mode */}
+                        {isEditingThis ? (
+                          <div className="rounded-xl border border-border">
+                            <textarea
+                              value={canvasEditTexts[msg.id] ?? msg.content}
+                              onChange={(e) =>
+                                setCanvasEditTexts((prev) => ({ ...prev, [msg.id]: e.target.value }))
+                              }
+                              className="min-h-[200px] w-full resize-y rounded-t-xl border-none bg-transparent p-4 text-[15px] leading-relaxed text-foreground focus:outline-none focus:ring-0"
+                              autoFocus
+                            />
+                            <div className="flex items-center justify-end gap-2 border-t border-border px-4 py-2.5">
+                              <button
+                                onClick={() => {
+                                  setCanvasEditTexts((prev) => {
+                                    const next = { ...prev };
+                                    delete next[msg.id];
+                                    return next;
+                                  });
+                                  setCanvasEditingId(null);
+                                }}
+                                className="flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-muted-foreground hover:bg-accent"
+                              >
+                                <X size={13} />
+                                {t("Cancel")}
+                              </button>
+                              <button
+                                onClick={() => {
+                                  const newText = canvasEditTexts[msg.id];
+                                  if (newText !== undefined) {
+                                    setMessages((prev) =>
+                                      prev.map((m) =>
+                                        m.id === msg.id ? { ...m, content: newText } : m,
+                                      ),
+                                    );
+                                  }
+                                  setCanvasEditingId(null);
+                                }}
+                                className="flex items-center gap-1.5 rounded-lg bg-green-500 px-3 py-1.5 text-xs font-medium text-white hover:bg-green-600"
+                              >
+                                <Check size={13} />
+                                {t("Save")}
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <>
+                            <MarkdownField
+                              chat={{}}
+                              isEmpty={!msg.content}
+                              chatMessage={msg.content}
+                              editedFlag={null}
+                            />
+                            {/* Action buttons: Read aloud + Edit */}
+                            {msg.content && !isSending && (
+                              <div className="mt-1.5 flex items-center gap-1">
+                                <button
+                                  onClick={() => handleSpeak(msg.content)}
+                                  className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
+                                  title={t("Read aloud")}
+                                >
+                                  <AudioLines size={13} />
+                                  <span>{t("Read aloud")}</span>
+                                </button>
+                                <button
+                                  onClick={() => {
+                                    setCanvasEditTexts((prev) => ({ ...prev, [msg.id]: msg.content }));
+                                    setCanvasEditingId(msg.id);
+                                  }}
+                                  className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
+                                  title={t("Edit in canvas")}
+                                >
+                                  <Pencil size={13} />
+                                  <span>{t("Edit")}</span>
+                                </button>
+                              </div>
+                            )}
+                          </>
                         )}
                         {/* HITL action buttons */}
                         {msg.hitl && (
@@ -2175,6 +2223,21 @@ export default function AgentOrchestrator() {
                 rows={1}
                 className={`w-full resize-none border-none bg-transparent px-5 py-4 pr-14 text-[15px] text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-0 ${(isSending || !canInteract) ? "cursor-not-allowed opacity-50" : ""}`}
               />
+              {/* Canvas indicator pill */}
+              {isCanvasEnabled && (
+                <div className="flex items-center px-4 pb-1">
+                  <div className="inline-flex items-center gap-1.5 rounded-full border border-red-200 bg-red-50 px-3 py-1 dark:border-red-800 dark:bg-red-950/30">
+                    <Pencil size={12} className="text-red-500" />
+                    <span className="text-xs font-semibold text-red-500">{t("Canvas")}</span>
+                    <button
+                      onClick={() => setIsCanvasEnabled(false)}
+                      className="ml-0.5 rounded-full p-0.5 text-red-400 hover:bg-red-100 hover:text-red-600 dark:hover:bg-red-900/50"
+                    >
+                      <X size={10} />
+                    </button>
+                  </div>
+                </div>
+              )}
               <div className="flex items-center justify-between px-3 pb-3">
                 <div className="flex items-center gap-1">
                   {/* ---- Addon: Plus menu button ---- */}

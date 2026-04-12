@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
-import { useMsal } from "@azure/msal-react";
+import type { PublicClientApplication, AccountInfo } from "@azure/msal-browser";
 import { Client, ResponseType } from "@microsoft/microsoft-graph-client";
+import { getSharepointMsalInstance, initSharepointMsal, sharepointLoginRequest } from "./sharepointMsalConfig";
 import {
   Loader2,
   Folder,
@@ -14,11 +15,6 @@ import {
   Check,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
-
-/* SharePoint scopes — broader than the default login scopes */
-const sharepointLoginRequest = {
-  scopes: ["User.Read", "Files.Read.All", "Sites.Read.All"],
-};
 
 interface DriveItem {
   id: string;
@@ -42,7 +38,8 @@ export default function SharePointFilePicker({
   onFilesSelected,
 }: SharePointFilePickerProps) {
   const { t } = useTranslation();
-  const { instance, accounts } = useMsal();
+  const [spMsal, setSpMsal] = useState<PublicClientApplication | null>(null);
+  const [account, setAccount] = useState<AccountInfo | null>(null);
   const [items, setItems] = useState<DriveItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [folderStack, setFolderStack] = useState<
@@ -50,8 +47,42 @@ export default function SharePointFilePicker({
   >([]);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
-  // Whether the user has granted SharePoint consent this session
   const [spConsented, setSpConsented] = useState(false);
+
+  // Initialize the SharePoint MSAL instance when the picker opens.
+  // By the time the user reads the consent screen and clicks
+  // "Accept & Continue", the async init is long finished and the click
+  // handler can call loginPopup synchronously.
+  useEffect(() => {
+    if (!isOpen) return;
+    // Already have it — just seed account
+    const existing = getSharepointMsalInstance();
+    if (existing) {
+      setSpMsal(existing);
+      const accts = existing.getAllAccounts();
+      if (accts.length > 0) {
+        existing.setActiveAccount(accts[0]);
+        setAccount(accts[0]);
+      }
+      return;
+    }
+    // First time — create and initialize
+    let cancelled = false;
+    initSharepointMsal()
+      .then((inst) => {
+        if (cancelled) return;
+        setSpMsal(inst);
+        const accts = inst.getAllAccounts();
+        if (accts.length > 0) {
+          inst.setActiveAccount(accts[0]);
+          setAccount(accts[0]);
+        }
+      })
+      .catch((err) => {
+        if (!cancelled) console.error("SharePoint MSAL init failed:", err);
+      });
+    return () => { cancelled = true; };
+  }, [isOpen]);
 
   // Reset state when modal opens
   useEffect(() => {
@@ -60,7 +91,6 @@ export default function SharePointFilePicker({
       setSelectedIds(new Set());
       setError(null);
       setItems([]);
-      // Don't reset spConsented — keep it across open/close within same session
     }
   }, [isOpen]);
 
@@ -74,27 +104,40 @@ export default function SharePointFilePicker({
   /* ── MSAL helpers ─────────────────────────────────────────────── */
 
   const handleAcceptAndContinue = async () => {
+    if (!spMsal) {
+      setError("SharePoint sign-in is still loading. Please try again.");
+      return;
+    }
+
     setLoading(true);
     setError(null);
+
+    // Call loginPopup / acquireTokenPopup SYNCHRONOUSLY from click — no
+    // awaits before this point so the browser keeps the user-gesture token.
+    const accounts = spMsal.getAllAccounts();
+    const popupPromise =
+      accounts.length === 0
+        ? spMsal.loginPopup(sharepointLoginRequest)
+        : spMsal
+            .acquireTokenSilent({
+              ...sharepointLoginRequest,
+              account: accounts[0],
+            })
+            .catch(() =>
+              spMsal.acquireTokenPopup({
+                ...sharepointLoginRequest,
+                account: accounts[0],
+              }),
+            );
+
     try {
-      // If not logged in at all, do a full login popup
-      if (accounts.length === 0) {
-        await instance.loginPopup(sharepointLoginRequest);
-      } else {
-        // Already logged in — acquire token with SharePoint scopes
-        // This may trigger a consent popup from Microsoft if not yet consented
-        try {
-          await instance.acquireTokenSilent({
-            ...sharepointLoginRequest,
-            account: accounts[0],
-          });
-        } catch {
-          // Silent failed — show popup for consent
-          await instance.acquireTokenPopup({
-            ...sharepointLoginRequest,
-            account: accounts[0],
-          });
-        }
+      const result = await popupPromise;
+      if (result?.account) {
+        spMsal.setActiveAccount(result.account);
+        setAccount(result.account);
+      } else if (accounts[0]) {
+        spMsal.setActiveAccount(accounts[0]);
+        setAccount(accounts[0]);
       }
       setSpConsented(true);
       await fetchFiles("root");
@@ -106,14 +149,22 @@ export default function SharePointFilePicker({
   };
 
   const getGraphClient = async (): Promise<Client> => {
-    const request = { ...sharepointLoginRequest, account: accounts[0] };
+    if (!spMsal) {
+      throw new Error("SharePoint MSAL not initialized.");
+    }
+    const activeAccount =
+      spMsal.getActiveAccount() ?? spMsal.getAllAccounts()[0];
+    if (!activeAccount) {
+      throw new Error("No SharePoint account — user must sign in first.");
+    }
+    const request = { ...sharepointLoginRequest, account: activeAccount };
     try {
-      const response = await instance.acquireTokenSilent(request);
+      const response = await spMsal.acquireTokenSilent(request);
       return Client.init({
         authProvider: (done) => done(null, response.accessToken),
       });
     } catch {
-      const response = await instance.acquireTokenPopup(request);
+      const response = await spMsal.acquireTokenPopup(request);
       return Client.init({
         authProvider: (done) => done(null, response.accessToken),
       });
