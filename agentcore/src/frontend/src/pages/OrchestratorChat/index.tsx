@@ -1483,39 +1483,90 @@ export default function AgentOrchestrator() {
           </button>
 
           {/* Search chats */}
-          <div className="relative">
-            <button
-              onClick={() => {
-                if (showSearchInput) {
-                  setShowSearchInput(false);
-                  setSidebarSearchQuery("");
-                } else {
-                  setShowSearchInput(true);
-                  setShowChatHistoryExpand(true);
-                }
-              }}
-              className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm text-foreground hover:bg-accent"
-            >
-              <Search size={16} className="shrink-0 text-muted-foreground" />
-              <span>{t("Search chats")}</span>
-            </button>
-            {showSearchInput && (
-              <input
-                type="text"
-                value={sidebarSearchQuery}
-                onChange={(e) => {
-                  setSidebarSearchQuery(e.target.value);
-                  if (e.target.value.trim()) {
-                    setShowChatHistoryExpand(true);
-                    setShowArchiveChatExpand(true);
-                  }
-                }}
-                placeholder={t("Search...")}
-                className="mx-3 mb-1 mt-0.5 w-[calc(100%-1.5rem)] rounded-md border border-border bg-background px-2.5 py-1.5 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
-                autoFocus
-              />
-            )}
-          </div>
+          <button
+            onClick={() => {
+              setShowSearchInput(true);
+              setSidebarSearchQuery("");
+            }}
+            className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm text-foreground hover:bg-accent"
+          >
+            <Search size={16} className="shrink-0 text-muted-foreground" />
+            <span>{t("Search chats")}</span>
+          </button>
+
+          {/* Search overlay */}
+          {showSearchInput && (
+            <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/30 pt-[10vh]" onClick={() => { setShowSearchInput(false); setSidebarSearchQuery(""); }}>
+              <div
+                className="w-full max-w-lg rounded-xl bg-background shadow-2xl border border-border"
+                onClick={(e) => e.stopPropagation()}
+              >
+                {/* Search input header */}
+                <div className="flex items-center gap-2 border-b border-border px-4 py-3">
+                  <input
+                    type="text"
+                    value={sidebarSearchQuery}
+                    onChange={(e) => setSidebarSearchQuery(e.target.value)}
+                    placeholder={t("Search chats...")}
+                    className="flex-1 bg-transparent text-sm text-foreground placeholder:text-muted-foreground focus:outline-none"
+                    autoFocus
+                  />
+                  <button
+                    onClick={() => { setShowSearchInput(false); setSidebarSearchQuery(""); }}
+                    className="shrink-0 rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
+                  >
+                    <X size={16} />
+                  </button>
+                </div>
+
+                {/* New chat button */}
+                <button
+                  onClick={() => { setShowSearchInput(false); setSidebarSearchQuery(""); handleNewChat(); }}
+                  className="flex w-full items-center gap-3 px-4 py-3 text-sm font-medium text-foreground hover:bg-accent"
+                >
+                  <SquarePen size={16} className="shrink-0 text-muted-foreground" />
+                  <span>{t("New-chat")}</span>
+                </button>
+
+                {/* Recent sessions list */}
+                <div className="max-h-[50vh] overflow-y-auto px-2 pb-3" style={{ scrollbarWidth: "thin" }}>
+                  {Object.entries(grouped).length === 0 && sidebarSearchQuery.trim() ? (
+                    <div className="px-4 py-6 text-center text-sm text-muted-foreground">
+                      {t("No matching chats")}
+                    </div>
+                  ) : (
+                    Object.entries(grouped).map(([date, chats]) => (
+                      <div key={date} className="mb-1">
+                        <div className="px-3 pb-1 pt-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                          {date}
+                        </div>
+                        {chats.map((chat) => (
+                          <button
+                            key={chat.session_id}
+                            onClick={() => { setShowSearchInput(false); setSidebarSearchQuery(""); handleSelectSession(chat.session_id); }}
+                            className={`flex w-full items-start gap-3 rounded-lg px-3 py-2.5 text-left text-sm hover:bg-accent ${
+                              currentSessionId === chat.session_id ? "bg-accent" : ""
+                            }`}
+                          >
+                            <MessageSquare size={14} className="mt-0.5 shrink-0 opacity-50" />
+                            <div className="min-w-0 flex-1">
+                              <div className="truncate font-medium text-foreground">
+                                {chat.active_agent_name || t("Chat")}
+                                {chat.active_agent_name ? ` - ${chat.active_agent_name}` : ""}
+                              </div>
+                              <div className="mt-0.5 truncate text-xs text-muted-foreground">
+                                {chat.preview || t("New conversation")}
+                              </div>
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Image — toggles gallery view in main area */}
           <button
