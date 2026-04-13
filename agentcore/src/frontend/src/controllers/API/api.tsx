@@ -108,9 +108,29 @@ function ApiInterceptor() {
         "https://cdn.sprig.com",
       ];
 
+      // Hostname suffixes that belong to Microsoft / SharePoint / OneDrive.
+      // The SharePoint picker talks to Graph directly with its own Azure AD
+      // token; Graph's /content endpoint also 302-redirects to SharePoint
+      // CDN hosts (*.sharepoint.com, *.files.1drv.com, etc.), so all of
+      // those must be treated as external and skip the interceptor.
+      const EXTERNAL_HOST_SUFFIXES = [
+        "graph.microsoft.com",
+        "login.microsoftonline.com",
+        ".sharepoint.com",
+        ".sharepoint-df.com",
+        ".files.1drv.com",
+        ".onedrive.com",
+      ];
+
       try {
         const parsedURL = new URL(url);
-        return EXTERNAL_DOMAINS.some((domain) => parsedURL.origin === domain);
+        if (EXTERNAL_DOMAINS.some((domain) => parsedURL.origin === domain)) {
+          return true;
+        }
+        const host = parsedURL.hostname.toLowerCase();
+        return EXTERNAL_HOST_SUFFIXES.some(
+          (suffix) => host === suffix || host.endsWith(suffix),
+        );
       } catch {
         return false;
       }

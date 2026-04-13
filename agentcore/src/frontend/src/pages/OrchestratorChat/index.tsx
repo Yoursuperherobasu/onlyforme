@@ -556,8 +556,24 @@ export default function AgentOrchestrator() {
   /* ------------------ SHAREPOINT FILE PICKER (Addon) ------------------ */
 
   const handleSpFilesSelected = (files: File[]) => {
+    const rejected: string[] = [];
     for (const file of files) {
+      const ext = file.name.split(".").pop()?.toLowerCase();
+      if (!ext || !ALLOWED_EXTENSIONS.includes(ext)) {
+        rejected.push(file.name);
+        continue;
+      }
       uploadFile(file);
+    }
+    if (rejected.length > 0) {
+      const allowedHint = noAgentMode
+        ? "Allowed file types: documents and images."
+        : "When an agent is selected, only image files are accepted. Switch to Model mode to upload documents.";
+      alert(
+        `Cannot upload the following file(s):\n` +
+          rejected.map((n) => `  • ${n}`).join("\n") +
+          `\n\n${allowedHint}`,
+      );
     }
   };
 
