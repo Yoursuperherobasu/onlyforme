@@ -333,14 +333,27 @@ class Settings(BaseSettings):
     """API key for authenticating with the Model microservice (sent as x-api-key header)."""
 
     # Intent Classification & Model Chat
+    # MiBuddy internal LLM (shared endpoint + API key for system models)
+    mibuddy_endpoint: str = ""
+    """Azure AI Foundry endpoint for MiBuddy system models (intent classifier, smart router, autocomplete)."""
+    mibuddy_api_key: str = ""
+    """API key for MiBuddy Azure AI Foundry endpoint."""
+    mibuddy_api_version: str = "2024-12-01-preview"
+    """Azure API version for MiBuddy system models."""
     intent_classifier_model_name: str = ""
-    """Azure deployment name or OpenAI model name for intent classification (e.g. 'gpt-4o').
-    Uses LTM_EMBEDDING API key/endpoint for auth."""
-    mibuddy_azure_api_version: str = "2024-12-01-preview"
-    """Azure OpenAI API version for MiBuddy LLM calls (intent classifier, etc.)."""
+    """Deployment name for intent classification (e.g. 'mibuddy-gpt-5.2-chat')."""
+    smart_router_enabled: bool = False
+    """Enable MiBuddy AI — auto-selects the best model from registry based on query complexity."""
+    smart_router_model_name: str = ""
+    """Deployment name for smart routing (e.g. 'mibuddy-gpt-5.2-chat'). If empty, uses intent_classifier_model_name."""
+    suggestion_model_name: str = ""
+    """Deployment name for autocomplete suggestions (e.g. 'Meta-Llama-3.1-8B-Instruct-Mibuddy')."""
     default_chat_model_id: str = ""
     """UUID of the registry model used when no model and no agent is selected and intent is general_chat.
     If empty, requests without a model or agent will return 400."""
+    default_orch_model_name: str = ""
+    """Display name of the default model in the orchestrator dropdown (e.g. 'MiBuddy AI').
+    This model is auto-selected on page load and triggers smart routing when selected."""
     # Image Generation (from model registry — identified by display name)
     image_gen_model_name: str = ""
     """Display name of the image generation model in the registry (e.g. 'Nano Banana', 'dall-e-3').

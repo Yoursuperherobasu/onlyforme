@@ -46,6 +46,11 @@ def _fetch_models_for_provider(provider: str, user_id: str | None = None) -> lis
         results = fetch_registry_models(provider=provider, model_type="llm")
         if user_id:
             results = filter_models_by_rbac(results, user_id)
+        # Filter: only show models meant for agent canvas
+        results = [
+            r for r in results
+            if "agent" in (r.get("show_in") or ["orchestrator", "agent"])
+        ]
         return [
             f"{r['display_name']} | {r['model_name']} | {r['id']}"
             for r in results

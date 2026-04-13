@@ -71,7 +71,7 @@ KNOWN_MODELS: list[tuple[str, dict]] = [
     ("gemini-2.0",      _caps(**{VISION: True, TOOL_CALLING: True, WEB_SEARCH: True})),
     ("gemini-1.5-pro",  _caps(**{VISION: True, TOOL_CALLING: True, WEB_SEARCH: True})),
     ("gemini-1.5",      _caps(**{VISION: True, TOOL_CALLING: True, WEB_SEARCH: True})),
-    ("gemini-3",        _caps(**{VISION: True, TOOL_CALLING: True, WEB_SEARCH: True})),
+    ("gemini-3",        _caps(**{REASONING: True, SUPPORTS_THINKING: True, VISION: True, TOOL_CALLING: True, WEB_SEARCH: True})),
     ("gemini",          _caps(**{VISION: True, TOOL_CALLING: True})),
 
     # ── DeepSeek Models ──

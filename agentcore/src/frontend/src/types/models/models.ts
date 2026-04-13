@@ -44,6 +44,7 @@ export interface ModelType {
   provider_config?: Record<string, any> | null;
   capabilities?: ModelCapabilities | null;
   default_params?: Record<string, any> | null;
+  show_in?: string[] | null;
   is_active: boolean;
   created_by?: string | null;
   created_by_email?: string | null;
@@ -68,6 +69,7 @@ export interface ModelCreateRequest {
   provider_config?: Record<string, any> | null;
   capabilities?: ModelCapabilities | null;
   default_params?: Record<string, any> | null;
+  show_in?: string[] | null;
   is_active?: boolean;
 }
 
@@ -88,6 +90,7 @@ export interface ModelUpdateRequest {
   provider_config?: Record<string, any> | null;
   capabilities?: ModelCapabilities | null;
   default_params?: Record<string, any> | null;
+  show_in?: string[] | null;
   is_active?: boolean;
 }
 

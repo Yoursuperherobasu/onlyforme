@@ -50,12 +50,7 @@ interface Message {
   contentBlocks?: ContentBlock[];
   blocksState?: string;
   files?: string[];
-<<<<<<< HEAD
-  // Canvas
-  canvasEnabled?: boolean;
-=======
   reasoningContent?: string;
->>>>>>> e255f869834aa85a0565d8b481a54ec8c4c372df
   // HITL (Human-in-the-Loop) approval fields
   hitl?: boolean;
   hitlActions?: string[];
@@ -213,6 +208,7 @@ interface AiModelOption {
   icon: string;        // color for the dot/icon
   group: "main" | "more";
   capabilities?: Record<string, any>;
+  is_default?: boolean;
 }
 
 // Provider → color mapping for model dots
@@ -655,6 +651,7 @@ export default function AgentOrchestrator() {
           icon: providerColor(m.provider),
           group: (idx < 5 ? "main" : "more") as "main" | "more",
           capabilities: m.capabilities || undefined,
+          is_default: m.is_default || false,
         }));
         setAiModels(models);
       })
@@ -886,7 +883,7 @@ export default function AgentOrchestrator() {
   const handleInputChange = (value: string) => {
     setInput(value);
     const match = value.match(/@([\w\s().-]*)$/);
-    if (match) {
+    if (match && !noAgentMode) {
       const query = match[1].toLowerCase();
       setFilteredAgents(agents.filter((a) => a.name.toLowerCase().includes(query)));
       setShowMentions(true);
@@ -1896,7 +1893,10 @@ export default function AgentOrchestrator() {
                     setNoAgentMode(true);
                     setSelectedModelId("");
                     setShowModelPicker(false);
-                    if (!selectedAiModel) setSelectedAiModel("mibuddy");
+                    if (!selectedAiModel) {
+                      const defaultModel = aiModels.find((m) => m.is_default) || aiModels[0];
+                      if (defaultModel) setSelectedAiModel(defaultModel.id);
+                    }
                   }}
                   className={`flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-left text-sm text-foreground hover:bg-accent ${
                     noAgentMode ? "bg-accent" : ""
@@ -1999,25 +1999,7 @@ export default function AgentOrchestrator() {
                       className={`h-4 w-4 shrink-0 rounded-full ${!noAgentMode ? "opacity-30" : ""}`}
                       style={{ background: model.icon }}
                     />
-                    <span className="flex-1">
-                      {model.name}
-                      {noAgentMode && model.capabilities && (
-                        <span className="ml-1.5 inline-flex gap-1">
-                          {model.capabilities.supports_thinking && (
-                            <span className="rounded bg-purple-100 px-1 text-[9px] font-medium text-purple-600 dark:bg-purple-900/30 dark:text-purple-400" title="Supports visible reasoning/thinking">COT</span>
-                          )}
-                          {model.capabilities.web_search && (
-                            <span className="rounded bg-green-100 px-1 text-[9px] font-medium text-green-600 dark:bg-green-900/30 dark:text-green-400" title="Web search">WEB</span>
-                          )}
-                          {model.capabilities.image_generation && (
-                            <span className="rounded bg-blue-100 px-1 text-[9px] font-medium text-blue-600 dark:bg-blue-900/30 dark:text-blue-400" title="Image generation">IMG</span>
-                          )}
-                          {model.capabilities.supports_vision && (
-                            <span className="rounded bg-amber-100 px-1 text-[9px] font-medium text-amber-600 dark:bg-amber-900/30 dark:text-amber-400" title="Vision/image analysis">VIS</span>
-                          )}
-                        </span>
-                      )}
-                    </span>
+                    <span className="flex-1">{model.name}</span>
                     {noAgentMode && selectedAiModel === model.id && (
                       <Check size={14} className="text-primary" />
                     )}

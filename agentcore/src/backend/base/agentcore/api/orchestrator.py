@@ -182,6 +182,7 @@ class OrchModelSummary(BaseModel):
     model_name: str
     model_type: str = "llm"
     capabilities: dict | None = None
+    is_default: bool = False
 
 
 class OrchSessionSummary(BaseModel):
@@ -1124,6 +1125,43 @@ async def _route_request(
     except Exception as e:
         logger.debug(f"[ORCH] Document session check failed (non-critical): {e}")
 
+    # Check if user selected the default/smart-router model — auto-pick best model
+    if body.model_id:
+        settings_svc = get_settings_service().settings
+        default_name = (settings_svc.default_orch_model_name or "").strip().lower()
+        if default_name and settings_svc.smart_router_enabled:
+            # Look up the selected model's display name from registry
+            is_default_model = False
+            try:
+                from agentcore.services.model_service_client import fetch_registry_models_async
+                all_models = await fetch_registry_models_async(model_type="llm", active_only=True)
+                for m in (all_models or []):
+                    if str(m.get("id", "")) == str(body.model_id):
+                        if (m.get("display_name", "")).strip().lower() == default_name:
+                            is_default_model = True
+                        break
+            except Exception:
+                pass
+
+            if is_default_model:
+                from agentcore.services.mibuddy.smart_router import route_to_best_model
+                logger.info(f"[ORCH] Default model (smart router): analyzing query to pick best model")
+                routed = await route_to_best_model(body.input_value)
+                if routed:
+                    routed_id, routed_name = routed
+                    logger.info(f"[ORCH] Smart router selected: {routed_name}")
+                    return {
+                        "mode": "model_direct",
+                        "agent_id": None,
+                        "deployment_id": None,
+                        "deployment": None,
+                        "model_id": UUID(routed_id),
+                        "intent": "smart_router",
+                        "routed_model_name": routed_name,
+                    }
+                else:
+                    logger.warning("[ORCH] Smart router failed, falling back to direct model chat")
+
     # Check if user selected a model
     if body.model_id:
         return {
@@ -1342,7 +1380,8 @@ async def orch_chat(
 
         elif mode == "web_search":
             from agentcore.services.mibuddy.web_search_handler import handle_web_search
-            result = await handle_web_search(body.input_value)
+            from agentcore.services.mibuddy.system_prompts import get_system_identity_prompt
+            result = await handle_web_search(body.input_value, system_message=get_system_identity_prompt())
             response_text = result["response_text"]
             resp_model_name = result.get("model_name", "gemini")
             sender_name = "Web Search"
@@ -1564,8 +1603,10 @@ async def orch_chat_stream(
                     )
                 elif _mode == "web_search":
                     from agentcore.services.mibuddy.web_search_handler import handle_web_search_stream
+                    from agentcore.services.mibuddy.system_prompts import get_system_identity_prompt
                     result = await handle_web_search_stream(
                         _input_value,
+                        system_message=get_system_identity_prompt(),
                         event_manager=event_manager,
                     )
                 elif _mode == "image_gen":
@@ -2195,6 +2236,30 @@ async def serve_mibuddy_image(user_id: str, subfolder: str, file_name: str):
 
 
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Autocomplete suggestions
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/suggestions",
+    status_code=200,
+    dependencies=[Depends(PermissionChecker(["interact_agents"]))],
+)
+async def get_suggestions(
+    q: str = "",
+):
+    """Generate autocomplete suggestions as user types."""
+    try:
+        from agentcore.services.mibuddy.suggestion_service import get_suggestions
+        suggestions = await get_suggestions(q)
+        return {"suggestions": suggestions}
+    except Exception as e:
+        logger.debug(f"Suggestions failed: {e}")
+        return {"suggestions": []}
+
+
+# ---------------------------------------------------------------------------
 # List available models for orchestrator chat
 # ---------------------------------------------------------------------------
 
@@ -2225,15 +2290,9 @@ async def list_orch_models(
 
         result: list[OrchModelSummary] = []
         settings = get_settings_service().settings
+        default_model_name = (settings.default_orch_model_name or "").strip().lower()
 
-        logger.info(f"[ORCH Models] image_gen_model_name='{settings.image_gen_model_name}', web_search_model_name='{settings.web_search_model_name}'")
-
-        # ── Virtual entries ──
-        # Web Search and Image Gen models come from registry naturally
-        # No virtual entries needed — they appear with their registry names
-        # and capabilities detected from model_capabilities.py
-        # The model registered with IMAGE_GEN_MODEL_NAME will appear naturally
-        # in the registry results with image_generation capability detected
+        logger.info(f"[ORCH Models] image_gen_model_name='{settings.image_gen_model_name}', web_search_model_name='{settings.web_search_model_name}', default_orch_model_name='{settings.default_orch_model_name}'")
 
         # ── Real models from registry ──
         raw_rows = await fetch_registry_models_async(
@@ -2251,22 +2310,30 @@ async def list_orch_models(
                     approval = str(row.get("approval_status", "approved")).lower()
                     if approval != "approved":
                         continue
+                    # Filter by show_in: only show models meant for orchestrator
+                    show_in = row.get("show_in") or ["orchestrator", "agent"]
+                    if "orchestrator" not in show_in:
+                        continue
                     provider = row.get("provider", "")
                     model_name_val = row.get("model_name", "")
                     explicit_caps = row.get("capabilities")
                     merged_caps = detect_capabilities(provider, model_name_val, explicit_caps)
+                    display = row.get("display_name", model_name_val)
                     result.append(
                         OrchModelSummary(
                             model_id=UUID(str(model_id)),
-                            display_name=row.get("display_name", model_name_val),
+                            display_name=display,
                             provider=provider,
                             model_name=model_name_val,
                             model_type=row.get("model_type", "llm"),
                             capabilities=merged_caps,
+                            is_default=bool(default_model_name and display.strip().lower() == default_model_name),
                         )
                     )
                 except Exception:
                     continue
+            # Put default model first
+            result.sort(key=lambda m: (not m.is_default, m.display_name))
             return result
 
         # Strategy 2: Fallback to local DB if model service unavailable
@@ -2289,8 +2356,10 @@ async def list_orch_models(
                 model_name=row.model_name,
                 model_type=row.model_type,
                 capabilities=detect_capabilities(row.provider, row.model_name, row.capabilities),
+                is_default=bool(default_model_name and row.display_name.strip().lower() == default_model_name),
             )
             for row in rows
+            if "orchestrator" in (row.show_in or ["orchestrator", "agent"])
         ]
 
     except HTTPException:

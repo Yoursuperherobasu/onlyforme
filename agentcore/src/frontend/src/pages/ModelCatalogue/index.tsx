@@ -476,6 +476,7 @@ export default function ModelCatalogue(): JSX.Element {
                       ...(isSuperAdmin ? ["Department Scope"] : []),
                       "Type",
                       "Status",
+                      "Available In",
                     ...(canSeeActions ? ["Actions"] : []),
                     ].map((h) => (
                       <th
@@ -506,7 +507,7 @@ export default function ModelCatalogue(): JSX.Element {
                   {filteredModels.length === 0 ? (
                     <tr>
                       <td
-                        colSpan={8 + (isDepartmentAdmin ? 1 : 0) + (isSuperAdmin ? 1 : 0) + (canSeeActions ? 1 : 0)}
+                        colSpan={9 + (isDepartmentAdmin ? 1 : 0) + (isSuperAdmin ? 1 : 0) + (canSeeActions ? 1 : 0)}
                         className="px-6 py-12 text-center text-sm text-muted-foreground"
                       >
                         {displayModels.length === 0
@@ -676,6 +677,22 @@ export default function ModelCatalogue(): JSX.Element {
                               {t("Inactive")}
                             </span>
                           )}
+                        </td>
+
+                        {/* Show In */}
+                        <td className="px-4 py-4">
+                          <div className="flex gap-1">
+                            {((model as any).show_in || ["orchestrator", "agent"]).includes("orchestrator") && (
+                              <span className="rounded bg-blue-100 px-1.5 py-0.5 text-[10px] font-medium text-blue-700 dark:bg-blue-900/30 dark:text-blue-400">
+                                {t("Orch")}
+                              </span>
+                            )}
+                            {((model as any).show_in || ["orchestrator", "agent"]).includes("agent") && (
+                              <span className="rounded bg-purple-100 px-1.5 py-0.5 text-[10px] font-medium text-purple-700 dark:bg-purple-900/30 dark:text-purple-400">
+                                {t("Agent")}
+                              </span>
+                            )}
+                          </div>
                         </td>
 
                         {canSeeActions ? (
