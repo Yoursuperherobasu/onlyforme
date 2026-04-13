@@ -347,7 +347,11 @@ class Settings(BaseSettings):
     smart_router_model_name: str = ""
     """Deployment name for smart routing (e.g. 'mibuddy-gpt-5.2-chat'). If empty, uses intent_classifier_model_name."""
     suggestion_model_name: str = ""
-    """Deployment name for autocomplete suggestions (e.g. 'Meta-Llama-3.1-8B-Instruct-Mibuddy')."""
+    """Model name for autocomplete suggestions (e.g. 'Meta-Llama-3.1-8B-Instruct-Mibuddy')."""
+    suggestion_endpoint: str = ""
+    """Azure AI Foundry serverless endpoint for suggestions (e.g. 'https://xxx.services.ai.azure.com').
+    If empty, falls back to MIBUDDY_ENDPOINT with managed deployment URL format.
+    Uses MIBUDDY_API_KEY for authentication (same key for both serverless and managed)."""
     default_chat_model_id: str = ""
     """UUID of the registry model used when no model and no agent is selected and intent is general_chat.
     If empty, requests without a model or agent will return 400."""

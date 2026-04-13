@@ -56,12 +56,21 @@ class GoogleProvider(BaseProvider):
         model_kwargs: dict[str, Any] | None = None,
     ) -> BaseChatModel:
         api_key = provider_config.get("api_key", "")
+        # Support Vertex AI Express mode: keys starting with "AQ." are Vertex AI keys
+        # that must be sent to the Vertex AI endpoint, not the Gemini Developer API.
+        use_vertexai = provider_config.get("use_vertexai")
+        if use_vertexai is None:
+            use_vertexai = bool(api_key and api_key.startswith("AQ."))
 
         kwargs: dict[str, Any] = {
             "model": model,
             "google_api_key": api_key,
             "streaming": streaming,
         }
+        if use_vertexai:
+            # Route through Vertex AI instead of Gemini Developer API
+            import os
+            os.environ["GOOGLE_GENAI_USE_VERTEXAI"] = "true"
 
         if temperature is not None:
             kwargs["temperature"] = temperature

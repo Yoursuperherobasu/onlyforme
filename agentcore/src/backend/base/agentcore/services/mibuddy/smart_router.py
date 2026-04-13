@@ -128,9 +128,9 @@ async def route_to_best_model(query: str) -> tuple[str, str] | None:
             azure_deployment=model_name,
             api_version=settings.mibuddy_api_version,
             api_key=api_key,
-            temperature=0.0,
-                max_tokens=50,
-            )
+            temperature=1,
+            max_tokens=200,
+        )
 
         from langchain_core.messages import HumanMessage, SystemMessage
         result = await llm.ainvoke([
@@ -141,12 +141,25 @@ async def route_to_best_model(query: str) -> tuple[str, str] | None:
         content = result.content if hasattr(result, "content") else str(result)
         logger.info(f"[SmartRouter] Raw response: {content!r}")
 
+        # Handle empty response — fall back to first model
+        if not content or not content.strip():
+            logger.warning("[SmartRouter] Empty response from LLM, using first model")
+            return models[0]["id"], models[0]["display_name"]
+
         # Parse response
         json_str = content.strip()
         if "{" in json_str:
             start = json_str.index("{")
             end = json_str.rindex("}") + 1
             json_str = json_str[start:end]
+        else:
+            # No JSON in response — try to match raw text against model names
+            logger.warning(f"[SmartRouter] No JSON in response: {content!r}, trying text match")
+            for m in models:
+                if m["display_name"].lower() in content.lower():
+                    logger.info(f"[SmartRouter] Text match: {m['display_name']} (id={m['id']})")
+                    return m["id"], m["display_name"]
+            return models[0]["id"], models[0]["display_name"]
 
         parsed = json.loads(json_str)
         selected_name = parsed.get("model", "")

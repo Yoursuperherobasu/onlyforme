@@ -1,10 +1,13 @@
 """Autocomplete suggestion service.
 
-Generates query suggestions as the user types, using the MiBuddy
-Azure AI Foundry endpoint with a lightweight model (e.g. Llama 3.1 8B).
+Generates query suggestions as the user types, using a lightweight model
+(e.g. Meta-Llama-3.1-8B on Azure AI Foundry serverless endpoint).
 
-Same endpoint + API key as intent classifier and smart router,
-just a different model deployment (SUGGESTION_MODEL_NAME).
+Supports two endpoint formats:
+1. Serverless (Llama/Mistral): SUGGESTION_ENDPOINT + /openai/v1/chat/completions
+   - Model name sent in request body
+2. Managed (Azure OpenAI): MIBUDDY_ENDPOINT + /openai/deployments/{name}/chat/completions
+   - Model name in URL path
 """
 
 from __future__ import annotations
@@ -28,34 +31,53 @@ async def get_suggestions(query: str) -> list[str]:
     settings = get_settings_service().settings
 
     model_name = settings.suggestion_model_name
-    endpoint = settings.mibuddy_endpoint
+    if not model_name:
+        return []
+
+    # Determine endpoint — dedicated serverless endpoint or shared managed endpoint
+    endpoint = settings.suggestion_endpoint or settings.mibuddy_endpoint
     api_key = settings.mibuddy_api_key
 
-    if not model_name or not endpoint or not api_key:
+    if not endpoint or not api_key:
         return []
 
     # Build prompt based on whether input is empty or has text
     if not query or not query.strip():
-        system_prompt = (
-            "You are a helpful AI assistant. Generate EXACTLY 5 trending conversational topics "
-            "that users commonly ask about. Each topic should be a short question or statement. "
+        user_prompt = (
+            "Generate EXACTLY 5 trending conversational topics that users commonly ask about. "
+            "Each topic should be a short question or statement. "
             "Return ONLY the 5 topics, one per line. No numbering, no bullets, no extra text."
         )
-        user_prompt = "Generate 5 trending topics"
     else:
-        system_prompt = (
-            "You are an autocomplete assistant. Based on the user's partial input, "
-            "generate EXACTLY 5 short helpful continuations or completions of what they might be trying to ask. "
-            "Each suggestion should be a complete question or statement that starts with or includes the user's text. "
-            "Return ONLY the 5 suggestions, one per line. No numbering, no bullets, no extra text."
+        user_prompt = (
+            f"Based on this partial input, generate EXACTLY 5 short helpful completions "
+            f"of what the user might be trying to ask. Each suggestion should be a complete "
+            f"question or statement. Return ONLY the 5 suggestions, one per line. "
+            f"No numbering, no bullets, no extra text.\n\nPartial input: {query}"
         )
-        user_prompt = query
+
+    # Determine URL format based on endpoint type
+    base = endpoint.rstrip("/")
+    if settings.suggestion_endpoint:
+        # Serverless endpoint (Llama, Mistral, etc.) — model in body
+        url = f"{base}/openai/v1/chat/completions"
+        body: dict = {
+            "model": model_name,
+            "messages": [{"role": "user", "content": user_prompt}],
+            "max_tokens": 60,
+            "temperature": 0.7,
+        }
+    else:
+        # Managed deployment (Azure OpenAI) — model in URL
+        url = f"{base}/openai/deployments/{model_name}/chat/completions?api-version={settings.mibuddy_api_version}"
+        body = {
+            "messages": [{"role": "user", "content": user_prompt}],
+            "max_tokens": 200,
+            "temperature": 1,
+        }
 
     try:
         import httpx
-
-        # Use the Azure AI Foundry chat completions endpoint
-        url = f"{endpoint.rstrip('/')}/openai/deployments/{model_name}/chat/completions?api-version={settings.mibuddy_api_version}"
 
         async with httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.post(
@@ -64,14 +86,7 @@ async def get_suggestions(query: str) -> list[str]:
                     "Content-Type": "application/json",
                     "api-key": api_key,
                 },
-                json={
-                    "messages": [
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_prompt},
-                    ],
-                    "max_tokens": 200,
-                    "temperature": 0.7,
-                },
+                json=body,
             )
             resp.raise_for_status()
             data = resp.json()

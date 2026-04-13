@@ -96,7 +96,7 @@ class IntentClassifier:
             azure_deployment=model_name,
             api_version=api_version,
             api_key=api_key,
-            temperature=0.0,
+            temperature=1,
             max_tokens=100,
         )
         return self._model
