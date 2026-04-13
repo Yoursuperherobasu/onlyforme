@@ -105,12 +105,8 @@ def _render_template(template_name: str, context: dict[str, str]) -> str:
 
 def _render_changed_fields_html(changed_fields: list[str]) -> str:
     if not changed_fields:
-        return '<tr><td style="padding:4px 0;color:#64748b;">No field details were provided.</td></tr>'
-    return "".join(
-        f'<tr><td style="padding:4px 0;color:#334155;">'
-        f'<span style="color:#6366f1;margin-right:6px;">&#8226;</span>{escape(field)}</td></tr>'
-        for field in changed_fields
-    )
+        return "<li>No field details were provided.</li>"
+    return "".join(f"<li>{escape(field)}</li>" for field in changed_fields)
 
 
 def _render_changed_fields_text(changed_fields: list[str]) -> str:
@@ -203,8 +199,8 @@ async def send_user_notification_email(
         "actor_name": actor_name,
         "organization_name": organization_name or "-",
         "department_name": department_name or "-",
-        "changed_fields_html": _render_changed_fields_html(changed_fields),
         "changed_fields_text": _render_changed_fields_text(changed_fields),
+        "changed_fields_html": _render_changed_fields_html(changed_fields),
     }
 
     try:

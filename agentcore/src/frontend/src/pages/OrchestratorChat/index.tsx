@@ -24,6 +24,8 @@ import { ContentBlockDisplay } from "@/components/core/chatComponents/ContentBlo
 import type { ContentBlock } from "@/types/chat";
 import SharePointFilePicker from "./SharePointFilePicker";
 import OutlookConnector, { useOutlookStatus } from "./OutlookConnector";
+import NotebookLMPanel from "./NotebookLMPanel";
+import useAlertStore from "@/stores/alertStore";
 
 /* ------------------ TYPES ------------------ */
 
@@ -418,6 +420,7 @@ export default function AgentOrchestrator() {
   const [spPickerOpen, setSpPickerOpen] = useState(false);
   // Addon: Image gallery view (replaces chat area when active)
   const [showImageGallery, setShowImageGallery] = useState(false);
+  const [showNotebookLM, setShowNotebookLM] = useState(false);
   const [selectedGalleryImage, setSelectedGalleryImage] = useState<{ src: string; name: string } | null>(null);
   // Addon: Canvas mode
   const [isCanvasEnabled, setIsCanvasEnabled] = useState(false);
@@ -574,11 +577,10 @@ export default function AgentOrchestrator() {
       const allowedHint = noAgentMode
         ? "Allowed file types: documents and images."
         : "When an agent is selected, only image files are accepted. Switch to Model mode to upload documents.";
-      alert(
-        `Cannot upload the following file(s):\n` +
-          rejected.map((n) => `  • ${n}`).join("\n") +
-          `\n\n${allowedHint}`,
-      );
+      useAlertStore.getState().setErrorData({
+        title: "Some SharePoint files were not uploaded",
+        list: [...rejected, allowedHint],
+      });
     }
   };
 
@@ -1487,11 +1489,26 @@ export default function AgentOrchestrator() {
           </button>
         </div>
 
+        {/* ---- Single scrollable region containing nav + apps + info + agents.
+              Without this, expanding "Chat history" pushed the Applications
+              and Agents sections off-screen because the sidebar itself is
+              overflow-hidden. */}
+        <div
+          className="flex min-h-0 flex-1 flex-col overflow-y-auto scroll-smooth"
+          style={{ scrollbarWidth: "thin" }}
+        >
         {/* ---- Addon: Sidebar Navigation Items ---- */}
         <div className="flex flex-col gap-0.5 px-2 pb-2">
           {/* New chat */}
           <button
-            onClick={handleNewChat}
+            onClick={() => {
+              // Close any inline panel (NotebookLM / Image gallery) first,
+              // otherwise the chat view stays hidden behind them and the
+              // click silently does nothing from the user's POV.
+              setShowNotebookLM(false);
+              setShowImageGallery(false);
+              handleNewChat();
+            }}
             className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm text-foreground hover:bg-accent"
           >
             <SquarePen size={16} className="shrink-0 text-muted-foreground" />
@@ -1586,7 +1603,10 @@ export default function AgentOrchestrator() {
 
           {/* Image — toggles gallery view in main area */}
           <button
-            onClick={() => setShowImageGallery(!showImageGallery)}
+            onClick={() => {
+              setShowImageGallery(!showImageGallery);
+              setShowNotebookLM(false);
+            }}
             className={`flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm text-foreground hover:bg-accent ${showImageGallery ? "bg-accent" : ""}`}
           >
             <Image size={16} className="shrink-0 text-muted-foreground" />
@@ -1603,7 +1623,7 @@ export default function AgentOrchestrator() {
             <ChevronRight size={14} className={`text-muted-foreground transition-transform ${showChatHistoryExpand ? "rotate-90" : ""}`} />
           </button>
           {showChatHistoryExpand && (
-            <div className="ml-4 max-h-[40vh] overflow-y-auto scroll-smooth border-l border-border pl-1" style={{ scrollbarWidth: "thin" }}>
+            <div className="ml-4 border-l border-border pl-1">
               {Object.entries(grouped).map(([date, chats]) => (
                 <div key={date} className="mb-2">
                   <div className="px-3 pb-1 pt-2 text-xxs font-semibold uppercase tracking-wide text-muted-foreground">
@@ -1658,7 +1678,7 @@ export default function AgentOrchestrator() {
             <ChevronRight size={14} className={`text-muted-foreground transition-transform ${showArchiveChatExpand ? "rotate-90" : ""}`} />
           </button>
           {showArchiveChatExpand && (
-            <div className="ml-4 max-h-[30vh] overflow-y-auto scroll-smooth border-l border-border pl-1" style={{ scrollbarWidth: "thin" }}>
+            <div className="ml-4 border-l border-border pl-1">
               {archivedSessions.length === 0 ? (
                 <div className="px-3 py-4 text-center text-xs text-muted-foreground">
                   {t("No archived chats")}
@@ -1716,15 +1736,18 @@ export default function AgentOrchestrator() {
               <span>{t("AI Translator")}</span>
             </button>
             <button
-              onClick={() => window.open("https://do33.motherson.com", "_blank")}
+              onClick={() => window.open("https://genai.motherson.com/do33", "_blank")}
               className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm text-foreground hover:bg-accent"
             >
               <Image size={16} className="shrink-0 text-green-500" />
               <span>{t("DO33")}</span>
             </button>
             <button
-              onClick={() => window.open("https://notebooklm.google.com", "_blank")}
-              className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm text-foreground hover:bg-accent"
+              onClick={() => {
+                setShowNotebookLM(true);
+                setShowImageGallery(false);
+              }}
+              className={`flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm text-foreground hover:bg-accent ${showNotebookLM ? "bg-accent" : ""}`}
             >
               <Headphones size={16} className="shrink-0 text-red-500" />
               <span>{t("NotebookLM")}</span>
@@ -1732,24 +1755,44 @@ export default function AgentOrchestrator() {
           </div>
         </div>
 
-        {/* ---- Addon: Information & Help ---- */}
+        {/* ---- Addon: Information & Help (wired same as MiBuddy) ----
+              Information → opens the MiBuddy user-manual PDF in a new tab.
+              Help → opens the user's mail client pre-populated to the
+              MiBuddy support distribution lists. */}
         <div className="border-t border-border px-2 pb-3 pt-2">
-          <button className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm text-foreground hover:bg-accent">
+          <button
+            onClick={() =>
+              window.open(
+                "https://mibuddystorageaccount.blob.core.windows.net/genieusermanual/MIBuddyusermanual.pdf",
+                "_blank",
+              )
+            }
+            className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm text-foreground hover:bg-accent"
+          >
             <Info size={16} className="shrink-0 text-muted-foreground" />
             <span>{t("Information")}</span>
           </button>
-          <button className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm text-foreground hover:bg-accent">
+          <button
+            onClick={() => {
+              const subject = encodeURIComponent(
+                "MiBuddy : Please detail the support required",
+              );
+              window.location.href = `mailto:support.mtsl@motherson.com,MiBuddy.Feedback@motherson.com?subject=${subject}`;
+            }}
+            className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm text-foreground hover:bg-accent"
+          >
             <HelpCircle size={16} className="shrink-0 text-muted-foreground" />
             <span>{t("Help")}</span>
           </button>
         </div>
 
-        {/* Agents Panel */}
-        <div className="flex min-h-0 flex-1 flex-col border-t border-border">
+        {/* Agents Panel — no internal scroll; participates in the single
+            sidebar scroll defined by the parent wrapper. */}
+        <div className="flex shrink-0 flex-col border-t border-border">
           <div className="shrink-0 px-4 pb-2 pt-3 text-xxs font-semibold uppercase tracking-wide text-muted-foreground">
             {t("Agents")}
           </div>
-          <div className="flex-1 overflow-y-auto scroll-smooth px-2 pb-2" style={{ scrollbarWidth: "thin" }}>
+          <div className="px-2 pb-2">
             <div className="flex flex-col gap-0.5">
               {agents.map((agent) => (
                 <button
@@ -1775,6 +1818,7 @@ export default function AgentOrchestrator() {
               ))}
             </div>
           </div>
+        </div>
         </div>
       </div>
 
@@ -1899,7 +1943,10 @@ export default function AgentOrchestrator() {
       )}
 
       {/* ================ MAIN AREA ================ */}
-      {showImageGallery ? (
+      {showNotebookLM ? (
+        /* ---- NotebookLM panel (inline, like image gallery) ---- */
+        <NotebookLMPanel onBack={() => setShowNotebookLM(false)} />
+      ) : showImageGallery ? (
         /* ---- Image Gallery View ---- */
         <ImageGalleryView
           onBack={() => setShowImageGallery(false)}

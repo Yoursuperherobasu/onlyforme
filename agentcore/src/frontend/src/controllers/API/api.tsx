@@ -108,11 +108,12 @@ function ApiInterceptor() {
         "https://cdn.sprig.com",
       ];
 
-      // Hostname suffixes that belong to Microsoft / SharePoint / OneDrive.
-      // The SharePoint picker talks to Graph directly with its own Azure AD
-      // token; Graph's /content endpoint also 302-redirects to SharePoint
-      // CDN hosts (*.sharepoint.com, *.files.1drv.com, etc.), so all of
-      // those must be treated as external and skip the interceptor.
+      // Hostname suffixes that belong to Microsoft / SharePoint / OneDrive,
+      // plus the external NotebookLM podcast-processor service used by the
+      // OrchestratorChat NotebookLM panel. None of these accept (or want)
+      // agentcore's session token, and the interceptor would crash on
+      // `config.headers["Authorization"] = …` for plain fetch() calls
+      // that don't initialize a headers object.
       const EXTERNAL_HOST_SUFFIXES = [
         "graph.microsoft.com",
         "login.microsoftonline.com",
@@ -120,6 +121,10 @@ function ApiInterceptor() {
         ".sharepoint-df.com",
         ".files.1drv.com",
         ".onedrive.com",
+        // NotebookLM podcast-processor (external Azure App Service, same
+        // host MiBuddy uses). DO NOT broaden to all of *.azurewebsites.net
+        // — agentcore itself can be hosted on azurewebsites.net in prod.
+        "docprocessor-e2cygsbecsacg3bj.germanywestcentral-01.azurewebsites.net",
       ];
 
       try {
