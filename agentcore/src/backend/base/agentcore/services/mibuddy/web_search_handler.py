@@ -164,6 +164,8 @@ async def handle_web_search_stream(query: str, system_message: str = "", event_m
         )
 
         full_response = ""
+        grounding_used = False
+        search_queries: list[str] = []
         for chunk in client.models.generate_content_stream(
             model=model_name,
             contents=contents,
@@ -171,11 +173,24 @@ async def handle_web_search_stream(query: str, system_message: str = "", event_m
         ):
             if not chunk.candidates or not chunk.candidates[0].content or not chunk.candidates[0].content.parts:
                 continue
+            # Log grounding metadata (confirms Google Search tool was invoked)
+            gm = getattr(chunk.candidates[0], "grounding_metadata", None)
+            if gm:
+                grounding_used = True
+                queries = getattr(gm, "web_search_queries", None) or []
+                for q in queries:
+                    if q not in search_queries:
+                        search_queries.append(q)
             text = chunk.text
             if text:
                 full_response += text
                 if event_manager:
                     event_manager.on_token(data={"chunk": text})
+
+        if grounding_used:
+            logger.info(f"[WebSearch] Google Search tool invoked. Queries: {search_queries}")
+        else:
+            logger.info("[WebSearch] No grounding metadata — model answered from its knowledge")
 
         return {"response_text": full_response, "model_name": model_name}
 
