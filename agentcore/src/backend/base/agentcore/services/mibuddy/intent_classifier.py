@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from enum import Enum
 from uuid import UUID
 
@@ -97,19 +98,88 @@ class IntentClassifier:
             api_version=api_version,
             api_key=api_key,
             temperature=1,
-            max_tokens=100,
+            max_tokens=300,
         )
         return self._model
+
+    @staticmethod
+    def _matches_kb_keywords(query: str) -> bool:
+        """Check if query contains any company KB keyword as a whole word.
+
+        Uses word-boundary regex (\\b) so 'smother' does NOT match 'mother',
+        but 'motherson group' DOES match 'motherson'.
+        """
+        from agentcore.services.deps import get_settings_service
+        settings = get_settings_service().settings
+        keywords = settings.company_kb_keywords
+        if not keywords:
+            return False
+        q_lower = query.lower()
+        for kw in keywords.split(","):
+            kw = kw.strip().lower()
+            if not kw:
+                continue
+            # Word-boundary match — handles multi-word keywords like "samvardhana motherson"
+            pattern = r"\b" + re.escape(kw) + r"\b"
+            if re.search(pattern, q_lower):
+                return True
+        return False
+
+    async def _llm_fuzzy_kb_check(self, query: str) -> bool:
+        """Use the classifier LLM to check if query is about the company (typo-tolerant).
+
+        Replaces the SentenceTransformer semantic check used by MiBuddy with a
+        focused yes/no LLM call. Catches typos like 'mothrson' → Motherson,
+        misspellings, and indirect references.
+
+        Returns False on any failure to avoid false positives.
+        """
+        from agentcore.services.deps import get_settings_service
+        settings = get_settings_service().settings
+        company_name = settings.company_kb_name
+        if not company_name:
+            return False
+        try:
+            model = self._get_model()
+            prompt = (
+                f"Does the following user query refer to '{company_name}' (the company), "
+                f"its people, products, or business? Consider typos, misspellings, and "
+                f"abbreviations of '{company_name}'.\n\n"
+                f"Query: {query}\n\n"
+                f"Reply with ONLY one word: 'yes' or 'no'."
+            )
+            result = await model.ainvoke([
+                SystemMessage(content="You answer with one word: yes or no."),
+                HumanMessage(content=prompt),
+            ])
+            content = (result.content if hasattr(result, "content") else str(result)) or ""
+            answer = content.strip().lower().rstrip(".!?,")
+            is_match = answer.startswith("yes")
+            if is_match:
+                logger.info(f"[IntentClassifier] LLM fuzzy KB match: '{query[:60]}' -> yes")
+            return is_match
+        except Exception as e:
+            logger.debug(f"[IntentClassifier] LLM fuzzy check failed: {e}")
+            return False
 
     async def classify(self, query: str) -> Intent:
         """Classify a user query into an intent.
 
-        Returns Intent.GENERAL_CHAT as fallback on any error.
+        Two-stage company KB detection (matches MiBuddy's hybrid approach):
+          1. Word-boundary keyword match  → instant, deterministic
+          2. LLM fuzzy yes/no check       → typo-tolerant fallback (replaces SentenceTransformer)
+
+        If neither stage flags it as KB, runs the standard LLM intent classifier.
+        Falls back to GENERAL_CHAT on any failure.
         """
+        # Stage 1: Word-boundary keyword fast-path (no LLM call)
+        if self._matches_kb_keywords(query):
+            logger.info(f"[IntentClassifier] Keyword match -> knowledge_base_search: '{query[:60]}'")
+            return Intent.KNOWLEDGE_BASE_SEARCH
+
         try:
             logger.info(f"[IntentClassifier] Classifying: '{query[:80]}'")
             model = self._get_model()
-            logger.info(f"[IntentClassifier] Model loaded: {type(model).__name__}")
             prompt = _build_classification_prompt()
             messages = [
                 SystemMessage(content=prompt),
@@ -119,16 +189,19 @@ class IntentClassifier:
             content = result.content if hasattr(result, "content") else str(result)
             logger.info(f"[IntentClassifier] Raw response: {content!r}")
 
+            # Empty response → fall back
+            if not content or not content.strip():
+                logger.warning("[IntentClassifier] Empty response, defaulting to general_chat")
+                return Intent.GENERAL_CHAT
+
             # Robust JSON extraction — handle markdown code blocks or extra text
             json_str = content.strip()
             if "```" in json_str:
-                # Extract JSON from markdown code block
                 json_str = json_str.split("```")[1]
                 if json_str.startswith("json"):
                     json_str = json_str[4:]
                 json_str = json_str.strip()
             elif "{" in json_str:
-                # Extract first JSON object
                 start = json_str.index("{")
                 end = json_str.rindex("}") + 1
                 json_str = json_str[start:end]
@@ -138,14 +211,21 @@ class IntentClassifier:
             logger.info(f"Intent classified: '{query[:60]}' -> {intent_str}")
 
             try:
-                return Intent(intent_str)
+                intent = Intent(intent_str)
             except ValueError:
                 logger.warning(f"Unknown intent '{intent_str}' from classifier, defaulting to general_chat")
-                return Intent.GENERAL_CHAT
+                intent = Intent.GENERAL_CHAT
 
-        except ValueError as e:
-            logger.error(f"[IntentClassifier] ValueError: {e}")
-            return Intent.GENERAL_CHAT
+            # Stage 2: LLM fuzzy KB check — only if classifier said general_chat
+            # (catches typos like 'mothrson' that the keyword check missed)
+            if intent == Intent.GENERAL_CHAT and await self._llm_fuzzy_kb_check(query):
+                return Intent.KNOWLEDGE_BASE_SEARCH
+
+            return intent
+
         except Exception as e:
-            logger.error(f"[IntentClassifier] Failed: {type(e).__name__}: {e}", exc_info=True)
+            logger.error(f"[IntentClassifier] Failed: {type(e).__name__}: {e}")
+            # Last-resort: still try the fuzzy check if classifier crashed
+            if await self._llm_fuzzy_kb_check(query):
+                return Intent.KNOWLEDGE_BASE_SEARCH
             return Intent.GENERAL_CHAT
