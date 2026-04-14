@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import type { PublicClientApplication, AccountInfo } from "@azure/msal-browser";
-import { Client, ResponseType } from "@microsoft/microsoft-graph-client";
+import { Client } from "@microsoft/microsoft-graph-client";
 import { getSharepointMsalInstance, initSharepointMsal, sharepointLoginRequest } from "./sharepointMsalConfig";
 import {
   Loader2,
@@ -227,22 +227,56 @@ export default function SharePointFilePicker({
   };
 
   const handleDownloadSelected = async () => {
-    if (selectedIds.size === 0) return;
+    if (selectedIds.size === 0 || !spMsal) return;
     setLoading(true);
     try {
-      const client = await getGraphClient();
+      const activeAccount =
+        spMsal.getActiveAccount() ?? spMsal.getAllAccounts()[0];
+      if (!activeAccount) throw new Error("No SharePoint account");
+
+      // Get a fresh Graph access token to hand to our backend.
+      const tokenResp = await spMsal.acquireTokenSilent({
+        ...sharepointLoginRequest,
+        account: activeAccount,
+      });
+      const accessToken = tokenResp.accessToken;
+
       const filesToDownload = items.filter(
         (f) => selectedIds.has(f.id) && !f.folder,
       );
       const downloaded: File[] = [];
 
+      // Route the download through our backend to avoid the CORS issue
+      // when Graph 302-redirects to the SharePoint CDN
+      // (mothersongroup-my.sharepoint.com), which doesn't allow
+      // cross-origin reads from localhost:3000.
       for (const item of filesToDownload) {
         try {
-          const blob = await client
-            .api(`/me/drive/items/${item.id}/content`)
-            .responseType(ResponseType.BLOB)
-            .get();
-          downloaded.push(new File([blob], item.name, { type: blob.type }));
+          const res = await fetch("/api/sharepoint-user/download", {
+            method: "POST",
+            credentials: "include",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              access_token: accessToken,
+              item_id: item.id,
+              drive_id: item.parentReference?.driveId ?? "",
+              filename: item.name,
+            }),
+          });
+          if (!res.ok) {
+            const text = await res.text();
+            throw new Error(`HTTP ${res.status}: ${text}`);
+          }
+          const data = await res.json();
+          // Decode base64 → bytes → File
+          const binary = atob(data.content_base64);
+          const bytes = new Uint8Array(binary.length);
+          for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+          downloaded.push(
+            new File([bytes], item.name, {
+              type: item.file?.mimeType || "application/octet-stream",
+            }),
+          );
         } catch (err) {
           console.error(`Failed to download ${item.name}:`, err);
         }

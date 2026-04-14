@@ -108,9 +108,34 @@ function ApiInterceptor() {
         "https://cdn.sprig.com",
       ];
 
+      // Hostname suffixes that belong to Microsoft / SharePoint / OneDrive,
+      // plus the external NotebookLM podcast-processor service used by the
+      // OrchestratorChat NotebookLM panel. None of these accept (or want)
+      // agentcore's session token, and the interceptor would crash on
+      // `config.headers["Authorization"] = …` for plain fetch() calls
+      // that don't initialize a headers object.
+      const EXTERNAL_HOST_SUFFIXES = [
+        "graph.microsoft.com",
+        "login.microsoftonline.com",
+        ".sharepoint.com",
+        ".sharepoint-df.com",
+        ".files.1drv.com",
+        ".onedrive.com",
+        // NotebookLM podcast-processor (external Azure App Service, same
+        // host MiBuddy uses). DO NOT broaden to all of *.azurewebsites.net
+        // — agentcore itself can be hosted on azurewebsites.net in prod.
+        "docprocessor-e2cygsbecsacg3bj.germanywestcentral-01.azurewebsites.net",
+      ];
+
       try {
         const parsedURL = new URL(url);
-        return EXTERNAL_DOMAINS.some((domain) => parsedURL.origin === domain);
+        if (EXTERNAL_DOMAINS.some((domain) => parsedURL.origin === domain)) {
+          return true;
+        }
+        const host = parsedURL.hostname.toLowerCase();
+        return EXTERNAL_HOST_SUFFIXES.some(
+          (suffix) => host === suffix || host.endsWith(suffix),
+        );
       } catch {
         return false;
       }

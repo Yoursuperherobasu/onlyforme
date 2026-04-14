@@ -1,23 +1,14 @@
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  AgentCore Notification
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-{headline}
-
 Hello {recipient_name},
 
 {intro_text}
 
 {summary_text}
 
-─── Updated Details ────────────────────
+Updated details:
 {changed_fields_text}
-────────────────────────────────────────
 
-  Updated by:    {actor_name}
-  Organization:  {organization_name}
-  Department:    {department_name}
+Updated by: {actor_name}
+Organization: {organization_name}
+Department: {department_name}
 
-────────────────────────────────────────
-This is an automated notification from AgentCore.
-Please do not reply to this email.
+This is an automated notification from AgentCore. Please do not reply to this email.
