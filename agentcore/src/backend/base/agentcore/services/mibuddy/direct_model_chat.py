@@ -55,21 +55,25 @@ def _build_chat_model(model_id: str, enable_reasoning: bool = False) -> Microser
     _resolve_registry_config() will overwrite it with the actual provider
     from the registry entry before invoking the LLM.
 
-    When enable_reasoning is True, model_kwargs includes thinking/reasoning
-    parameters that providers like Anthropic use to enable extended thinking.
+    When enable_reasoning is True, a superset of provider-specific thinking
+    params is sent via model_kwargs. The model service's provider adapters
+    pick up the ones that apply (unknown keys are ignored by providers).
     """
     from agentcore.services.deps import get_settings_service
     settings = get_settings_service()
 
-    # NOTE: reasoning/thinking params are provider-specific:
-    # - Anthropic Claude: needs model_kwargs={"thinking": {"type": "enabled", "budget_tokens": N}}
-    # - OpenAI o1/o3: reasoning is AUTOMATIC, no extra params needed
-    # - DeepSeek-R1: reasoning is AUTOMATIC, no extra params needed
-    #
-    # We do NOT pass thinking params here because we don't know the provider yet
-    # (it's resolved by the model service from the registry). The model service
-    # will handle provider-specific reasoning config via default_params in the
-    # registry entry. For OpenAI reasoning models, just calling them is enough.
+    # Provider-specific reasoning/thinking params. Because the provider is
+    # resolved server-side, we send the union — each provider picks what it understands:
+    #   - Anthropic Claude:  thinking={type:"enabled", budget_tokens: N}
+    #   - Google Gemini:     thinking_config={include_thoughts: True}
+    #   - OpenAI o1/o3/o4:   reasoning is automatic (no param)
+    #   - DeepSeek-R1:       reasoning is automatic (no param)
+    model_kwargs: dict | None = None
+    if enable_reasoning:
+        model_kwargs = {
+            "thinking": {"type": "enabled", "budget_tokens": 8000},
+            "thinking_config": {"include_thoughts": True},
+        }
 
     return MicroserviceChatModel(
         service_url=settings.settings.model_service_url,
@@ -77,6 +81,7 @@ def _build_chat_model(model_id: str, enable_reasoning: bool = False) -> Microser
         registry_model_id=model_id,
         provider="openai",
         model=f"direct-chat-{model_id[:8]}",
+        model_kwargs=model_kwargs,
     )
 
 
@@ -209,20 +214,37 @@ async def direct_model_chat_stream(
 
     async for chunk in model.astream(messages):
         msg = chunk.message if hasattr(chunk, "message") else chunk
-        content = getattr(msg, "content", "")
+        raw_content = getattr(msg, "content", "")
         metadata = getattr(msg, "response_metadata", {}) or {}
+        additional = getattr(msg, "additional_kwargs", {}) or {}
 
-        # Check for reasoning content in this chunk
-        reasoning = metadata.get("reasoning_content", "")
+        # Reasoning may come from multiple places depending on provider:
+        #   Anthropic: content blocks with type="thinking"
+        #   Grok / DeepSeek / OpenAI o-series: additional_kwargs.reasoning_content
+        #   Legacy: response_metadata.reasoning_content
+        reasoning = ""
+        text_content = ""
+        if isinstance(raw_content, list):
+            for block in raw_content:
+                if isinstance(block, dict):
+                    if block.get("type") == "thinking":
+                        reasoning += block.get("thinking", "")
+                    elif block.get("type") == "text":
+                        text_content += block.get("text", "")
+        else:
+            text_content = raw_content or ""
+
+        reasoning += additional.get("reasoning_content", "") or metadata.get("reasoning_content", "")
+
         if reasoning:
             full_reasoning += reasoning
             if event_manager:
                 event_manager.on_token(data={"chunk": reasoning, "type": "reasoning"})
 
-        if content:
-            full_response += content
+        if text_content:
+            full_response += text_content
             if event_manager:
-                event_manager.on_token(data={"chunk": content})
+                event_manager.on_token(data={"chunk": text_content})
 
         # Capture model name from usage metadata
         if metadata.get("model_name"):

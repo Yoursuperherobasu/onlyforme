@@ -1654,6 +1654,7 @@ async def orch_chat_stream(
                         _input_value,
                         system_message=get_system_identity_prompt(),
                         event_manager=event_manager,
+                        enable_reasoning=_enable_reasoning,
                     )
                 elif _mode == "image_gen":
                     from agentcore.services.mibuddy.image_gen_handler import handle_image_generation_stream

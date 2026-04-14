@@ -65,26 +65,50 @@ class OpenAICompatibleProvider(BaseProvider):
             msg = "base_url is required for openai_compatible provider"
             raise ValueError(msg)
 
+        # stream_usage adds stream_options.include_usage to the request. Some
+        # endpoints (Azure AI Foundry serverless) reject this field. Most standard
+        # OpenAI-compatible endpoints (DeepSeek, Groq, OpenRouter) accept it.
+        # Default: False (safe for strict endpoints); users can opt-in via
+        # provider_config.stream_usage=True in the registry entry.
+        stream_usage = bool(provider_config.get("stream_usage", False))
+
         kwargs: dict[str, Any] = {
             "model": model,
             "api_key": api_key or "not-needed",
             "base_url": base_url,
             "streaming": streaming,
-            "stream_usage": True,
+            "stream_usage": stream_usage,
         }
 
         if temperature is not None:
             kwargs["temperature"] = temperature
+
+        # Azure AI Foundry serverless (Mistral, Grok, etc.) rejects `max_completion_tokens`,
+        # but newer langchain-openai auto-converts `max_tokens` → `max_completion_tokens`.
+        # Bypass the conversion by sending `max_tokens` via extra_body (raw passthrough).
+        extra_body: dict[str, Any] = {}
         if max_tokens:
-            kwargs["max_tokens"] = max_tokens
+            extra_body["max_tokens"] = max_tokens
+
         if seed is not None:
             kwargs["seed"] = seed
         if model_kwargs:
-            kwargs["model_kwargs"] = model_kwargs
+            # OpenAI-compatible APIs (Grok, DeepSeek, OpenRouter, etc.) do NOT
+            # accept Anthropic's `thinking` / `thinking_config` kwargs. Strip
+            # them out so the OpenAI SDK doesn't raise TypeError.
+            cleaned = {
+                k: v for k, v in model_kwargs.items()
+                if k not in ("thinking", "thinking_config")
+            }
+            if cleaned:
+                kwargs["model_kwargs"] = cleaned
 
         custom_headers = provider_config.get("custom_headers")
         if custom_headers:
             kwargs["default_headers"] = custom_headers
+
+        if extra_body:
+            kwargs["extra_body"] = extra_body
 
         llm = ChatOpenAI(**kwargs)
 

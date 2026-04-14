@@ -83,7 +83,15 @@ class GoogleProvider(BaseProvider):
         if n is not None:
             kwargs["n"] = n
         if model_kwargs:
-            kwargs["model_kwargs"] = model_kwargs
+            cleaned = dict(model_kwargs)
+            # Gemini 2.5+/3.x supports visible thinking via thinking_config
+            thinking_config = cleaned.pop("thinking_config", None)
+            cleaned.pop("thinking", None)  # Anthropic-specific, ignore
+            if thinking_config:
+                # langchain-google-genai accepts thinking_config at top level
+                kwargs["thinking_config"] = thinking_config
+            if cleaned:
+                kwargs["model_kwargs"] = cleaned
 
         return ChatGoogleGenerativeAI(**kwargs)
 

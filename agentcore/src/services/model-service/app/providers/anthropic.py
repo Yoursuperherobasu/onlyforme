@@ -63,7 +63,23 @@ class AnthropicProvider(BaseProvider):
             kwargs["top_p"] = top_p
         if top_k is not None:
             kwargs["top_k"] = top_k
+
+        # Extract Anthropic-specific reasoning param (extended thinking)
+        # thinking must be a top-level ChatAnthropic parameter, not inside model_kwargs.
         if model_kwargs:
-            kwargs["model_kwargs"] = model_kwargs
+            extracted = dict(model_kwargs)
+            thinking = extracted.pop("thinking", None)
+            # Drop unrelated params meant for other providers
+            extracted.pop("thinking_config", None)
+            if thinking:
+                kwargs["thinking"] = thinking
+                # Anthropic requires temperature=1 when extended thinking is enabled
+                kwargs["temperature"] = 1
+                # max_tokens must be greater than budget_tokens
+                budget = thinking.get("budget_tokens", 0) if isinstance(thinking, dict) else 0
+                if budget and kwargs["max_tokens"] <= budget:
+                    kwargs["max_tokens"] = budget + 4096
+            if extracted:
+                kwargs["model_kwargs"] = extracted
 
         return ChatAnthropic(**kwargs)

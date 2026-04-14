@@ -46,7 +46,23 @@ class AzureOpenAIProvider(BaseProvider):
         if seed is not None:
             kwargs["seed"] = seed
         if model_kwargs:
-            kwargs["model_kwargs"] = model_kwargs
+            # Azure OpenAI reasoning (o1/o3) enables thinking automatically.
+            # Strip Anthropic/Google-specific thinking params to avoid 400 errors,
+            # unless the Azure deployment is Claude (proxied via AI Foundry).
+            cleaned = dict(model_kwargs)
+            dep_lower = (azure_deployment or "").lower()
+            if "claude" not in dep_lower:
+                cleaned.pop("thinking", None)
+                cleaned.pop("thinking_config", None)
+            else:
+                # Claude on Azure AI Foundry: pass thinking through extra_body
+                thinking = cleaned.pop("thinking", None)
+                cleaned.pop("thinking_config", None)
+                if thinking:
+                    cleaned.setdefault("extra_body", {})["thinking"] = thinking
+                    kwargs["temperature"] = 1
+            if cleaned:
+                kwargs["model_kwargs"] = cleaned
 
         llm = AzureChatOpenAI(**kwargs)
 

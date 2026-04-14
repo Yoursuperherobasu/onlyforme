@@ -66,9 +66,19 @@ def _get_agent():
 
 
 def _strip_citations(text: str) -> str:
-    """Remove Azure AI Agent citation markers like 【4:0†source.docx】."""
+    """Clean up Azure AI Agent response:
+      - Remove citation markers like 【4:0†source.docx】
+      - Remove the 'Final tag: ...' classification line that the agent appends
+      - Collapse excess blank lines
+    """
     try:
-        return re.sub(r'【[^】]*】', '', text).strip()
+        # Citation markers
+        cleaned = re.sub(r'【[^】]*】', '', text)
+        # "Final tag: Internal data and web sources." — strip whole line (any case)
+        cleaned = re.sub(r'(?im)^\s*final\s*tag\s*:.*$', '', cleaned)
+        # Collapse 3+ newlines to double newline
+        cleaned = re.sub(r'\n{3,}', '\n\n', cleaned)
+        return cleaned.strip()
     except Exception:
         return text
 
@@ -86,7 +96,7 @@ async def handle_kb_search(query: str) -> dict:
     Returns dict with keys: response_text, model_name
     """
     import asyncio
-    from azure.ai.projects.models import ListSortOrder
+    from azure.ai.agents.models import ListSortOrder
 
     try:
         project, agent = _get_agent()

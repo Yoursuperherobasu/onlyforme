@@ -71,6 +71,14 @@ class GroqProvider(BaseProvider):
         if n is not None:
             kwargs["n"] = n
         if model_kwargs:
-            kwargs["model_kwargs"] = model_kwargs
+            # Groq's OpenAI-compatible API does NOT accept Anthropic's
+            # `thinking` / `thinking_config` kwargs. Reasoning models like
+            # deepseek-r1 / qwen-qwq think automatically — no param needed.
+            cleaned = {
+                k: v for k, v in model_kwargs.items()
+                if k not in ("thinking", "thinking_config")
+            }
+            if cleaned:
+                kwargs["model_kwargs"] = cleaned
 
         return ChatGroq(**kwargs)
