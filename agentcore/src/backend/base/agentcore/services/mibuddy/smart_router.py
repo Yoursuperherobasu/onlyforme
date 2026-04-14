@@ -14,6 +14,26 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+# Hardcoded model hints — exactly the 4 models from MiBuddy's routing_prompt_template.
+# Matched against display_name (case-insensitive substring). When a registry model's
+# display_name matches a key, the hint is appended to its description in the prompt.
+# Other registry models still appear in the list with their auto-detected capabilities.
+KNOWN_MODEL_HINTS: dict[str, str] = {
+    "gpt-5.4-mini":      "Use for: extremely complex reasoning, math, multi-step logic, long documents, detailed research, RAG analysis, dense or high-stakes queries.",
+    "gpt-5.2":           "Use for: web search, news, time-sensitive topics, query routing/classification, coding help, technical queries. Follow-ups to web-related queries should stay on this model.",
+    "gpt-5":             "Use for: general chat, creative writing, brainstorming, greetings, definitions, basic logic, small talk and casual context.",
+    "claude-sonnet-4-6": "Use for: advanced reasoning and analytical tasks, long-context conversations, document understanding, complex coding explanations, detailed structured analysis.",
+}
+
+
+def _hint_for(display_name: str) -> str | None:
+    """Return the hardcoded MiBuddy hint matching this model's display_name, or None."""
+    name = display_name.lower()
+    for key, hint in KNOWN_MODEL_HINTS.items():
+        if key in name:
+            return hint
+    return None
+
 
 async def _get_available_models() -> list[dict]:
     """Get chat models from registry for routing decisions."""
@@ -53,8 +73,22 @@ async def _get_available_models() -> list[dict]:
     return models
 
 
-def _build_routing_prompt(query: str, models: list[dict]) -> str:
-    """Build the routing prompt with available models."""
+def _build_routing_prompt(
+    query: str,
+    models: list[dict],
+    *,
+    last_model: str | None = None,
+    has_image: bool = False,
+    has_document: bool = False,
+) -> str:
+    """Build the routing prompt with available models.
+
+    Combines:
+      - dynamic registry models (with auto-detected capabilities)
+      - hardcoded MiBuddy hints for known model names (gpt-5, gpt-5.2, gpt-5.4-mini, claude-sonnet-4-6)
+      - follow-up context (last_model)
+      - file context (has_image, has_document)
+    """
     model_descriptions = []
     for i, m in enumerate(models, 1):
         traits = []
@@ -65,12 +99,35 @@ def _build_routing_prompt(query: str, models: list[dict]) -> str:
         if m.get("tool_calling"):
             traits.append("tool calling")
         traits_str = f" ({', '.join(traits)})" if traits else ""
-        model_descriptions.append(f"{i}. **{m['display_name']}**{traits_str}")
+        line = f"{i}. **{m['display_name']}**{traits_str}"
+        # Append MiBuddy-style hint when display_name matches a known model
+        hint = _hint_for(m["display_name"])
+        if hint:
+            line += f"\n   {hint}"
+        model_descriptions.append(line)
 
     models_list = "\n".join(model_descriptions)
     model_names = ", ".join(f'"{m["display_name"]}"' for m in models)
 
-    return f"""You are an intelligent LLM router. Pick the best model for the user's query.
+    # Build optional context blocks
+    follow_up_block = ""
+    if last_model:
+        follow_up_block = (
+            f"\n### Follow-up Context:\n"
+            f"The previous response used: **{last_model}**.\n"
+            f"If the current query is a follow-up to a previous web/news/time-sensitive answer, "
+            f"keep using the same model. Do NOT downgrade the model for follow-ups.\n"
+        )
+
+    file_block = ""
+    if has_image:
+        file_block += "\n- An IMAGE is attached → prefer a model with vision capability."
+    if has_document:
+        file_block += "\n- A DOCUMENT is attached → prefer a model with reasoning or long-context support."
+    if file_block:
+        file_block = f"\n### Attached Files:{file_block}\n"
+
+    return f"""You are an intelligent LLM router that balances accuracy, cost-efficiency, and context awareness.
 
 ### Available Models:
 {models_list}
@@ -78,10 +135,11 @@ def _build_routing_prompt(query: str, models: list[dict]) -> str:
 ### Routing Rules:
 - For complex reasoning, math, multi-step logic → pick a model with reasoning capability
 - For general chat, greetings, simple questions → pick the fastest/simplest model
-- For coding, technical queries → pick a model with tool calling
+- For coding, technical queries → pick a model with tool calling or one of the GPT-5 family
+- For web search, news, time-sensitive topics → pick a model with web/search capability
 - For image analysis questions → pick a model with vision
-- For follow-up questions → pick the same type of model as the previous answer would use
-
+- For follow-up questions → keep the same model as the previous answer when context matters
+{follow_up_block}{file_block}
 ### User Query: "{query}"
 
 Respond with ONLY a JSON object: {{"model": "<model display name>"}}
@@ -89,8 +147,20 @@ Choose from: {model_names}
 Do not include any explanation."""
 
 
-async def route_to_best_model(query: str) -> tuple[str, str] | None:
+async def route_to_best_model(
+    query: str,
+    *,
+    last_model: str | None = None,
+    has_image: bool = False,
+    has_document: bool = False,
+) -> tuple[str, str] | None:
     """Analyze query and pick the best model from registry.
+
+    Args:
+        query: User's input
+        last_model: Display name of model used in previous turn (for follow-up routing)
+        has_image: True if user attached an image (prefer vision models)
+        has_document: True if user attached a document (prefer reasoning/long-context models)
 
     Returns (model_id, display_name) or None if routing fails.
     """
@@ -104,8 +174,14 @@ async def route_to_best_model(query: str) -> tuple[str, str] | None:
         logger.warning("[SmartRouter] No models available in registry")
         return None
 
-    # Build routing prompt
-    prompt = _build_routing_prompt(query, models)
+    # Build routing prompt with full context
+    prompt = _build_routing_prompt(
+        query,
+        models,
+        last_model=last_model,
+        has_image=has_image,
+        has_document=has_document,
+    )
 
     # Use same LLM as intent classifier
     # Use smart_router_model_name, fallback to intent_classifier_model_name
