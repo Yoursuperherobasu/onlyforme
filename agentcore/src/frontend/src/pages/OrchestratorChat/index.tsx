@@ -26,6 +26,22 @@ import SharePointFilePicker from "./SharePointFilePicker";
 import OutlookConnector, { useOutlookStatus } from "./OutlookConnector";
 import NotebookLMPanel from "./NotebookLMPanel";
 import useAlertStore from "@/stores/alertStore";
+import openaiLogo from "@/assets/openai_logo.svg";
+import geminiLogo from "@/assets/gemini_logo.svg";
+import mistralLogo from "@/assets/mistral_logo.svg";
+import claudeLogo from "@/assets/claude_logo.svg";
+import azureLogo from "@/assets/azure_logo.svg";
+import metaLogo from "@/assets/meta_logo.svg";
+import cohereLogo from "@/assets/cohere_logo.svg";
+import perplexityLogo from "@/assets/perplexity_logo.svg";
+import nvidiaLogo from "@/assets/nvidia_logo.svg";
+import huggingfaceLogo from "@/assets/huggingface_logo.svg";
+import micoreLogo from "@/assets/micore.svg";
+import grokLogo from "@/assets/grok_logo.png";
+import nanoBananaLogo from "@/assets/nano_banana_logo.png";
+import dalleLogo from "@/assets/dalle_logo.svg";
+import googleLogo from "@/assets/google_logo.svg";
+import defaultLlmLogo from "@/assets/default_llm_logo.png";
 
 /* ------------------ TYPES ------------------ */
 
@@ -207,26 +223,41 @@ function groupSessionsByDate(
 interface AiModelOption {
   id: string;
   name: string;
-  icon: string;        // color for the dot/icon
+  icon: string;        // image path (svg/png) for the model
   group: "main" | "more";
   capabilities?: Record<string, any>;
   is_default?: boolean;
 }
 
-// Provider → color mapping for model dots
-const PROVIDER_COLORS: Record<string, string> = {
-  openai: "#10a37f",
-  azure: "#0078d4",
-  anthropic: "#d97706",
-  google: "#4285f4",
-  google_vertex: "#34a853",
-  groq: "#f97316",
-  openai_compatible: "#6b7280",
-};
+// Resolve a model logo by matching id/name/provider against known patterns.
+function resolveModelIcon(model: { model_id?: string; model_name?: string; display_name?: string; provider?: string }): string {
+  const hay = `${model.model_id || ""} ${model.model_name || ""} ${model.display_name || ""}`.toLowerCase();
+  const provider = (model.provider || "").toLowerCase();
 
-function providerColor(provider: string): string {
-  return PROVIDER_COLORS[provider?.toLowerCase()] || "#6b7280";
+  if (/mibuddy|mi[\s_-]?core|micore/.test(hay)) return micoreLogo;
+  if (/dall[\s_-]?e/.test(hay)) return dalleLogo;
+  if (/grok/.test(hay)) return grokLogo;
+  if (/nano[\s_-]?banana/.test(hay)) return nanoBananaLogo;
+  if (/web[\s_-]?search|google[\s_-]?search/.test(hay)) return googleLogo;
+  if (/gemini|bard|palm/.test(hay)) return geminiLogo;
+  if (/mistral|mixtral/.test(hay)) return mistralLogo;
+  if (/claude|anthropic/.test(hay)) return claudeLogo;
+  if (/llama|meta/.test(hay)) return metaLogo;
+  if (/cohere|command[\s_-]?r/.test(hay)) return cohereLogo;
+  if (/perplexity|sonar/.test(hay)) return perplexityLogo;
+  if (/nvidia|nemotron/.test(hay)) return nvidiaLogo;
+  if (/hugging[\s_-]?face/.test(hay)) return huggingfaceLogo;
+  if (/gpt|openai|o1|o3|o4/.test(hay)) return openaiLogo;
+  if (/azure/.test(hay)) return azureLogo;
+
+  // Provider fallbacks
+  if (provider === "openai" || provider === "openai_compatible") return openaiLogo;
+  if (provider === "azure") return azureLogo;
+  if (provider === "anthropic") return claudeLogo;
+  if (provider === "google" || provider === "google_vertex") return geminiLogo;
+  return defaultLlmLogo;
 }
+
 
 // Empty default — models are fetched from API on mount
 const FALLBACK_AI_MODELS: AiModelOption[] = [];
@@ -671,7 +702,7 @@ export default function AgentOrchestrator() {
         const models: AiModelOption[] = data.map((m: any, idx: number) => ({
           id: m.model_id,
           name: m.display_name || m.model_name,
-          icon: providerColor(m.provider),
+          icon: resolveModelIcon(m),
           group: (idx < 5 ? "main" : "more") as "main" | "more",
           capabilities: m.capabilities || undefined,
           is_default: m.is_default || false,
@@ -2068,10 +2099,15 @@ export default function AgentOrchestrator() {
                 noAgentMode ? "text-foreground" : "text-muted-foreground"
               }`}
             >
-              <span
-                className="h-3 w-3 shrink-0 rounded-full"
-                style={{ background: noAgentMode && selectedAiModel ? aiModels.find((m) => m.id === selectedAiModel)?.icon || "#6b7280" : "#6b7280" }}
-              />
+              {noAgentMode && selectedAiModel && aiModels.find((m) => m.id === selectedAiModel)?.icon ? (
+                <img
+                  src={aiModels.find((m) => m.id === selectedAiModel)!.icon}
+                  alt=""
+                  className="h-4 w-4 shrink-0 object-contain"
+                />
+              ) : (
+                <span className="h-3 w-3 shrink-0 rounded-full bg-muted-foreground/40" />
+              )}
               <span>{noAgentMode && selectedAiModel ? aiModels.find((m) => m.id === selectedAiModel)?.name || t("Choose AI Model") : t("Choose AI Model")}</span>
               <ChevronDown size={14} className="opacity-50" />
             </button>
@@ -2098,9 +2134,10 @@ export default function AgentOrchestrator() {
                           : "text-foreground hover:bg-accent"
                     }`}
                   >
-                    <span
-                      className={`h-4 w-4 shrink-0 rounded-full ${!noAgentMode ? "opacity-30" : ""}`}
-                      style={{ background: model.icon }}
+                    <img
+                      src={model.icon}
+                      alt=""
+                      className={`h-5 w-5 shrink-0 object-contain ${!noAgentMode ? "opacity-30" : ""}`}
                     />
                     <span className="flex-1">{model.name}</span>
                     {noAgentMode && selectedAiModel === model.id && (
@@ -2142,9 +2179,10 @@ export default function AgentOrchestrator() {
                               : "text-foreground hover:bg-accent"
                           }`}
                         >
-                          <span
-                            className="h-4 w-4 shrink-0 rounded-full"
-                            style={{ background: model.icon }}
+                          <img
+                            src={model.icon}
+                            alt=""
+                            className="h-5 w-5 shrink-0 object-contain"
                           />
                           <span className="flex-1">{model.name}</span>
                           {selectedAiModel === model.id && (
