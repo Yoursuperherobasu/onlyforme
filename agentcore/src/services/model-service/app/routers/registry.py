@@ -168,14 +168,108 @@ async def test_model_connection(
 async def _test_image_model_connection(body: TestConnectionRequest, provider_config: dict) -> TestConnectionResponse:
     """Test connection for image generation models.
 
-    Routes to the correct test based on provider:
-    - OpenAI/Azure: calls images/generations endpoint
-    - Google: calls Vertex AI generateContent endpoint
+    Routes to the correct test based on provider and model name:
+    - Google: Vertex AI generateContent endpoint
+    - Azure/OpenAI DALL-E: Official OpenAI Python SDK (matches MiBuddy behavior)
+    - Others: generic httpx fallback
     """
     if body.provider in ("google", "google_vertex"):
         return await _test_vertex_image_connection(body, provider_config)
-    else:
-        return await _test_dalle_connection(body, provider_config)
+
+    # DALL-E specific: use the OpenAI Python SDK for reliability (matches MiBuddy)
+    model_lower = (body.model_name or "").lower()
+    if "dall-e" in model_lower or "dalle" in model_lower:
+        return await _test_dalle_via_sdk(body, provider_config)
+
+    # Fallback: generic httpx test (kept for non-DALL-E OpenAI-compatible image models)
+    return await _test_dalle_connection(body, provider_config)
+
+
+async def _test_dalle_via_sdk(body: TestConnectionRequest, provider_config: dict) -> TestConnectionResponse:
+    """Test DALL-E using the OpenAI Python SDK (both Azure and OpenAI).
+
+    Uses the same approach MiBuddy uses:
+      AzureOpenAI(...).images.generate(model=deployment, prompt=..., response_format="b64_json")
+
+    This is more reliable than raw httpx because the SDK handles:
+      - Deployment name resolution for Azure
+      - Authentication headers
+      - Response format negotiation
+      - Version/compatibility quirks
+    """
+    import asyncio
+    try:
+        from openai import AzureOpenAI, OpenAI
+    except ImportError:
+        return TestConnectionResponse(success=False, message="openai SDK not installed")
+
+    api_key = provider_config.get("api_key", "")
+    base_url = provider_config.get("base_url", "")
+    model_name = body.model_name
+
+    try:
+        def _call():
+            if body.provider == "azure":
+                endpoint = base_url or provider_config.get("azure_endpoint", "")
+                deployment = provider_config.get("azure_deployment", model_name)
+                api_version = provider_config.get("api_version", "2024-12-01-preview")
+                if not endpoint:
+                    raise ValueError("Azure DALL-E model missing base_url / azure_endpoint")
+                client = AzureOpenAI(
+                    api_key=api_key,
+                    api_version=api_version,
+                    azure_endpoint=endpoint,
+                    timeout=60.0,
+                )
+                return client.images.generate(
+                    model=deployment,
+                    prompt="a small red circle on white background",
+                    size="1024x1024",
+                    response_format="b64_json",
+                )
+            else:
+                # OpenAI public API or compatible
+                client = OpenAI(
+                    api_key=api_key,
+                    base_url=base_url or None,
+                    timeout=60.0,
+                )
+                return client.images.generate(
+                    model=model_name,
+                    prompt="a small red circle on white background",
+                    size="1024x1024",
+                    response_format="b64_json",
+                )
+
+        start = time.perf_counter()
+        result = await asyncio.to_thread(_call)
+        latency_ms = (time.perf_counter() - start) * 1000
+
+        # Confirm we got an image back
+        has_image = bool(result.data and len(result.data) > 0)
+        if not has_image:
+            return TestConnectionResponse(success=False, message="Image endpoint returned no data.")
+
+        return TestConnectionResponse(
+            success=True,
+            message=f"DALL-E model '{model_name}' connected successfully.",
+            latency_ms=round(latency_ms, 1),
+        )
+    except Exception as e:
+        # Extract clean error message from OpenAI SDK exception body when possible
+        error_msg = str(e)
+        body_attr = getattr(e, "body", None)
+        if isinstance(body_attr, dict):
+            inner = body_attr.get("error", {})
+            if isinstance(inner, dict) and inner.get("message"):
+                error_msg = inner["message"]
+        elif hasattr(e, "response") and hasattr(e.response, "json"):
+            try:
+                error_msg = e.response.json().get("error", {}).get("message", str(e))
+            except Exception:
+                pass
+        logger.warning("DALL-E SDK test failed for %s/%s: %s", body.provider, model_name, error_msg)
+        return TestConnectionResponse(success=False, message=error_msg)
 
 
 async def _test_dalle_connection(body: TestConnectionRequest, provider_config: dict) -> TestConnectionResponse:
@@ -190,7 +284,7 @@ async def _test_dalle_connection(body: TestConnectionRequest, provider_config: d
         if body.provider == "azure":
             endpoint = base_url or provider_config.get("azure_endpoint", "")
             deployment = provider_config.get("azure_deployment", model_name)
-            api_version = provider_config.get("api_version", "2024-02-01")
+            api_version = provider_config.get("api_version", "2024-12-01-preview")
             url = f"{endpoint.rstrip('/')}/openai/deployments/{deployment}/images/generations?api-version={api_version}"
             headers = {"api-key": api_key, "Content-Type": "application/json"}
         else:

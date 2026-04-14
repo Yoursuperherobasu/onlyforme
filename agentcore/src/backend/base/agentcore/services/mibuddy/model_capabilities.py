@@ -132,19 +132,32 @@ def detect_capabilities(
     Returns:
         Merged capabilities dict.
     """
+    # Normalize — treat "Gemini 3 Pro", "gemini-3-pro", "gemini_3_pro" as equal
+    def _norm(s: str) -> str:
+        return (s or "").lower().replace("_", "").replace("-", "").replace(" ", "")
+
     m = (model_name or "").lower()
+    m_norm = _norm(model_name)
     p = (provider or "").lower()
     detected: dict = {STREAMING: True}
 
     # For Azure, also check azure_deployment name (may differ from model_name)
     azure_deployment = ""
+    azure_deployment_norm = ""
     if provider_config and p == "azure":
         azure_deployment = (provider_config.get("azure_deployment") or "").lower()
+        azure_deployment_norm = _norm(azure_deployment)
 
-    # Step 1: Match against known models database
+    # Step 1: Match against known models database (compare both raw and normalized)
     matched = False
     for pattern, caps in KNOWN_MODELS:
-        if pattern in m or (azure_deployment and pattern in azure_deployment):
+        pattern_norm = _norm(pattern)
+        if (
+            pattern in m
+            or (azure_deployment and pattern in azure_deployment)
+            or (pattern_norm and pattern_norm in m_norm)
+            or (azure_deployment_norm and pattern_norm and pattern_norm in azure_deployment_norm)
+        ):
             detected.update(caps)
             matched = True
             break

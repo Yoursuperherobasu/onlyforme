@@ -137,6 +137,7 @@ async def handle_web_search_stream(query: str, system_message: str = "", event_m
     When enable_reasoning=True, Gemini 2.5+/3.x emits thought summaries alongside
     the answer via thinking_config.include_thoughts.
     """
+    logger.info(f"[WebSearch] handle_web_search_stream CALLED with enable_reasoning={enable_reasoning}, query={query[:50]!r}")
     from google import genai
     from google.genai import types
 
@@ -166,23 +167,62 @@ async def handle_web_search_stream(query: str, system_message: str = "", event_m
             ],
             "tools": tools,
         }
-        # Enable visible thinking for Gemini 2.5+ / 3.x
+        # Enable visible thinking. Gemini 3.x uses thinking_level ("LOW"/"MEDIUM"/"HIGH");
+        # Gemini 2.5 uses thinking_budget (int). Try the new API first, then fallback.
         if enable_reasoning:
+            # Extract major version from any naming style:
+            #   "gemini-3.1-pro-preview", "Gemini 3 Pro", "gemini_3_pro",
+            #   "google-3.1", "Gemini 3.2 Ultra" → all detected as major version 3.
+            import re as _re
+            version_match = _re.search(r"(?:gemini|google)[\s_\-]*(\d+(?:\.\d+)?)", (model_name or "").lower())
+            major_version = 0.0
+            if version_match:
+                try:
+                    major_version = float(version_match.group(1))
+                except ValueError:
+                    major_version = 0.0
+            is_gemini_3 = major_version >= 3.0
+            logger.info(f"[WebSearch] model_name={model_name!r}, detected version={major_version}, using new API={is_gemini_3}")
+            thinking_config = None
             try:
-                config_kwargs["thinking_config"] = types.ThinkingConfig(include_thoughts=True)
-            except AttributeError:
-                logger.debug("[WebSearch] ThinkingConfig not available in installed google-genai SDK version")
+                if is_gemini_3:
+                    # Gemini 3.x API
+                    thinking_config = types.ThinkingConfig(
+                        thinking_level="HIGH",
+                        include_thoughts=True,
+                    )
+                else:
+                    # Gemini 2.5 API (thinking_budget=-1 = dynamic)
+                    thinking_config = types.ThinkingConfig(
+                        thinking_budget=-1,
+                        include_thoughts=True,
+                    )
+                config_kwargs["thinking_config"] = thinking_config
+                logger.info(f"[WebSearch] enable_reasoning=True — attached {thinking_config!r}")
+            except (AttributeError, TypeError) as e:
+                # Fallback: try with only include_thoughts
+                try:
+                    config_kwargs["thinking_config"] = types.ThinkingConfig(include_thoughts=True)
+                    logger.info(f"[WebSearch] Fell back to ThinkingConfig(include_thoughts=True): {e}")
+                except (AttributeError, TypeError) as e2:
+                    logger.warning(f"[WebSearch] ThinkingConfig not supported at all: {e2}")
+        else:
+            logger.info(f"[WebSearch] enable_reasoning=False — no thinking config")
         config = types.GenerateContentConfig(**config_kwargs)
 
         full_response = ""
         full_reasoning = ""
         grounding_used = False
         search_queries: list[str] = []
+        chunk_count = 0
+        answer_chunk_count = 0
+        reasoning_chunk_count = 0
         for chunk in client.models.generate_content_stream(
             model=model_name,
             contents=contents,
             config=config,
         ):
+            chunk_count += 1
             if not chunk.candidates or not chunk.candidates[0].content or not chunk.candidates[0].content.parts:
                 continue
             # Log grounding metadata (confirms Google Search tool was invoked)
@@ -200,15 +240,22 @@ async def handle_web_search_stream(query: str, system_message: str = "", event_m
                 if not part_text:
                     continue
                 is_thought = getattr(part, "thought", False)
+                # Debug once: confirm whether thought flag is being set by Gemini
+                if enable_reasoning and not hasattr(handle_web_search_stream, "_logged_first_part"):
+                    logger.info(f"[WebSearch][debug] first part: thought={is_thought}, text_len={len(part_text)}, text_preview={part_text[:80]!r}")
+                    handle_web_search_stream._logged_first_part = True  # type: ignore[attr-defined]
                 if is_thought:
+                    reasoning_chunk_count += 1
                     full_reasoning += part_text
                     if event_manager:
                         event_manager.on_token(data={"chunk": part_text, "type": "reasoning"})
                 else:
+                    answer_chunk_count += 1
                     full_response += part_text
                     if event_manager:
                         event_manager.on_token(data={"chunk": part_text})
 
+        logger.info(f"[WebSearch] Stream stats: total_chunks={chunk_count}, reasoning_parts={reasoning_chunk_count}, answer_parts={answer_chunk_count}")
         if grounding_used:
             logger.info(f"[WebSearch] Google Search tool invoked. Queries: {search_queries}")
         else:

@@ -1027,9 +1027,10 @@ async def _route_request(
                     selected_model.model_name,
                     selected_model.capabilities,
                 )
-                # If user selected a web_search model → force web search
+                # If user selected a web_search-capable model → force web search mode
+                # (the model's web_search=true capability means it was registered for grounded answers)
                 if caps.get("web_search"):
-                    logger.info(f"[ORCH] User selected web search model: {selected_model.display_name}")
+                    logger.info(f"[ORCH] Selected model '{selected_model.display_name}' has web_search capability — forcing web_search mode")
                     return {
                         "mode": "web_search",
                         "agent_id": None,
@@ -1426,7 +1427,12 @@ async def orch_chat(
             result = await handle_web_search(body.input_value, system_message=get_system_identity_prompt())
             response_text = result["response_text"]
             resp_model_name = result.get("model_name", "gemini")
-            sender_name = "Web Search"
+            # If user explicitly picked the model → show its name.
+            # If intent classifier decided → show generic "Web Search".
+            if routing.get("intent") == "web_search_explicit" and resp_model_id:
+                sender_name = await _get_model_display_name(session, resp_model_id)
+            else:
+                sender_name = "Web Search"
 
         elif mode == "image_gen":
             from agentcore.services.mibuddy.image_gen_handler import handle_image_generation
@@ -1437,7 +1443,12 @@ async def orch_chat(
             )
             response_text = result["response_text"]
             resp_model_name = result.get("model_name", "image-generation")
-            sender_name = "Image Generator"
+            # If user explicitly picked the model → show its name.
+            # If intent classifier decided → show generic "Image Generator".
+            if routing.get("intent") == "image_generation_explicit" and resp_model_id:
+                sender_name = await _get_model_display_name(session, resp_model_id)
+            else:
+                sender_name = "Image Generator"
 
         elif mode == "document_qa":
             from agentcore.services.mibuddy.document_processor import process_and_ingest, search_documents, build_doc_qa_prompt
@@ -1545,7 +1556,7 @@ async def orch_chat_stream(
     # -- 1. Route request ------------------------------------------------
     routing = await _route_request(session, current_user, body)
     mode = routing["mode"]
-    logger.info(f"[ORCH-STREAM] Routing mode={mode} intent={routing.get('intent')} session={body.session_id}")
+    logger.info(f"[ORCH-STREAM] Routing mode={mode} intent={routing.get('intent')} session={body.session_id} enable_reasoning={body.enable_reasoning} image_mode={body.image_mode}")
 
     # -- 2. For non-agent modes, use direct streaming --------------------
     if mode in ("model_direct", "web_search", "image_gen", "document_qa", "kb_search"):
@@ -1568,6 +1579,7 @@ async def orch_chat_stream(
         await orch_add_message(user_msg, session)
 
         resp_model_id = routing.get("model_id")
+        intent = routing.get("intent")
         sender_name = "Assistant"
         if mode in ("model_direct", "document_qa") and resp_model_id:
             sender_name = await _get_model_display_name(session, resp_model_id)
@@ -1575,9 +1587,18 @@ async def orch_chat_stream(
             settings_svc = get_settings_service()
             sender_name = settings_svc.settings.company_kb_name or "Knowledge Base"
         elif mode == "web_search":
-            sender_name = "Web Search"
+            # If user explicitly picked a web-search-capable model → show its name.
+            # If intent classifier decided → show generic "Web Search".
+            if intent == "web_search_explicit" and resp_model_id:
+                sender_name = await _get_model_display_name(session, resp_model_id)
+            else:
+                sender_name = "Web Search"
         elif mode == "image_gen":
-            sender_name = "Image Generator"
+            # Same pattern: explicit selection shows model name, intent-driven shows generic label.
+            if intent == "image_generation_explicit" and resp_model_id:
+                sender_name = await _get_model_display_name(session, resp_model_id)
+            else:
+                sender_name = "Image Generator"
 
         queue: asyncio.Queue = asyncio.Queue()
         event_manager = create_default_event_manager(queue)
@@ -1650,12 +1671,18 @@ async def orch_chat_stream(
                 elif _mode == "web_search":
                     from agentcore.services.mibuddy.web_search_handler import handle_web_search_stream
                     from agentcore.services.mibuddy.system_prompts import get_system_identity_prompt
+                    logger.warning(f"[ORCH-STREAM] >>> ABOUT TO CALL handle_web_search_stream with enable_reasoning={_enable_reasoning}")
                     result = await handle_web_search_stream(
                         _input_value,
                         system_message=get_system_identity_prompt(),
                         event_manager=event_manager,
                         enable_reasoning=_enable_reasoning,
                     )
+                    _rc = result.get("reasoning_content") or ""
+                    _rt = result.get("response_text") or ""
+                    logger.warning(f"[ORCH-STREAM] <<< handle_web_search_stream RETURNED, reasoning_len={len(_rc)}, response_len={len(_rt)}")
+                    logger.warning(f"[ORCH-STREAM] REASONING preview: {_rc[:300]!r}")
+                    logger.warning(f"[ORCH-STREAM] RESPONSE preview: {_rt[:300]!r}")
                 elif _mode == "image_gen":
                     from agentcore.services.mibuddy.image_gen_handler import handle_image_generation_stream
                     result = await handle_image_generation_stream(
@@ -1691,6 +1718,7 @@ async def orch_chat_stream(
                     )
                     await orch_add_message(agent_msg, db)
 
+                logger.warning(f"[ORCH-STREAM] SENDING end event with reasoning_content len={len(reasoning_content or '')}, agent_text len={len(response_text or '')}")
                 event_manager.on_end(data={
                     "agent_text": response_text,
                     "message_id": str(agent_msg.id),
@@ -2029,6 +2057,8 @@ async def get_orch_session_messages(
                 text=m.text,
                 agent_id=m.agent_id,
                 deployment_id=m.deployment_id,
+                model_id=getattr(m, "model_id", None),
+                reasoning_content=getattr(m, "reasoning_content", None),
                 category=m.category or "message",
                 files=m.files if m.files else None,
                 properties=m.properties if isinstance(m.properties, dict) else None,

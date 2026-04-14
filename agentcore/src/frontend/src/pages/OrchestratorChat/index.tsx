@@ -71,6 +71,78 @@ function SidebarMaskIcon({ src, className = "h-4 w-4 shrink-0 bg-muted-foregroun
   );
 }
 
+/* ------------------ REASONING BLOCK (CoT display) ------------------ */
+
+function ReasoningBlock({
+  reasoning,
+  streaming,
+}: {
+  reasoning: string;
+  streaming: boolean;
+}) {
+  const [open, setOpen] = useState(streaming);
+  // Re-open while streaming; user can manually toggle after streaming stops
+  useEffect(() => {
+    if (streaming) setOpen(true);
+  }, [streaming]);
+
+  return (
+    <div
+      style={{
+        marginBottom: "12px",
+        width: "100%",
+      }}
+    >
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          gap: "8px",
+          padding: "8px 16px",
+          borderRadius: "9999px",
+          border: "1px solid #e5e7eb",
+          background: "#f9fafb",
+          fontSize: "14px",
+          fontWeight: 500,
+          cursor: "pointer",
+          color: "#374151",
+        }}
+      >
+        <Lightbulb size={16} style={{ color: "#eab308" }} />
+        <span>Reasoning</span>
+        {streaming && <Loader2 size={12} className="animate-spin" style={{ color: "#6b7280" }} />}
+        <ChevronDown
+          size={14}
+          style={{
+            color: "#6b7280",
+            transform: open ? "rotate(180deg)" : "rotate(0deg)",
+            transition: "transform 0.2s",
+          }}
+        />
+      </button>
+      {open && (
+        <div
+          style={{
+            marginTop: "12px",
+            padding: "16px",
+            borderRadius: "8px",
+            border: "1px solid #e5e7eb",
+            background: "#f9fafb",
+            fontSize: "13px",
+            lineHeight: "1.6",
+            color: "#4b5563",
+            whiteSpace: "pre-wrap",
+          }}
+        >
+          {reasoning}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ------------------ TYPES ------------------ */
 
 interface Agent {
@@ -824,6 +896,17 @@ export default function AgentOrchestrator() {
     }
   }, [agents, selectedModelId, noAgentMode]);
 
+  // Auto-disable COT when user switches to a non-Gemini model (or leaves model mode).
+  useEffect(() => {
+    if (!cotReasoning) return;
+    const current = aiModels.find((m) => m.id === selectedAiModel);
+    const modelName = (current?.name || "").toLowerCase();
+    const isGemini = /\b(gemini|google)\b/.test(modelName) && /\b(2\.5|3|3\.\d+)\b/.test(modelName);
+    if (!noAgentMode || !isGemini) {
+      setCotReasoning(false);
+    }
+  }, [selectedAiModel, noAgentMode, aiModels, cotReasoning]);
+
   // Update filteredAgents when agents load
   useEffect(() => {
     setFilteredAgents(agents);
@@ -1314,6 +1397,7 @@ export default function AgentOrchestrator() {
         if (rafHandle !== null) { cancelAnimationFrame(rafHandle); rafHandle = null; }
         pendingContent = null;
         const reasoning = accumulatedReasoning || undefined;
+        console.warn("[Orch][flush] Setting msg with reasoningContent length:", reasoning?.length || 0, "content length:", content.length);
         flushSync(() => {
           setStreamingAgentName("");
           setMessages((prev) =>
@@ -1462,6 +1546,8 @@ export default function AgentOrchestrator() {
             updateAgentMsg(data?.text || "An error occurred", true);
             return false;
           } else if (eventType === "end") {
+            console.warn("[Orch][end event] reasoning_content length:", (data?.reasoning_content || "").length, "accumulated len:", accumulatedReasoning.length);
+            console.warn("[Orch][end event] reasoning preview:", (data?.reasoning_content || "").slice(0, 200));
             // Capture reasoning from end event if provided
             if (data?.reasoning_content) {
               accumulatedReasoning = data.reasoning_content;
@@ -2033,10 +2119,12 @@ export default function AgentOrchestrator() {
           <div className="my-1 h-px bg-border" />
           {(() => {
             const selectedModel = noAgentMode && selectedAiModel ? aiModels.find((m) => m.id === selectedAiModel) : null;
-            // supports_thinking = model can show visible reasoning/thinking text
-            // reasoning = model reasons internally (but may not show it, e.g. OpenAI o1/o3)
-            const modelSupportsReasoning = !!selectedModel?.capabilities?.supports_thinking;
-            const cotDisabled = noAgentMode && !modelSupportsReasoning;
+            // Restrict COT to Gemini models only (the only provider with reliable
+            // visible thinking support in our current setup). Matches names like
+            // "Gemini 3 Pro", "gemini-3.1-pro-preview", "Google 3.1 Pro", "Gemini 2.5 Flash".
+            const modelName = `${selectedModel?.name || ""}`.toLowerCase();
+            const isGeminiModel = /\b(gemini|google)\b/.test(modelName) && /\b(2\.5|3|3\.\d+)\b/.test(modelName);
+            const cotDisabled = noAgentMode && !isGeminiModel;
             return (
           <button
             onClick={() => { if (!cotDisabled) setCotReasoning(!cotReasoning); }}
@@ -2421,19 +2509,12 @@ export default function AgentOrchestrator() {
                       </div>
                     ) : (
                       <div className="text-[15px] leading-relaxed text-foreground/80">
-                        {/* CoT Reasoning (collapsible) */}
-                        {cotReasoning && msg.reasoningContent && (
-                          <details className="mb-3 rounded-lg border border-border bg-muted/30 p-3" open={isSending && msg.id === streamingMsgId}>
-                            <summary className="cursor-pointer text-xs font-medium text-muted-foreground hover:text-foreground">
-                              💭 {t("Thinking")}
-                              {isSending && msg.id === streamingMsgId && (
-                                <span className="ml-2 text-xs text-muted-foreground/60">({t("streaming...")})</span>
-                              )}
-                            </summary>
-                            <div className="mt-2 whitespace-pre-wrap text-xs leading-relaxed text-muted-foreground">
-                              {msg.reasoningContent}
-                            </div>
-                          </details>
+                        {/* CoT Reasoning — collapsible pill + panel */}
+                        {msg.reasoningContent && (
+                          <ReasoningBlock
+                            reasoning={msg.reasoningContent}
+                            streaming={isSending && msg.id === streamingMsgId}
+                          />
                         )}
                         {msg.contentBlocks && msg.contentBlocks.length > 0 && (
                           <ContentBlockDisplay
@@ -2755,6 +2836,21 @@ export default function AgentOrchestrator() {
                     <span className="text-xs font-semibold text-red-500">{t("Image")}</span>
                     <button
                       onClick={() => setImageMode(false)}
+                      className="ml-0.5 rounded-full p-0.5 text-red-400 hover:bg-red-100 hover:text-red-600 dark:hover:bg-red-900/50"
+                    >
+                      <X size={10} />
+                    </button>
+                  </div>
+                </div>
+              )}
+              {/* COT reasoning pill */}
+              {cotReasoning && (
+                <div className="flex items-center px-4 pb-1">
+                  <div className="inline-flex items-center gap-1.5 rounded-full border border-red-200 bg-red-50 px-3 py-1 dark:border-red-800 dark:bg-red-950/30">
+                    <Lightbulb size={12} className="text-red-500" />
+                    <span className="text-xs font-semibold text-red-500">{t("COT")}</span>
+                    <button
+                      onClick={() => setCotReasoning(false)}
                       className="ml-0.5 rounded-full p-0.5 text-red-400 hover:bg-red-100 hover:text-red-600 dark:hover:bg-red-900/50"
                     >
                       <X size={10} />
