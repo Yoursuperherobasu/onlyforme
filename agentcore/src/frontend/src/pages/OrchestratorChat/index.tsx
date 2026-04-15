@@ -765,7 +765,26 @@ export default function AgentOrchestrator() {
         return;
       }
       const mapped = mapApiMessages(apiSessionMessages);
-      setMessages(mapped);
+      // Preserve local-only state that the API may not return:
+      //   - contentBlocks (agent worker-node "Finished" thinking blocks)
+      //   - reasoningContent (CoT thinking from streaming, in case API filtered)
+      // The API is the source of truth for everything else.
+      setMessages((prev) => {
+        if (prev.length === 0) return mapped;
+        const localById = new Map(prev.map((m) => [m.id, m]));
+        return mapped.map((m) => {
+          const local = localById.get(m.id);
+          if (!local) return m;
+          return {
+            ...m,
+            // Keep local contentBlocks if API didn't return any (agent thinking)
+            contentBlocks: m.contentBlocks ?? local.contentBlocks,
+            blocksState: m.contentBlocks ? m.blocksState : (local.blocksState ?? m.blocksState),
+            // Keep local reasoningContent if API didn't return any
+            reasoningContent: m.reasoningContent ?? local.reasoningContent,
+          };
+        });
+      });
       setCurrentSessionId(effectiveSessionId);
       // Reset HITL UI state only when switching sessions (not on every poll).
       if (hitlSessionRef.current !== effectiveSessionId) {
