@@ -40,6 +40,7 @@ from agentcore.api.connector_catalogue import router as connector_catalogue_rout
 from agentcore.api.outlook_connector import router as outlook_connector_router
 from agentcore.api.sharepoint_connector import router as sharepoint_connector_router
 from agentcore.api.sharepoint_user import router as sharepoint_user_router
+from agentcore.api.outlook_orch import router as outlook_orch_router
 from agentcore.api.a2a import router as a2a_router
 from agentcore.api.packages import router as packages_router
 from agentcore.api.releases import router as releases_router
@@ -51,7 +52,7 @@ from agentcore.api.metrics_dashboard import router as metrics_dashboard_router
 from agentcore.api.tags import router as tags_router
 from agentcore.api.cost_limits import router as cost_limits_router
 from agentcore.api.semantic_search import router as semantic_search_router
-from agentcore.services.outlook_chat.router import router as outlook_chat_router
+# outlook_chat removed — replaced by outlook_orch (MiBuddy-compatible port)
 
 router = APIRouter(
     prefix="/api",
@@ -96,6 +97,7 @@ router.include_router(connector_catalogue_router)
 router.include_router(outlook_connector_router)
 router.include_router(sharepoint_connector_router)
 router.include_router(sharepoint_user_router)
+router.include_router(outlook_orch_router)
 router.include_router(a2a_router)
 router.include_router(packages_router)
 router.include_router(releases_router)
@@ -107,4 +109,4 @@ router.include_router(metrics_dashboard_router)
 router.include_router(tags_router)
 router.include_router(cost_limits_router)
 router.include_router(semantic_search_router)
-router.include_router(outlook_chat_router)
+# outlook_chat router removed — see outlook_orch_router above

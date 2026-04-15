@@ -149,6 +149,9 @@ class OrchChatRequest(BaseModel):
     files: list[str] | None = None
     enable_reasoning: bool = False  # enable CoT reasoning if model supports it
     image_mode: bool = False  # explicit image-generation mode (fast path, skips intent classification)
+    # MiBuddy-style canvas flag. Frontend sends `canvasEnabled`; pydantic
+    # aliases handle the camelCase → snake_case mapping.
+    canvas_enabled: bool = False
 
 
 class OrchMessageResponse(BaseModel):
@@ -1114,6 +1117,16 @@ async def _route_request(
             "intent": intent.value,
         }
 
+    if intent == Intent.OUTLOOK_QUERY:
+        return {
+            "mode": "outlook_query",
+            "agent_id": None,
+            "deployment_id": None,
+            "deployment": None,
+            "model_id": body.model_id,
+            "intent": intent.value,
+        }
+
     # Intent is general_chat
     # Check if session has documents in Pinecone (follow-up question about uploaded docs)
     try:
@@ -1450,6 +1463,33 @@ async def orch_chat(
             else:
                 sender_name = "Image Generator"
 
+        elif mode == "outlook_query":
+            # Port of MiBuddy's outlook agent. We delegate to the verbatim
+            # copy at `agentcore.services.mibuddy.outlook_agent`. It needs
+            # a LangGraph-style state dict with the current user id and
+            # the user's message; it fills `state["final_response"]` with
+            # the markdown reply. The agent may also flip
+            # `is_canvas_enabled` to True for compose/reply intents —
+            # we bubble that back to the frontend as `auto_canvas`.
+            from agentcore.services.mibuddy.outlook_agent import outlook_agent_node
+            state = {
+                "messages": [{"role": "user", "content": body.input_value}],
+                "user_id": str(current_user.id),
+                "is_canvas_enabled": bool(body.canvas_enabled),
+            }
+            state = await outlook_agent_node(state)
+            response_text = state.get("final_response", "") or (
+                "I couldn't process that Outlook request."
+            )
+            # auto_canvas = agent turned canvas ON even though the user
+            # didn't ask. Store in reasoning_content as a side-channel
+            # JSON blob the frontend can pick up. (Re-using an existing
+            # field avoids schema churn.)
+            if state.get("is_canvas_enabled") and not body.canvas_enabled:
+                logger.info("[ORCH] Outlook agent auto-enabled canvas")
+            resp_model_name = "outlook"
+            sender_name = "Outlook"
+
         elif mode == "document_qa":
             from agentcore.services.mibuddy.document_processor import process_and_ingest, search_documents, build_doc_qa_prompt
             from agentcore.services.mibuddy.direct_model_chat import direct_model_chat
@@ -1559,7 +1599,7 @@ async def orch_chat_stream(
     logger.info(f"[ORCH-STREAM] Routing mode={mode} intent={routing.get('intent')} session={body.session_id} enable_reasoning={body.enable_reasoning} image_mode={body.image_mode}")
 
     # -- 2. For non-agent modes, use direct streaming --------------------
-    if mode in ("model_direct", "web_search", "image_gen", "document_qa", "kb_search"):
+    if mode in ("model_direct", "web_search", "image_gen", "document_qa", "kb_search", "outlook_query"):
         # Persist user message
         stream_msg_ts = datetime.now(timezone.utc).replace(tzinfo=None)
         user_msg = OrchConversationTable(
@@ -1599,6 +1639,8 @@ async def orch_chat_stream(
                 sender_name = await _get_model_display_name(session, resp_model_id)
             else:
                 sender_name = "Image Generator"
+        elif mode == "outlook_query":
+            sender_name = "Outlook"
 
         queue: asyncio.Queue = asyncio.Queue()
         event_manager = create_default_event_manager(queue)
@@ -1612,6 +1654,7 @@ async def orch_chat_stream(
         _files = body.files
         _doc_files = routing.get("doc_files", [])
         _image_files = routing.get("image_files", [])
+        _canvas_enabled = bool(body.canvas_enabled)
 
         async def _run_direct_and_persist():
             try:
@@ -1660,9 +1703,23 @@ async def orch_chat_stream(
                     )
                 elif _mode == "model_direct":
                     from agentcore.services.mibuddy.direct_model_chat import direct_model_chat_stream
+                    # MiBuddy canvas parity: when canvas is on we prepend a
+                    # short system-style instruction so the LLM produces a
+                    # cleanly formatted draft document (the rendering side
+                    # is handled by the frontend canvas panel).
+                    prompt_for_model = _input_value
+                    if _canvas_enabled:
+                        prompt_for_model = (
+                            "You are helping the user draft a clear, "
+                            "well-structured document. Respond with the draft "
+                            "in clean markdown (headings, short paragraphs, "
+                            "bullet lists where useful). Do not add "
+                            "meta-commentary or follow-up questions.\n\n"
+                            f"User request: {_input_value}"
+                        )
                     result = await direct_model_chat_stream(
                         model_id=str(_resp_model_id),
-                        input_value=_input_value,
+                        input_value=prompt_for_model,
                         session_id=_session_id,
                         files=_files,
                         enable_reasoning=_enable_reasoning,
@@ -1691,6 +1748,29 @@ async def orch_chat_stream(
                         user_id=str(_user_id),
                         event_manager=event_manager,
                     )
+                elif _mode == "outlook_query":
+                    # Port of MiBuddy's outlook_agent_node. Runs to completion
+                    # (not token-stream) and emits the full markdown as one
+                    # chunk + an end event, matching other non-streaming
+                    # modes like kb_search.
+                    from agentcore.services.mibuddy.outlook_agent import outlook_agent_node
+                    state = {
+                        "messages": [{"role": "user", "content": _input_value}],
+                        "user_id": str(_user_id),
+                        "is_canvas_enabled": _canvas_enabled,
+                    }
+                    state = await outlook_agent_node(state)
+                    outlook_text = state.get("final_response", "") or (
+                        "I couldn't process that Outlook request."
+                    )
+                    event_manager.on_token(data={"chunk": outlook_text})
+                    # Did the outlook agent flip canvas ON (reply/compose)?
+                    agent_canvas = bool(state.get("is_canvas_enabled"))
+                    result = {
+                        "response_text": outlook_text,
+                        "model_name": "outlook",
+                        "auto_canvas": agent_canvas and not _canvas_enabled,
+                    }
 
                 response_text = result.get("response_text", "")
                 reasoning_content = result.get("reasoning_content")
@@ -1712,7 +1792,13 @@ async def orch_chat_stream(
                         reasoning_content=reasoning_content,
                         timestamp=reply_ts,
                         files=[],
-                        properties={},
+                        # Persist canvas flag so a reload / refetch keeps
+                        # the message rendered in the canvas editor.
+                        properties={
+                            "canvas_enabled": bool(
+                                _canvas_enabled or result.get("auto_canvas"),
+                            ),
+                        } if (_canvas_enabled or result.get("auto_canvas")) else {},
                         category="message",
                         content_blocks=[],
                     )
@@ -1723,6 +1809,9 @@ async def orch_chat_stream(
                     "agent_text": response_text,
                     "message_id": str(agent_msg.id),
                     "reasoning_content": reasoning_content,
+                    # MiBuddy parity: tell the frontend when the backend
+                    # auto-enabled canvas (compose/reply email).
+                    "auto_canvas": bool(result.get("auto_canvas", False)),
                 })
             except Exception as exc:
                 logger.exception(f"[ORCH-STREAM] Direct mode error: {exc}")
@@ -2197,6 +2286,185 @@ async def get_active_agent(
 
 
 from agentcore.services.mibuddy.model_capabilities import detect_capabilities
+
+
+# ---------------------------------------------------------------------------
+# Canvas edit (MiBuddy-style) — persist user edits of an agent message
+# ---------------------------------------------------------------------------
+
+
+class CanvasEditRequest(BaseModel):
+    """Port of MiBuddy's /canvas/edit payload.
+
+    Supported operations (matches MiBuddy exactly):
+      - "manual":        just save whatever `content` the user typed
+      - "reading_level": rewrite at `level` (kindergarten / middle school /
+                         high school / college / graduate)
+      - "emoji":         add playful emojis (emoji_action="words") OR
+                         strip all emojis (emoji_action="remove")
+    """
+    message_id: UUID
+    session_id: str | None = None
+    content: str
+    operation: str = "manual"
+    level: str | None = None
+    emoji_action: str | None = None  # "words" | "remove"
+
+
+# Ported verbatim from MiBuddy app.py:3036-3042.
+_LEVEL_DESCRIPTIONS = {
+    "kindergarten": "Use very simple vocabulary, very short sentences, suitable for a 5-year-old child.",
+    "middle school": "Use moderately simple vocabulary, clear explanations, suitable for students aged 10–14.",
+    "high school": "Use moderate complexity, varied sentence structure, suitable for grade 9-12 students.",
+    "college": "Use advanced vocabulary, complex ideas, academically structured sentences.",
+    "graduate": "Use highly academic tone, domain-specific terminology, and research-level abstraction.",
+}
+
+
+_EMOJI_PROMPT = """
+You are a creative writing assistant.
+Task: Transform the text by adding **expressive, colorful emojis** throughout.
+Guidelines:
+- Add emojis to most major words (nouns, verbs, adjectives, and festive terms).
+- Use emojis that match the emotion, meaning, or energy of each word.
+- Keep the meaning and structure intact — do NOT remove words or punctuation.
+- Return only the transformed text
+Example:
+Input: Wishing you a bright and joyful Diwali!
+Output: ✨🙏 Wishing you a 🌟 bright & 😊 joyful Diwali! ✨🪔
+
+Text:
+{content}
+"""
+
+
+def _strip_emojis(text: str) -> str:
+    """Port of `remove_emojis` — removes unicode emoji chars.
+
+    Uses the same `emoji` python library MiBuddy uses. If unavailable,
+    falls back to a regex that removes most common emoji ranges.
+    """
+    try:
+        import emoji  # type: ignore
+        return emoji.replace_emoji(text, "")
+    except Exception:
+        import re as _re
+        pat = _re.compile(
+            "[\U0001F300-\U0001FAFF"
+            "\U0001F600-\U0001F64F"
+            "\U0001F680-\U0001F6FF"
+            "\U0001F700-\U0001F77F"
+            "\U0001F780-\U0001F7FF"
+            "\U0001F800-\U0001F8FF"
+            "\U0001F900-\U0001F9FF"
+            "\U0001FA00-\U0001FA6F"
+            "\U00002600-\U000026FF"
+            "\U00002700-\U000027BF"
+            "]+",
+            flags=_re.UNICODE,
+        )
+        return pat.sub("", text)
+
+
+def _canvas_llm_rewrite(prompt: str) -> str:
+    """Reuse the same AzureAIFoundryLLM shim the Outlook agent uses."""
+    from agentcore.services.mibuddy._outlook_agent_deps import AzureAIFoundryLLM
+    llm = AzureAIFoundryLLM()
+    return llm.complete(prompt).text or ""
+
+
+@router.post(
+    "/canvas/edit",
+    status_code=200,
+    dependencies=[Depends(PermissionChecker(["interact_agents"]))],
+)
+async def canvas_edit(
+    *,
+    body: CanvasEditRequest,
+    session: DbSession,
+    current_user: CurrentActiveUser,
+):
+    """Canvas edit endpoint — port of MiBuddy's /canvas/edit.
+
+    Supports:
+      - operation="manual"        → save user-edited text
+      - operation="reading_level" → rewrite at the given reading level
+      - operation="emoji"         → add or strip emojis
+    Returns MiBuddy's exact response shape:
+        {"status":"success","data":[{"id":..,"content":..,"canvas":true,...}]}
+    so the frontend can drop-in reuse MiBuddy's client-side handler.
+    """
+    from sqlalchemy import update
+
+    edited = body.content or ""
+
+    # Reading-level rewrite — MiBuddy calls LLM with the level description.
+    if body.operation == "reading_level" and body.level:
+        if body.level == "reading level":
+            # MiBuddy's "keep current reading level" sentinel — no-op.
+            pass
+        elif body.level in _LEVEL_DESCRIPTIONS:
+            prompt = (
+                "Rewrite the following content for this reading level.\n\n"
+                f"Target Level: {body.level}\n"
+                f"Description: {_LEVEL_DESCRIPTIONS[body.level]}\n\n"
+                "Rules:\n"
+                "- Preserve meaning\n"
+                "- Do not summarize\n"
+                "- Do not add new content\n\n"
+                f"Content:\n{edited}"
+            )
+            try:
+                rewritten = _canvas_llm_rewrite(prompt)
+                if rewritten.strip():
+                    edited = rewritten
+            except Exception as e:
+                logger.error(f"[canvas/edit] reading_level LLM failed: {e}")
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid level. Valid: {list(_LEVEL_DESCRIPTIONS.keys())}",
+            )
+
+    # Emoji operation — can run alongside reading_level (as in MiBuddy).
+    if body.emoji_action == "words":
+        try:
+            rewritten = _canvas_llm_rewrite(_EMOJI_PROMPT.format(content=edited))
+            if rewritten.strip():
+                edited = rewritten
+        except Exception as e:
+            logger.error(f"[canvas/edit] emoji-add LLM failed: {e}")
+    elif body.emoji_action == "remove":
+        edited = _strip_emojis(edited)
+
+    # Persist the final content
+    stmt = (
+        update(OrchConversationTable)
+        .where(OrchConversationTable.id == body.message_id)
+        .where(OrchConversationTable.user_id == current_user.id)
+        .values(text=edited)
+    )
+    result = await session.execute(stmt)
+    await session.commit()
+    if (result.rowcount or 0) == 0:
+        raise HTTPException(
+            status_code=404,
+            detail="Message not found or not owned by this user",
+        )
+
+    # MiBuddy-compatible response shape
+    return {
+        "status": "success",
+        "data": [
+            {
+                "role": "assistant",
+                "id": str(body.message_id),
+                "content": edited,
+                "canvas": True,
+                "updatedAt": datetime.now(timezone.utc).isoformat(),
+            }
+        ],
+    }
 
 
 # ---------------------------------------------------------------------------

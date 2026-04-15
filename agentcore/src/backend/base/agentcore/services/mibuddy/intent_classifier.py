@@ -24,6 +24,7 @@ class Intent(str, Enum):
     WEB_SEARCH = "web_search"
     IMAGE_GENERATION = "image_generation"
     KNOWLEDGE_BASE_SEARCH = "knowledge_base_search"
+    OUTLOOK_QUERY = "outlook_query"
 
 
 def _build_classification_prompt() -> str:
@@ -49,9 +50,12 @@ Your job is to analyze the user's query and categorize it into EXACTLY one of th
    Examples: "create an image of a dog", "generate a logo", "draw a sunset", "edit that image", "make the background blue".
 
 2. "web_search": Use this if the user asks for *current* information, real-time data, news, weather, stock prices, sports scores, or explicitly asks to search the web/internet.
-   Examples: "What is the weather in London?", "Latest news on AI", "Who won the game yesterday?", "Search for..."{kb_intent}
+   Examples: "What is the weather in London?", "Latest news on AI", "Who won the game yesterday?", "Search for..."
 
-{"5" if kb_intent else "3"}. "general_chat": Use this for everything else. This includes general knowledge, coding help, writing, summarization, translation, math, casual conversation, and any question that can be answered from training knowledge.
+3. "outlook_query": Use this if the user asks about emails, calendar, meetings, Outlook, or wants to search/read/send/compose/write/draft emails, or reply to emails.
+   Examples: "Show me my recent emails", "Do I have any meetings today?", "Search for emails from John", "What's on my calendar?", "Check my inbox", "Write an email to John about the project update", "Draft an email saying the services are down", "Can you write me an email about...", "Compose an email to the team", "Reply to the email from Sarah", "Send an email about the outage".{kb_intent}
+
+{"5" if kb_intent else "4"}. "general_chat": Use this for everything else. This includes general knowledge, coding help, writing, summarization, translation, math, casual conversation, and any question that can be answered from training knowledge.
    Examples: "Write a python script", "Summarize this text", "Translate hello to spanish", "Tell me a joke", "Explain quantum computing".
 
 Output Format:
