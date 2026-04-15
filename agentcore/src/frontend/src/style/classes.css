@@ -802,6 +802,201 @@ input[type="search"]::-webkit-search-cancel-button {
   z-index: 5;
 }
 
+/* ─────────────────────────────────────────────────────────────────
+ * CANVAS EDITOR (OrchestratorChat) — verbatim port of MiBuddy's canvas UI.
+ * Class names prefixed with `ac_` (agentcore canvas) so they don't
+ * collide with anything else. Colors / shadows / radii match the
+ * MiBuddy index.css.
+ * ───────────────────────────────────────────────────────────────── */
+.ac_canvas_wrapper {
+  padding-left: 0;
+}
+
+.ac_canvas_answer {
+  border: 1px solid #e3e3e3;
+  border-radius: 13px;
+  padding: 18px 22px;
+  background: #ffffff;
+  font-family: Inter, "Segoe UI", system-ui, sans-serif;
+  color: #222;
+  line-height: 1.6;
+  font-size: 15px;
+  outline: none;
+  min-height: 60px;
+  margin-bottom: 8px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+}
+
+.ac_canvas_answer:focus-visible {
+  outline: none;
+  border-color: #d92128;
+  box-shadow: 0 2px 12px rgba(217, 33, 40, 0.18);
+}
+
+.ac_canvas_answer h1,
+.ac_canvas_answer h2,
+.ac_canvas_answer h3,
+.ac_canvas_answer h4 {
+  margin: 14px 0 8px;
+  font-weight: 600;
+}
+
+.ac_canvas_answer p { margin: 8px 0; }
+.ac_canvas_answer ul,
+.ac_canvas_answer ol { margin: 8px 0; padding-left: 22px; }
+.ac_canvas_answer code {
+  background: #f3f3f3;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 0.92em;
+}
+
+.ac_canvas_actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 16px;
+  padding: 6px 4px 2px 4px;
+}
+
+.ac_canvas_btn {
+  color: #d92128;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  background: none;
+  border: 0;
+  padding: 4px 6px;
+  transition: opacity 0.15s ease;
+}
+.ac_canvas_btn:hover { opacity: 0.75; }
+.ac_canvas_btn.active { text-decoration: underline; }
+
+.ac_canvas_draft_btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #d92128;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  background: none;
+  border: 0;
+  padding: 4px 6px;
+  transition: opacity 0.15s ease;
+}
+.ac_canvas_draft_btn:hover { opacity: 0.75; }
+
+.ac_canvas_save_indicator {
+  font-size: 11px;
+  color: #888;
+  font-style: italic;
+  margin-right: auto;
+  align-self: center;
+}
+
+/* ── Floating panel + reading-level slider (MiBuddy port) ──────── */
+.ac_canvas_floating_panel {
+  position: fixed;
+  bottom: 110px;
+  right: 24px;
+  background: #D92128;
+  padding: 16px 6px;
+  border-radius: 20px;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  align-items: center;
+  box-shadow: 0 10px 30px rgba(217,33,40,0.35);
+}
+
+.ac_canvas_panel_btn {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  border: 0;
+  background: rgba(255,255,255,0.12);
+  color: #fff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background 0.15s ease, transform 0.15s ease;
+  font-size: 18px;
+}
+.ac_canvas_panel_btn:hover { background: rgba(255,255,255,0.22); transform: scale(1.05); }
+.ac_canvas_panel_btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.ac_reading_level_wrapper {
+  position: fixed;
+  right: 80px;
+  bottom: 110px;
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  z-index: 61;
+}
+
+.ac_reading_level_label {
+  background: #111;
+  color: #fff;
+  padding: 6px 12px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  align-self: center;
+  text-transform: capitalize;
+}
+
+.ac_reading_track {
+  position: relative;
+  padding: 12px 10px;
+  border-radius: 20px;
+  background: #ededed;
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 16px;
+  min-height: 170px;
+  box-shadow: 0 4px 14px rgba(0,0,0,0.12);
+}
+
+.ac_reading_dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #c7c7c7;
+  cursor: pointer;
+  transition: transform 0.15s ease, background 0.15s ease;
+}
+.ac_reading_dot:hover { transform: scale(1.25); }
+.ac_reading_dot.active { background: #111; }
+.ac_reading_dot.disabled { cursor: default; opacity: 0.6; }
+
+.dark .ac_reading_track { background: #2a2a2b; }
+.dark .ac_reading_dot { background: #555; }
+.dark .ac_reading_dot.active { background: #fff; }
+.dark .ac_reading_level_label { background: #fff; color: #111; }
+
+/* Canvas dark mode */
+.dark .ac_canvas_answer {
+  background: #232323;
+  border-color: #3a3a3b;
+  color: #e9e9e9;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.35);
+}
+.dark .ac_canvas_answer:focus-visible {
+  border-color: #ff5a60;
+  box-shadow: 0 2px 12px rgba(255, 90, 96, 0.30);
+}
+.dark .ac_canvas_answer code {
+  background: #2f2f2f;
+}
+.dark .ac_canvas_btn,
+.dark .ac_canvas_draft_btn { color: #ff5a60; }
+.dark .ac_canvas_save_indicator { color: #9a9a9a; }
+
+
 /* Dark mode (matches MiBuddy) */
 .dark .nbk_layout            { background: #1e1e1f; }
 .dark .nbk_topBar            { background: #2a2a2b; border-bottom-color: #3a3a3b; }

@@ -1,6 +1,6 @@
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
-import { Send, Sparkles, ChevronDown, Plus, MessageSquare, PanelLeftClose, PanelLeft, User, Loader2, Trash2, Check, ImagePlus, X, Clock, Search, Image, Archive, ChevronRight, Globe, BookOpen, Headphones, Info, HelpCircle, Mic, AudioLines, FileUp, Paintbrush, Lightbulb, Upload, MoreVertical, Folder, ArrowLeft, File, FileText, Shield, CheckCircle2, SquarePen, Mail, Download, Copy } from "lucide-react";
+import { Send, Sparkles, ChevronDown, Plus, MessageSquare, PanelLeftClose, PanelLeft, User, Loader2, Trash2, Check, ImagePlus, X, Clock, Search, Image, Archive, ChevronRight, Globe, BookOpen, Headphones, Info, HelpCircle, Mic, AudioLines, FileUp, Paintbrush, Lightbulb, Upload, MoreVertical, Folder, ArrowLeft, File, FileText, Shield, CheckCircle2, SquarePen, Mail, Download, Copy, Pencil } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import {
   useGetOrchAgents,
@@ -23,12 +23,13 @@ import { MarkdownField } from "@/modals/IOModal/components/chatView/chatMessage/
 import { ContentBlockDisplay } from "@/components/core/chatComponents/ContentBlockDisplay";
 import type { ContentBlock } from "@/types/chat";
 import SharePointFilePicker from "./SharePointFilePicker";
-import OutlookConnector, { useOutlookStatus } from "./OutlookConnector";
+// OutlookConnector removed — replaced by OutlookOrchConnector below.
 import NotebookLMPanel from "./NotebookLMPanel";
 import OutlookOrchConnector, {
   useOutlookOrchStatus,
   disconnectOutlookOrch,
 } from "./OutlookOrchConnector";
+import CanvasEditor from "./CanvasEditor";
 import useAlertStore from "@/stores/alertStore";
 import openaiLogo from "@/assets/openai_logo.svg";
 import geminiLogo from "@/assets/gemini_logo.svg";
@@ -182,6 +183,9 @@ interface Message {
   hitlActions?: string[];
   hitlThreadId?: string;
   hitlIsDeployed?: boolean;
+  // Canvas mode (MiBuddy-style) — if true, agent responses render in the
+  // editable CanvasEditor card rather than as a plain MarkdownField.
+  canvasEnabled?: boolean;
 }
 
 interface FilePreview {
@@ -275,6 +279,10 @@ function mapApiMessages(apiMessages: OrchMessageResponse[]): Message[] {
       files: m.files && m.files.length > 0 ? m.files : undefined,
       contentBlocks: toolBlocks.length > 0 ? toolBlocks : undefined,
       blocksState: toolBlocks.length > 0 ? "complete" : undefined,
+      // Restore canvas flag so the editable CanvasEditor renders after
+      // a refetch / reload. Persisted in the message's `properties` JSON
+      // by the backend when canvas was on.
+      canvasEnabled: !!props?.canvas_enabled,
       // Restore HITL metadata from persisted properties.
       // Fallback to text inference because some interrupted rows may miss fields.
       hitl: isHitl,
@@ -581,9 +589,9 @@ export default function AgentOrchestrator() {
   // Addon: Speech-to-Text (mic)
   const [isListening, setIsListening] = useState(false);
   const recognitionRef = useRef<any>(null);
-  // Addon: Outlook connector
-  const [outlookDialogOpen, setOutlookDialogOpen] = useState(false);
-  const { isConnected: isOutlookConnected, refresh: refreshOutlookStatus, setIsConnected: setOutlookConnected } = useOutlookStatus();
+  // Outlook connector state moved to useOutlookOrchStatus (see OutlookOrchConnector).
+  // Kept these stub locals so refs from older code paths still compile; they
+  // are not connected to anything.
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -776,7 +784,19 @@ export default function AgentOrchestrator() {
         return;
       }
       const mapped = mapApiMessages(apiSessionMessages);
-      setMessages(mapped);
+      // Preserve canvas state on refetch — the mapper reads it from
+      // `properties.canvas_enabled` in the DB, but if a message was
+      // already flagged in-memory we keep that flag even if the DB
+      // didn't persist it (e.g. backend restart mid-stream).
+      setMessages((prev) => {
+        const prevCanvasIds: Record<string, boolean> = {};
+        prev.forEach((m) => {
+          if (m.canvasEnabled) prevCanvasIds[m.id] = true;
+        });
+        return mapped.map((m) =>
+          prevCanvasIds[m.id] ? { ...m, canvasEnabled: true } : m,
+        );
+      });
       setCurrentSessionId(effectiveSessionId);
       // Reset HITL UI state only when switching sessions (not on every poll).
       if (hitlSessionRef.current !== effectiveSessionId) {
@@ -1370,6 +1390,7 @@ export default function AgentOrchestrator() {
           agentName: responderName,
           content: "",  // empty = "Thinking..." state
           timestamp: timeNow(),
+          canvasEnabled: isCanvasEnabled || undefined,
         },
       ]);
       setInput("");
@@ -1463,6 +1484,14 @@ export default function AgentOrchestrator() {
     // Image mode: explicit flag — backend skips intent classification and routes to image generation
     if (imageMode) {
       requestBody.image_mode = true;
+    }
+
+    // Canvas mode (MiBuddy-style): tells the backend the user wants a
+    // draft-style response. The outlook_agent also auto-enables this
+    // flag for compose_email / reply_email intents and returns
+    // `auto_canvas: true` — handled in onData below.
+    if (isCanvasEnabled) {
+      requestBody.canvas_enabled = true;
     }
 
     if (filePaths.length > 0) {
@@ -1576,11 +1605,37 @@ export default function AgentOrchestrator() {
             if (data?.reasoning_content) {
               accumulatedReasoning = data.reasoning_content;
             }
+            // MiBuddy canvas parity: backend auto-enabled canvas for the
+            // user (typically compose_email / reply_email from the
+            // Outlook agent). Flip the UI toggle on for future messages
+            // AND retroactively mark the current streaming message so
+            // its rendering switches to CanvasEditor.
+            if (data?.auto_canvas) {
+              setIsCanvasEnabled(true);
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.id === agentMsgId ? { ...m, canvasEnabled: true } : m,
+                ),
+              );
+            }
             // End event carries the final complete text — flush immediately.
             // BUT: if we received a HITL pause, do NOT overwrite the HITL
             // message with agent_text — the action buttons must stay visible.
             if (data?.agent_text && !hitlPauseReceived) {
               updateAgentMsg(data.agent_text, true);
+              // Re-bind the frontend placeholder's temporary UUID to the
+              // real DB id the backend just persisted, so that any later
+              // refetch-driven replacement can still match by id (needed
+              // for preserving canvas flag, reactions, etc.).
+              if (data?.message_id) {
+                setMessages((prev) =>
+                  prev.map((m) =>
+                    m.id === agentMsgId
+                      ? { ...m, id: String(data.message_id) }
+                      : m,
+                  ),
+                );
+              }
             } else if (!hitlPauseReceived && !receivedToken && latestAgentAddMessageText.trim()) {
               // Fallback for non-token flows where response text came only via
               // add_message and end has no agent_text payload.
@@ -2108,7 +2163,10 @@ export default function AgentOrchestrator() {
           <button
             onClick={() => {
               setShowPlusMenu(false);
-              setIsCanvasEnabled(!isCanvasEnabled);
+              const next = !isCanvasEnabled;
+              setIsCanvasEnabled(next);
+              // Canvas + image generation are mutually exclusive in MiBuddy.
+              if (next) setImageMode(false);
             }}
             className="flex w-full items-center justify-between rounded-lg px-3 py-2.5 text-left text-sm text-foreground hover:bg-accent"
           >
@@ -2628,12 +2686,29 @@ export default function AgentOrchestrator() {
                             isLoading={isSending && msg.id === streamingMsgId}
                           />
                         )}
-                        <MarkdownField
-                          chat={{}}
-                          isEmpty={!msg.content}
-                          chatMessage={msg.content}
-                          editedFlag={null}
-                        />
+                        {msg.canvasEnabled && msg.content ? (
+                          /* Canvas mode — render in editable card (MiBuddy parity) */
+                          <CanvasEditor
+                            messageId={msg.id}
+                            content={msg.content}
+                            sessionId={currentSessionId || undefined}
+                            showDraftButton={isOutlookOrchConnected}
+                            onContentChange={(updated) => {
+                              setMessages((prev) =>
+                                prev.map((m) =>
+                                  m.id === msg.id ? { ...m, content: updated } : m,
+                                ),
+                              );
+                            }}
+                          />
+                        ) : (
+                          <MarkdownField
+                            chat={{}}
+                            isEmpty={!msg.content}
+                            chatMessage={msg.content}
+                            editedFlag={null}
+                          />
+                        )}
                         {/* Action buttons row — hide when message contains a generated image */}
                         {msg.content && !isSending && !/!\[.*?\]\(.*?\)/.test(msg.content) && (
                           <div className="mt-1.5 flex items-center gap-1">
@@ -3068,18 +3143,8 @@ export default function AgentOrchestrator() {
         onDismiss={() => setShowOutlookOrch(false)}
         onConnected={() => setIsOutlookOrchConnected(true)}
       />
-      {/* ---- Addon: Outlook Connector ---- */}
-      <OutlookConnector
-        isOpen={outlookDialogOpen}
-        onDismiss={() => setOutlookDialogOpen(false)}
-        onConnected={() => {
-          setOutlookConnected(true);
-        }}
-        onDisconnected={() => {
-          setOutlookConnected(false);
-          refreshOutlookStatus();
-        }}
-      />
+      {/* Old OutlookConnector modal removed — OutlookOrchConnector above
+          is the single Outlook integration going forward. */}
       {false && (
         <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/50">
           <div className="flex max-h-[80vh] w-full max-w-lg flex-col rounded-2xl border border-border bg-popover shadow-2xl">
