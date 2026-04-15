@@ -25,6 +25,10 @@ import type { ContentBlock } from "@/types/chat";
 import SharePointFilePicker from "./SharePointFilePicker";
 import OutlookConnector, { useOutlookStatus } from "./OutlookConnector";
 import NotebookLMPanel from "./NotebookLMPanel";
+import OutlookOrchConnector, {
+  useOutlookOrchStatus,
+  disconnectOutlookOrch,
+} from "./OutlookOrchConnector";
 import useAlertStore from "@/stores/alertStore";
 import openaiLogo from "@/assets/openai_logo.svg";
 import geminiLogo from "@/assets/gemini_logo.svg";
@@ -552,6 +556,9 @@ export default function AgentOrchestrator() {
   // Addon: Image gallery view (replaces chat area when active)
   const [showImageGallery, setShowImageGallery] = useState(false);
   const [showNotebookLM, setShowNotebookLM] = useState(false);
+  const [showOutlookOrch, setShowOutlookOrch] = useState(false);
+  const { isOutlookConnected: isOutlookOrchConnected, setIsOutlookConnected: setIsOutlookOrchConnected } =
+    useOutlookOrchStatus();
   const [selectedGalleryImage, setSelectedGalleryImage] = useState<{ src: string; name: string } | null>(null);
   // Addon: Canvas mode
   const [isCanvasEnabled, setIsCanvasEnabled] = useState(false);
@@ -1258,6 +1265,57 @@ export default function AgentOrchestrator() {
   const handleSend = useCallback(async () => {
     const hasFiles = uploadFiles.some((f) => f.path && !f.loading && !f.error);
     if (!canInteract || (!input.trim() && !hasFiles) || isSending) return;
+
+    // ─── Outlook intent precheck (MiBuddy-style) ────────────────────
+    // If the message looks like "show my emails" / "meetings today" and
+    // the user is connected to Outlook, call Graph directly and render
+    // the result as the assistant's reply. Skip LLM for these intents.
+    if (isOutlookOrchConnected && input.trim()) {
+      try {
+        const tokenMatch = document.cookie.match(
+          /(?:^|;\s*)access_token_lf=([^;]*)/,
+        );
+        const headers: Record<string, string> = {
+          "Content-Type": "application/json",
+        };
+        if (tokenMatch?.[1]) {
+          headers["Authorization"] = `Bearer ${decodeURIComponent(
+            tokenMatch[1],
+          )}`;
+        }
+        const res = await fetch("/api/outlook-orch/intent", {
+          method: "POST",
+          credentials: "include",
+          headers,
+          body: JSON.stringify({ message: input }),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.matched) {
+            setMessages((prev) => [
+              ...prev,
+              {
+                id: crypto.randomUUID(),
+                sender: "user" as const,
+                content: input,
+                timestamp: timeNow(),
+              },
+              {
+                id: crypto.randomUUID(),
+                sender: "agent" as const,
+                content: data.markdown,
+                timestamp: timeNow(),
+              },
+            ]);
+            setInput("");
+            return;
+          }
+        }
+      } catch (err) {
+        console.warn("[outlook intent precheck] failed, falling through:", err);
+      }
+    }
+    // ──────────────────────────────────────────────────────────────
 
     // Detect explicit @mention — auto-select the agent if user typed @agent_name
     // Sort by name length descending so "rag agent_new" matches before "rag agent".
@@ -1986,6 +2044,35 @@ export default function AgentOrchestrator() {
             >
               <img src={notebookLMLogo} alt="" className="h-4 w-4 shrink-0 object-contain" />
               <span>{t("NotebookLM")}</span>
+            </button>
+
+            {/* Outlook — orchestrator integration (separate from outlook_chat) */}
+            <button
+              onClick={async () => {
+                if (isOutlookOrchConnected) {
+                  await disconnectOutlookOrch();
+                  setIsOutlookOrchConnected(false);
+                } else {
+                  setShowOutlookOrch(true);
+                }
+              }}
+              className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm text-foreground hover:bg-accent"
+            >
+              <span
+                className={`inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-sm text-[10px] font-bold text-white ${
+                  isOutlookOrchConnected ? "bg-green-600" : "bg-blue-600"
+                }`}
+              >
+                @
+              </span>
+              <span className="flex-1 text-left">
+                {isOutlookOrchConnected ? t("Outlook Connected") : t("Connect Outlook")}
+              </span>
+              {isOutlookOrchConnected && (
+                <span className="text-[10px] font-semibold uppercase text-green-600">
+                  ✓
+                </span>
+              )}
             </button>
           </div>
         </div>
@@ -2940,6 +3027,13 @@ export default function AgentOrchestrator() {
         isOpen={spPickerOpen}
         onDismiss={() => setSpPickerOpen(false)}
         onFilesSelected={handleSpFilesSelected}
+      />
+
+      {/* ---- Outlook (orchestrator) connector ---- */}
+      <OutlookOrchConnector
+        isOpen={showOutlookOrch}
+        onDismiss={() => setShowOutlookOrch(false)}
+        onConnected={() => setIsOutlookOrchConnected(true)}
       />
       {/* ---- Addon: Outlook Connector ---- */}
       <OutlookConnector
