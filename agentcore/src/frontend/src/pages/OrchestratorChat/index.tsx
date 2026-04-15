@@ -1277,56 +1277,11 @@ export default function AgentOrchestrator() {
     const hasFiles = uploadFiles.some((f) => f.path && !f.loading && !f.error);
     if (!canInteract || (!input.trim() && !hasFiles) || isSending) return;
 
-    // ─── Outlook intent precheck (MiBuddy-style) ────────────────────
-    // If the message looks like "show my emails" / "meetings today" and
-    // the user is connected to Outlook, call Graph directly and render
-    // the result as the assistant's reply. Skip LLM for these intents.
-    if (isOutlookOrchConnected && input.trim()) {
-      try {
-        const tokenMatch = document.cookie.match(
-          /(?:^|;\s*)access_token_lf=([^;]*)/,
-        );
-        const headers: Record<string, string> = {
-          "Content-Type": "application/json",
-        };
-        if (tokenMatch?.[1]) {
-          headers["Authorization"] = `Bearer ${decodeURIComponent(
-            tokenMatch[1],
-          )}`;
-        }
-        const res = await fetch("/api/outlook-orch/intent", {
-          method: "POST",
-          credentials: "include",
-          headers,
-          body: JSON.stringify({ message: input }),
-        });
-        if (res.ok) {
-          const data = await res.json();
-          if (data.matched) {
-            setMessages((prev) => [
-              ...prev,
-              {
-                id: crypto.randomUUID(),
-                sender: "user" as const,
-                content: input,
-                timestamp: timeNow(),
-              },
-              {
-                id: crypto.randomUUID(),
-                sender: "agent" as const,
-                content: data.markdown,
-                timestamp: timeNow(),
-              },
-            ]);
-            setInput("");
-            return;
-          }
-        }
-      } catch (err) {
-        console.warn("[outlook intent precheck] failed, falling through:", err);
-      }
-    }
-    // ──────────────────────────────────────────────────────────────
+    // Outlook intent handling moved to the backend: the MiBuddy-ported
+    // intent classifier now returns "outlook_query" for email/calendar
+    // queries, and the orchestrator's chat-stream handler invokes
+    // outlook_agent_node which renders the reply. No frontend precheck
+    // needed — normal send path handles everything.
 
     // Detect explicit @mention — auto-select the agent if user typed @agent_name
     // Sort by name length descending so "rag agent_new" matches before "rag agent".

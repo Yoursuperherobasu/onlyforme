@@ -1114,6 +1114,16 @@ async def _route_request(
             "intent": intent.value,
         }
 
+    if intent == Intent.OUTLOOK_QUERY:
+        return {
+            "mode": "outlook_query",
+            "agent_id": None,
+            "deployment_id": None,
+            "deployment": None,
+            "model_id": body.model_id,
+            "intent": intent.value,
+        }
+
     # Intent is general_chat
     # Check if session has documents in Pinecone (follow-up question about uploaded docs)
     try:
@@ -1450,6 +1460,24 @@ async def orch_chat(
             else:
                 sender_name = "Image Generator"
 
+        elif mode == "outlook_query":
+            # Port of MiBuddy's outlook agent. We delegate to the verbatim
+            # copy at `agentcore.services.mibuddy.outlook_agent`. It needs
+            # a LangGraph-style state dict with the current user id and
+            # the user's message; it fills `state["final_response"]` with
+            # the markdown reply.
+            from agentcore.services.mibuddy.outlook_agent import outlook_agent_node
+            state = {
+                "messages": [{"role": "user", "content": body.input_value}],
+                "user_id": str(current_user.id),
+            }
+            state = await outlook_agent_node(state)
+            response_text = state.get("final_response", "") or (
+                "I couldn't process that Outlook request."
+            )
+            resp_model_name = "outlook"
+            sender_name = "Outlook"
+
         elif mode == "document_qa":
             from agentcore.services.mibuddy.document_processor import process_and_ingest, search_documents, build_doc_qa_prompt
             from agentcore.services.mibuddy.direct_model_chat import direct_model_chat
@@ -1559,7 +1587,7 @@ async def orch_chat_stream(
     logger.info(f"[ORCH-STREAM] Routing mode={mode} intent={routing.get('intent')} session={body.session_id} enable_reasoning={body.enable_reasoning} image_mode={body.image_mode}")
 
     # -- 2. For non-agent modes, use direct streaming --------------------
-    if mode in ("model_direct", "web_search", "image_gen", "document_qa", "kb_search"):
+    if mode in ("model_direct", "web_search", "image_gen", "document_qa", "kb_search", "outlook_query"):
         # Persist user message
         stream_msg_ts = datetime.now(timezone.utc).replace(tzinfo=None)
         user_msg = OrchConversationTable(
@@ -1599,6 +1627,8 @@ async def orch_chat_stream(
                 sender_name = await _get_model_display_name(session, resp_model_id)
             else:
                 sender_name = "Image Generator"
+        elif mode == "outlook_query":
+            sender_name = "Outlook"
 
         queue: asyncio.Queue = asyncio.Queue()
         event_manager = create_default_event_manager(queue)
@@ -1691,6 +1721,22 @@ async def orch_chat_stream(
                         user_id=str(_user_id),
                         event_manager=event_manager,
                     )
+                elif _mode == "outlook_query":
+                    # Port of MiBuddy's outlook_agent_node. Runs to completion
+                    # (not token-stream) and emits the full markdown as one
+                    # chunk + an end event, matching other non-streaming
+                    # modes like kb_search.
+                    from agentcore.services.mibuddy.outlook_agent import outlook_agent_node
+                    state = {
+                        "messages": [{"role": "user", "content": _input_value}],
+                        "user_id": str(_user_id),
+                    }
+                    state = await outlook_agent_node(state)
+                    outlook_text = state.get("final_response", "") or (
+                        "I couldn't process that Outlook request."
+                    )
+                    event_manager.on_token(data={"chunk": outlook_text})
+                    result = {"response_text": outlook_text, "model_name": "outlook"}
 
                 response_text = result.get("response_text", "")
                 reasoning_content = result.get("reasoning_content")
