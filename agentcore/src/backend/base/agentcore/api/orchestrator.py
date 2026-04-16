@@ -55,6 +55,7 @@ from agentcore.services.database.models.orch_conversation.crud import (
     orch_get_messages,
     orch_get_sessions,
     orch_rename_session,
+    orch_set_session_title,
 )
 from agentcore.services.database.models.orch_transaction.crud import (
     orch_delete_session_transactions,
@@ -197,6 +198,8 @@ class OrchSessionSummary(BaseModel):
     active_deployment_id: UUID | None = None
     active_agent_name: str | None = None
     is_archived: bool = False
+    # User-chosen title (null = auto-derived from preview/agent name)
+    session_title: str | None = None
 
 
 
@@ -2220,6 +2223,38 @@ async def archive_orch_session(
         raise
     except Exception as e:
         logger.error(f"Error archiving orch session: {e}")
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+class SessionTitleRequest(BaseModel):
+    title: str | None = None  # null to clear
+
+
+@router.post("/sessions/{session_id}/title", status_code=200)
+async def set_orch_session_title(
+    *,
+    session: DbSession,
+    current_user: CurrentActiveUser,
+    session_id: str,
+    body: SessionTitleRequest,
+):
+    """Set (or clear) the user-chosen title for an orchestrator session.
+
+    MiBuddy-parity rename — writes to the `session_title` column added
+    in migration `95791a21c989_add_session_title_to_orch_conversation`.
+    """
+    try:
+        title = (body.title or "").strip() or None
+        updated = await orch_set_session_title(
+            session, session_id, title=title, user_id=current_user.id,
+        )
+        if updated == 0:
+            raise HTTPException(status_code=404, detail="Session not found")
+        return {"session_id": session_id, "title": title}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error renaming orch session: {e}")
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 

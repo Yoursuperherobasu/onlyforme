@@ -75,6 +75,13 @@ class OrchConversationTable(OrchConversationBase, table=True):  # type: ignore[c
         sa_column=Column(Text, nullable=True),
     )
     is_archived: bool = Field(default=False)
+    # User-chosen title for the session (MiBuddy-parity rename). Stored on
+    # any row of the session — the sessions-list query picks the first
+    # non-null value. Migration: 95791a21c989_add_session_title_to_orch_conversation.
+    session_title: str | None = Field(
+        default=None,
+        sa_column=Column(Text, nullable=True),
+    )
     ltm_summarized_at: datetime | None = Field(default=None, nullable=True)
     files: list[str] = Field(sa_column=Column(JSON))
     properties: dict | Properties = Field(default_factory=lambda: Properties().model_dump(), sa_column=Column(JSON))  # type: ignore[assignment]

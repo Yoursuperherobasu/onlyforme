@@ -59,6 +59,9 @@ async def orch_get_sessions(
                 )
             ).label("first_user_message"),
             cast(func.max(cast(OrchConversationTable.is_archived, Integer)), Boolean).label("is_archived"),
+            # All rows of a session share the same user-chosen title (see
+            # `orch_set_session_title`). MAX() collapses them into one.
+            func.max(OrchConversationTable.session_title).label("session_title"),
         )
         .where(OrchConversationTable.user_id == user_id)
         .group_by(OrchConversationTable.session_id)
@@ -72,6 +75,7 @@ async def orch_get_sessions(
             "last_timestamp": (row.last_timestamp.isoformat() + "Z") if row.last_timestamp else None,
             "preview": (row.first_user_message or "")[:80],
             "is_archived": bool(row.is_archived) if hasattr(row, "is_archived") else False,
+            "session_title": getattr(row, "session_title", None),
         }
         for row in rows
     ]
@@ -135,6 +139,30 @@ async def orch_archive_session(
     if user_id:
         stmt = stmt.where(OrchConversationTable.user_id == user_id)
     stmt = stmt.values(is_archived=is_archived)
+    result = await session.execute(stmt)
+    await session.commit()
+    return result.rowcount  # type: ignore[return-value]
+
+
+async def orch_set_session_title(
+    session: AsyncSession,
+    session_id: str,
+    title: str | None,
+    user_id: UUID | None = None,
+) -> int:
+    """Set the user-chosen title on every row of a session.
+
+    Passing ``title=None`` clears it (reverts to the auto-derived display
+    name). Scoped to ``user_id`` when supplied so users can only rename
+    their own sessions.
+    """
+    stmt = (
+        update(OrchConversationTable)
+        .where(OrchConversationTable.session_id == session_id)
+    )
+    if user_id:
+        stmt = stmt.where(OrchConversationTable.user_id == user_id)
+    stmt = stmt.values(session_title=title)
     result = await session.execute(stmt)
     await session.commit()
     return result.rowcount  # type: ignore[return-value]

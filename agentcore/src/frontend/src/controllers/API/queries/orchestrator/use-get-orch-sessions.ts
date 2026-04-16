@@ -11,6 +11,8 @@ export interface OrchSessionSummary {
   active_deployment_id: string | null;
   active_agent_name: string | null;
   is_archived: boolean;
+  /** User-chosen session title (null = use preview / agent name fallback). */
+  session_title: string | null;
 }
 
 export const useGetOrchSessions: useQueryFunctionType<
