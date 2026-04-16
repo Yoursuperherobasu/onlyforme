@@ -85,60 +85,87 @@ def _format_short_date(dt: datetime) -> str:
 def _parse_email_date_filter(date_filter: str) -> Tuple[Optional[str], Optional[str], str]:
     """
     Parse date_filter string into ISO datetime range for Graph API.
-    
+
     Args:
-        date_filter: "today", "yesterday", "this_week", "last_N_days", or "YYYY-MM-DD"
-        
+        date_filter: "today", "yesterday", "this_week", "last_week",
+                     "this_month", "last_month", "last_N_days", or "YYYY-MM-DD"
+
     Returns:
-        (received_after_iso, received_before_iso, human_readable_label)
+        (received_after_utc_iso, received_before_utc_iso, human_readable_label)
     """
-    import re as regex_module
-    today = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
-    
+    import re as regex_modules
+    from datetime import timezone as _tz
+
+    IST = _tz(timedelta(hours=5, minutes=30))
+
+    # "Today" as seen in IST — midnight at start of current IST calendar day
+    now_ist = datetime.now(IST)
+    today_ist = now_ist.replace(hour=0, minute=0, second=0, microsecond=0)
+
+    def _to_utc_iso(dt_ist: datetime) -> str:
+        """Convert an IST-aware datetime to a UTC ISO string for Graph API."""
+        return dt_ist.astimezone(_tz.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
     if date_filter == "today":
-        start = today
-        end = today + timedelta(days=1)
+        start = today_ist
+        end   = today_ist + timedelta(days=1)
         label = "today"
     elif date_filter == "yesterday":
-        start = today - timedelta(days=1)
-        end = today
+        start = today_ist - timedelta(days=1)
+        end   = today_ist
         label = "yesterday"
     elif date_filter == "this_week":
-        # Start from Monday of current week
-        start = today - timedelta(days=today.weekday())
-        end = today + timedelta(days=1)
+        start = today_ist - timedelta(days=today_ist.weekday())
+        end   = today_ist + timedelta(days=1)
         label = "this week"
+    elif date_filter == "last_week":
+        this_monday_ist = today_ist - timedelta(days=today_ist.weekday())
+        start = this_monday_ist - timedelta(days=7)
+        end   = this_monday_ist
+        label = "last week"
+    elif date_filter == "this_month":
+        start = today_ist.replace(day=1)
+        end   = today_ist + timedelta(days=1)
+        label = "this month"
+    elif date_filter == "last_month":
+        first_of_this_month = today_ist.replace(day=1)
+        end   = first_of_this_month
+        start = (first_of_this_month - timedelta(days=1)).replace(day=1)
+        label = "last month"
     elif date_filter.startswith("last_") and date_filter.endswith("_days"):
-        # Parse "last_N_days" format
-        match = regex_module.match(r"last_(\d+)_days", date_filter)
+        match = regex_modules.match(r"last_(\d+)_days", date_filter)
         if match:
             n_days = int(match.group(1))
-            start = today - timedelta(days=n_days)
-            end = today + timedelta(days=1)
+            start = today_ist - timedelta(days=n_days)
+            end   = today_ist + timedelta(days=1)
             label = f"the last {n_days} days"
         else:
-            # Fallback to today
-            start = today
-            end = today + timedelta(days=1)
+            start = today_ist
+            end   = today_ist + timedelta(days=1)
             label = "today"
-    elif regex_module.match(r"\d{4}-\d{2}-\d{2}", date_filter):
-        # Specific date "YYYY-MM-DD"
+    elif regex_modules.match(r"\d{4}-\d{2}-\d{2}", date_filter):
         try:
-            start = datetime.strptime(date_filter, "%Y-%m-%d")
-            end = start + timedelta(days=1)
-            label = _format_date(start)
+            naive = datetime.strptime(date_filter, "%Y-%m-%d")
+            start = naive.replace(tzinfo=IST)
+            end   = start + timedelta(days=1)
+            label = _format_date(naive)
         except ValueError:
-            start = today
-            end = today + timedelta(days=1)
+            start = today_ist
+            end   = today_ist + timedelta(days=1)
             label = "today"
     else:
-        # Default to today
-        start = today
-        end = today + timedelta(days=1)
+        start = today_ist
+        end   = today_ist + timedelta(days=1)
         label = "today"
-    
-    logger.info(f"[_parse_email_date_filter] date_filter='{date_filter}' -> start={start.isoformat()}, end={end.isoformat()}, label='{label}'")
-    return start.isoformat() + "Z", end.isoformat() + "Z", label
+
+    start_utc = _to_utc_iso(start)
+    end_utc   = _to_utc_iso(end)
+    logger.info(
+        f"[_parse_email_date_filter] date_filter='{date_filter}' "
+        f"-> IST [{start.strftime('%Y-%m-%d')} to {end.strftime('%Y-%m-%d')}] "
+        f"-> UTC [{start_utc} to {end_utc}] label='{label}'"
+    )
+    return start_utc, end_utc, label
 
 def _parse_calendar_date(query: str, llm) -> Tuple[Optional[str], Optional[str], str]:
     """
@@ -244,15 +271,18 @@ EXAMPLES:
 - "unread emails from yesterday"            → read_emails   (confidence: 0.99, unread_only: true, date_filter: "yesterday")
 - "any unseen messages?"                    → read_emails   (confidence: 0.99, unread_only: true, date_filter: "")
 - "unread emails of today"                  → read_emails   (confidence: 0.99, unread_only: true, date_filter: "today")
+- "emails from last week"                   → read_emails   (confidence: 0.99, date_filter: "last_week")
+- "last month's emails"                     → read_emails   (confidence: 0.99, date_filter: "last_month")
+- "show emails this month"                  → read_emails   (confidence: 0.99, date_filter: "this_month")
 - "check John's email"                      → read_emails   (confidence: 0.55) ← ambiguous
 - "find the invoice and reply to it"        → reply_email   (confidence: 0.50) ← mixed intent
 RULES:
-- If the user mentions only a time period (today, yesterday, this week, last 5 days) without a specific keyword/sender/subject, classify as "read_emails", NOT "search_emails".
+- If the user mentions only a time period (today, yesterday, this week, last week, this month, last month, last 5 days) without a specific keyword/sender/subject, classify as "read_emails", NOT "search_emails".
 - Any mention of replying/responding → always "reply_email"
 - Writing to someone new             → always "compose_email"
 - If the user says "unread", "haven't read", "new emails", "unseen" → set unread_only to true
 - If confidence < 0.75, still pick best intent but explain why you are unsure in ambiguity_reason
-- IMPORTANT: Only set date_filter if the user EXPLICITLY mentions a date/time (today, yesterday, this week, last N days, specific date). If no date is mentioned, set date_filter to empty string "".
+- IMPORTANT: Only set date_filter if the user EXPLICITLY mentions a date/time (today, yesterday, this week, last week, this month, last month, last N days, specific date). If no date is mentioned, set date_filter to empty string "".
 - For generic requests like "show my emails" without a date, default date_filter to "today". But for "show my unread emails" (no date mentioned), set date_filter to "" (empty).
 Extract:
 - search_query     : keyword / sender / subject to search
@@ -263,7 +293,7 @@ Extract:
 - confidence       : float 0.0 to 1.0 — how confident you are about the intent
 - ambiguity_reason : if confidence < 0.75, briefly explain why; otherwise empty string
 - unread_only      : true if user explicitly wants only unread/unseen/new emails, false otherwise
-- date_filter      : "today", "yesterday", "this_week", "last_N_days" (e.g. "last_7_days"), specific date "2026-03-10", or "" (empty string if no date mentioned for unread queries)
+- date_filter      : "today", "yesterday", "this_week", "last_week", "this_month", "last_month", "last_N_days" (e.g. "last_7_days"), specific date "2026-03-10", or "" (empty string if no date mentioned for unread queries)
 Respond with ONLY valid JSON, no explanation:
 {{
   "intent": "...",
@@ -668,17 +698,12 @@ Rules:
     return raw_output
 
 # ── Email-list formatter ───────────────────────────────────────────────────────
-# Matches MiBuddy's PRODUCTION output (screenshot reference):
-#   "Here are your **N** emails from {scope}:"
-#   | # | Sender | Subject | Received | Status |
-#   |---|--------|---------|----------|--------|
-#   | 1 | ...    | ...     | Apr 15   | 🟢 Read |
-#
-# Generates the table deterministically (no LLM post-processing) so the
-# output is byte-identical every run — previously the LLM sometimes
-# turned the "paste the list as-is" prompt into a numbered list instead
-# of a table, which differed from MiBuddy's production screenshot.
+# Matches MiBuddy's PRODUCTION output: clean markdown table (Gemini-style)
+# with header "Here are your **N** emails from {scope}:", 20 email cap,
+# truncated sender/subject/preview, and status indicators for unread +
+# high-importance + attachments.
 async def _format_email_list(query: str, data: Optional[Dict], llm) -> str:
+    """Format emails as a clean markdown table (Gemini-style)."""
     if not data:
         return (
             "I couldn't find any emails matching your request.\n\n"
@@ -689,48 +714,77 @@ async def _format_email_list(query: str, data: Optional[Dict], llm) -> str:
     if not emails:
         return "No emails found."
 
-    def _short_date(iso: str) -> str:
-        if not iso or len(iso) < 10:
-            return iso
-        months = [
-            "Jan", "Feb", "Mar", "Apr", "May", "Jun",
-            "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
-        ]
-        try:
-            _yyyy, mm, dd = iso[:10].split("-")
-            return f"{months[int(mm) - 1]} {int(dd)}"
-        except Exception:
-            return iso[:10]
-
     search_scope = data.get("search_scope", "your recent emails")
-    email_count = len(emails[:10])
+    capped = emails[:20]
+    email_count = len(capped)
 
-    lines = [
-        f"Here are your **{email_count}** emails from {search_scope}:",
-        "",
+    # ── Build header ───────────────────────────────────────────────────────
+    header = f"Here are your **{email_count}** emails from {search_scope}:\n\n"
+
+    # ── Build markdown table ───────────────────────────────────────────────
+    table_rows = [
         "| # | Sender | Subject | Received | Status |",
-        "|---|---|---|---|---|",
+        "|---|--------|---------|----------|--------|",
     ]
-    for i, email in enumerate(emails[:10], 1):
+
+    for i, email in enumerate(capped, 1):
         try:
-            s = email.get("from", {}).get("emailAddress", {})
-            sender = (s.get("name") or s.get("address", "Unknown")).replace("|", "\\|")
-            subj = (email.get("subject", "No subject") or "No subject").replace("|", "\\|")
-            preview = (email.get("bodyPreview", "") or "").strip().replace("\n", " ").replace("|", "\\|")
-            if len(preview) > 120:
-                preview = preview[:117] + "..."
-            received = _short_date(email.get("receivedDateTime", ""))
-            is_read = email.get("isRead", True)
-            status = "🟢 Read" if is_read else "🔵 Unread"
-            subject_cell = f"**{subj}**"
+            fr = email.get("from", {}).get("emailAddress", {})
+            sender = (fr.get("name") or fr.get("address", "Unknown"))
+            subj = " ".join(email.get("subject", "No subject").split())
+            preview = " ".join(email.get("bodyPreview", "").split())
+
+            # Truncate long fields for table readability
+            if len(sender) > 28:
+                sender = sender[:26] + "…"
+            if len(subj) > 55:
+                subj = subj[:53] + "…"
+            if len(preview) > 80:
+                preview = preview[:78] + "…"
+
+            # Escape pipes in content
+            sender = sender.replace("|", "\\|")
+            subj = subj.replace("|", "\\|")
+            preview = preview.replace("|", "\\|")
+
+            # Combine subject + preview in one cell
             if preview:
-                subject_cell += f"<br/>{preview}"
-            lines.append(
-                f"| {i} | {sender} | {subject_cell} | {received} | {status} |",
-            )
+                subj_cell = f"**{subj}**<br>{preview}"
+            else:
+                subj_cell = f"**{subj}**"
+
+            # Format received date as "Apr 7"
+            raw_dt = email.get("receivedDateTime", "")
+            try:
+                dt = datetime.fromisoformat(raw_dt.replace("Z", "+00:00"))
+                received = _format_short_date(dt)
+            except Exception:
+                received = raw_dt[:10]
+
+            # Status indicators
+            is_read = email.get("isRead", True)
+            importance = email.get("importance", "normal")
+            has_attach = email.get("hasAttachments", False)
+
+            status_parts = []
+            if not is_read:
+                status_parts.append("🔵 Unread")
+            else:
+                status_parts.append("✅ Read")
+            if importance == "high":
+                status_parts.append("❗ High Importance")
+            if has_attach:
+                status_parts.append("📎 Attachment")
+            status = " · ".join(status_parts)
+
+            table_rows.append(f"| {i} | {sender} | {subj_cell} | {received} | {status} |")
         except Exception:
             continue
-    return "\n".join(lines)
+
+    if len(table_rows) <= 2:
+        return "Could not parse email data."
+
+    return header + "\n".join(table_rows)
 
 # ── Calendar formatter ─────────────────────────────────────────────────────────
 def _fmt_time(dt_str: str) -> str:
