@@ -784,40 +784,33 @@ export default function AgentOrchestrator() {
         return;
       }
       const mapped = mapApiMessages(apiSessionMessages);
-<<<<<<< HEAD
-      // Preserve local-only state that the API may not return:
-      //   - contentBlocks (agent worker-node "Finished" thinking blocks)
-      //   - reasoningContent (CoT thinking from streaming, in case API filtered)
-      // The API is the source of truth for everything else.
-      setMessages((prev) => {
-        if (prev.length === 0) return mapped;
-        const localById = new Map(prev.map((m) => [m.id, m]));
-        return mapped.map((m) => {
-          const local = localById.get(m.id);
-          if (!local) return m;
-          return {
-            ...m,
-            // Keep local contentBlocks if API didn't return any (agent thinking)
-            contentBlocks: m.contentBlocks ?? local.contentBlocks,
-            blocksState: m.contentBlocks ? m.blocksState : (local.blocksState ?? m.blocksState),
-            // Keep local reasoningContent if API didn't return any
-            reasoningContent: m.reasoningContent ?? local.reasoningContent,
-          };
-        });
-=======
       // Preserve canvas state on refetch — the mapper reads it from
       // `properties.canvas_enabled` in the DB, but if a message was
       // already flagged in-memory we keep that flag even if the DB
       // didn't persist it (e.g. backend restart mid-stream).
       setMessages((prev) => {
         const prevCanvasIds: Record<string, boolean> = {};
+        const prevById = new Map<string, Message>();
         prev.forEach((m) => {
           if (m.canvasEnabled) prevCanvasIds[m.id] = true;
+          prevById.set(m.id, m);
         });
-        return mapped.map((m) =>
-          prevCanvasIds[m.id] ? { ...m, canvasEnabled: true } : m,
-        );
->>>>>>> 7020e8f0187d19cedbe17593ce5cd06ebc69ab97
+        return mapped.map((m) => {
+          const local = prevById.get(m.id);
+          // Existing canvas preservation
+          let merged = prevCanvasIds[m.id] ? { ...m, canvasEnabled: true } : m;
+          // Also preserve contentBlocks (agent worker-node "Finished" blocks)
+          // and reasoningContent (CoT thinking) if API didn't return them
+          if (local) {
+            merged = {
+              ...merged,
+              contentBlocks: merged.contentBlocks ?? local.contentBlocks,
+              blocksState: merged.contentBlocks ? merged.blocksState : (local.blocksState ?? merged.blocksState),
+              reasoningContent: merged.reasoningContent ?? local.reasoningContent,
+            };
+          }
+          return merged;
+        });
       });
       setCurrentSessionId(effectiveSessionId);
       // Reset HITL UI state only when switching sessions (not on every poll).
