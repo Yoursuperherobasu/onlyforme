@@ -813,18 +813,46 @@ export default function AgentOrchestrator() {
         return;
       }
       const mapped = mapApiMessages(apiSessionMessages);
+      // DEBUG: log what's arriving from API vs what we have locally
+      console.warn("[Refetch] API returned", mapped.length, "messages. Local had:", mapped.length);
+      mapped.forEach((m) => {
+        if (m.sender === "agent") {
+          console.warn("[Refetch] API msg", m.id.slice(0, 8), "contentBlocks:", m.contentBlocks?.length || 0, "reasoning:", m.reasoningContent?.length || 0);
+        }
+      });
       // Preserve canvas state on refetch — the mapper reads it from
       // `properties.canvas_enabled` in the DB, but if a message was
       // already flagged in-memory we keep that flag even if the DB
       // didn't persist it (e.g. backend restart mid-stream).
       setMessages((prev) => {
         const prevCanvasIds: Record<string, boolean> = {};
+        const prevById = new Map<string, Message>();
         prev.forEach((m) => {
           if (m.canvasEnabled) prevCanvasIds[m.id] = true;
+          prevById.set(m.id, m);
+          if (m.sender === "agent") {
+            console.warn("[Refetch] Local msg", m.id.slice(0, 8), "contentBlocks:", m.contentBlocks?.length || 0, "reasoning:", m.reasoningContent?.length || 0);
+          }
         });
-        return mapped.map((m) =>
-          prevCanvasIds[m.id] ? { ...m, canvasEnabled: true } : m,
-        );
+        return mapped.map((m) => {
+          const local = prevById.get(m.id);
+          // Existing canvas preservation
+          let merged = prevCanvasIds[m.id] ? { ...m, canvasEnabled: true } : m;
+          // Also preserve contentBlocks (agent worker-node "Finished" blocks)
+          // and reasoningContent (CoT thinking) if API didn't return them
+          if (local) {
+            merged = {
+              ...merged,
+              contentBlocks: merged.contentBlocks ?? local.contentBlocks,
+              blocksState: merged.contentBlocks ? merged.blocksState : (local.blocksState ?? merged.blocksState),
+              reasoningContent: merged.reasoningContent ?? local.reasoningContent,
+            };
+            if (m.sender === "agent" && (local.contentBlocks?.length || local.reasoningContent)) {
+              console.warn("[Refetch] MERGED msg", m.id.slice(0, 8), "final contentBlocks:", merged.contentBlocks?.length || 0, "final reasoning:", merged.reasoningContent?.length || 0);
+            }
+          }
+          return merged;
+        });
       });
       setCurrentSessionId(effectiveSessionId);
       // Reset HITL UI state only when switching sessions (not on every poll).
