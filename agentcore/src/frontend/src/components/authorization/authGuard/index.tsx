@@ -129,14 +129,18 @@ export const ProtectedRoute = ({ children }) => {
   }, [isAuthenticated, mutateLogout, mutateRefresh]);
 
   if (shouldRedirect || testMockAutoLogin) {
-    const currentPath = window.location.pathname;
+    // Preserve the query string (e.g. shared-chat `?session=<id>`) so the
+    // post-login redirect lands the user on the same deep link they opened.
+    const currentPath = window.location.pathname + window.location.search;
     const isHomePath = currentPath === "/" || currentPath === "/agents";
     const isLoginPage = location.pathname.includes("login");
     return (
       <CustomNavigate
         to={
           "/login" +
-          (!isHomePath && !isLoginPage ? "?redirect=" + currentPath : "")
+          (!isHomePath && !isLoginPage
+            ? "?redirect=" + encodeURIComponent(currentPath)
+            : "")
         }
         replace
       />

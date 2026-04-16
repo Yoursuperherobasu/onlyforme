@@ -2167,6 +2167,64 @@ async def get_orch_session_messages(
 
 
 
+@router.get("/sessions/{session_id}/shared-messages", status_code=200)
+async def get_shared_orch_session_messages(
+    *,
+    session: DbSession,
+    current_user: CurrentActiveUser,
+    session_id: str,
+):
+    """MiBuddy-parity share view: authenticated read of a session's messages
+    by UUID-as-token, without the owner filter. The recipient must be
+    signed in (ProtectedRoute bounces unauthenticated users to login),
+    but the session does NOT have to belong to them — matching MiBuddy's
+    `/history/share/view/{share_token}` flow.
+
+    Returns `is_owner` so the frontend can decide whether to render a
+    "shared read-only" banner or treat it as a normal owned session.
+    """
+    try:
+        messages = await orch_get_messages(session, session_id=session_id)
+        if not messages:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+        is_owner = any(m.user_id == current_user.id for m in messages)
+        session_title: str | None = None
+        for m in messages:
+            if getattr(m, "session_title", None):
+                session_title = m.session_title
+                break
+        return {
+            "session_id": session_id,
+            "is_owner": is_owner,
+            "session_title": session_title,
+            "messages": [
+                OrchMessageResponse(
+                    id=m.id,
+                    timestamp=m.timestamp.isoformat() if m.timestamp else "",
+                    sender=m.sender,
+                    sender_name=m.sender_name,
+                    session_id=m.session_id,
+                    text=m.text,
+                    agent_id=m.agent_id,
+                    deployment_id=m.deployment_id,
+                    model_id=getattr(m, "model_id", None),
+                    reasoning_content=getattr(m, "reasoning_content", None),
+                    category=m.category or "message",
+                    files=m.files if m.files else None,
+                    properties=m.properties if isinstance(m.properties, dict) else None,
+                    content_blocks=m.content_blocks if m.content_blocks else None,
+                )
+                for m in messages
+                if (m.text and m.text.strip()) or m.category == "context_reset"
+            ],
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error fetching shared orch session messages: {e}")
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
 @router.delete("/sessions/{session_id}", status_code=204)
 async def delete_orch_session(
     *,
