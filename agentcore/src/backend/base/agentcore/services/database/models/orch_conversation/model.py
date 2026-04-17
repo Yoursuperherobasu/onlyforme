@@ -36,7 +36,9 @@ class OrchConversationBase(SQLModel):
     @field_serializer("timestamp")
     def serialize_timestamp(self, value):
         if isinstance(value, datetime):
-            return value.strftime("%Y-%m-%d %H:%M:%S")
+            if value.tzinfo is None:
+                value = value.replace(tzinfo=timezone.utc)
+            return value.replace(microsecond=0).isoformat()
         return value
 
     @field_validator("files", mode="before")
