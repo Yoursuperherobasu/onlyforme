@@ -96,10 +96,10 @@ class OutlookService:
     def exchange_code_for_token(
         auth_code: str, redirect_uri: str, code_verifier: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
-        """Exchange an auth-code for an access token (confidential-client).
+        """Exchange an auth-code for an access token (confidential client).
 
-        If `code_verifier` is supplied the request uses PKCE (matches the
-        backend-driven PKCE flow used by `/outlook-orch/auth/callback`).
+        Matches MiBuddy: always sends client_secret. If code_verifier is
+        provided (PKCE), it is included alongside the secret.
         """
         try:
             _, client_id, client_secret = _get_credentials()

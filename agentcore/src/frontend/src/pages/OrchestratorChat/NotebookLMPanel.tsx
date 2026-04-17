@@ -1,24 +1,10 @@
-/**
- * NotebookLM panel — pixel-faithful port of MiBuddy's Notebooklm page,
- * minus the inner left sidebar. Back + history controls live in a small
- * top header bar instead. Everything else (form, colors, shadows, the
- * Motherson red `#DA2121`, italic Inter inputs, dark-mode behavior)
- * is identical to MiBuddy.
- *
- * User identity comes from agentcore's AuthContext — which is populated
- * from the backend (Redis-backed). We do NOT construct fake
- * `{userId}@motherson.com` emails like MiBuddy did; if the user has no
- * email we error out and prompt them to log in again.
- *
- * Talks directly to the same external podcast service MiBuddy uses
- * (docprocessor-e2cygsbecsacg3bj.germanywestcentral-01.azurewebsites.net),
- * so no agentcore backend changes are required.
- */
+
 import { useContext, useEffect, useRef, useState } from "react";
 import { AuthContext } from "@/contexts/authContext";
 import { ArrowLeft, Clock } from "lucide-react";
 
 const PODCAST_SERVICE_BASE =
+  import.meta.env.VITE_PODCAST_SERVICE_BASE ||
   "https://docprocessor-e2cygsbecsacg3bj.germanywestcentral-01.azurewebsites.net";
 
 type LengthType = "short" | "standard";

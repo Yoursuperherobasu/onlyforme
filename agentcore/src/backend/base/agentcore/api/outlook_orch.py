@@ -217,24 +217,32 @@ async def outlook_auth_callback(
         logger.warning(f"Outlook OAuth error from MS: {error} - {error_description}")
         return err(error)
     if not code or not state:
+        logger.error("Outlook callback: missing code or state param")
         return err("missing_code_or_state")
 
     with _pkce_lock:
         state_data = _pkce_states.pop(state, None)
+        active_states = len(_pkce_states)
     if not state_data:
+        logger.error(f"Outlook callback: invalid_state — state key not found in memory. "
+                     f"Active PKCE states: {active_states}. This usually means the "
+                     f"login and callback hit different workers/pods.")
         return err("invalid_state")
     if time.time() - state_data.get("created_at", 0) > _PKCE_STATE_TTL:
+        logger.error("Outlook callback: state_expired — PKCE state too old")
         return err("state_expired")
 
     code_verifier = state_data["code_verifier"]
     user_id = state_data.get("user_id")
 
     redirect_uri = _build_redirect_uri(request)
+    logger.info(f"Outlook callback: exchanging code, redirect_uri={redirect_uri}")
 
     token_resp = OutlookService.exchange_code_for_token(
         auth_code=code, redirect_uri=redirect_uri, code_verifier=code_verifier,
     )
     if not token_resp:
+        logger.error("Outlook callback: token_exchange_failed — MS rejected the code exchange")
         return err("token_exchange_failed")
 
     access_token = token_resp.get("access_token")
