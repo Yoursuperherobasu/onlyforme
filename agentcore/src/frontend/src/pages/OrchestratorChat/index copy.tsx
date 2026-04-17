@@ -311,7 +311,7 @@ function ImageGalleryView({
 
   // Fetch AI-generated images from MiBuddy dedicated endpoint
   useEffect(() => {
-    const tokenMatch = document.cookie.match(/(?:^|;\s*)access_token_lf=([^;]*)/);
+    const tokenMatch = document.cookie.match(/(?:^|;\s*)access_token_ag=([^;]*)/);
     const headers: Record<string, string> = {};
     if (tokenMatch?.[1]) headers["Authorization"] = `Bearer ${decodeURIComponent(tokenMatch[1])}`;
 
@@ -536,7 +536,7 @@ export default function AgentOrchestrator() {
       // Model mode: upload to MiBuddy dedicated container
       const formData = new FormData();
       formData.append("file", file);
-      const tokenMatch = document.cookie.match(/(?:^|;\s*)access_token_lf=([^;]*)/);
+      const tokenMatch = document.cookie.match(/(?:^|;\s*)access_token_ag=([^;]*)/);
       const headers: Record<string, string> = {};
       if (tokenMatch?.[1]) headers["Authorization"] = `Bearer ${decodeURIComponent(tokenMatch[1])}`;
 
@@ -720,7 +720,7 @@ export default function AgentOrchestrator() {
     const modelsUrl = `${getURL("ORCHESTRATOR")}/models`;
     const headers: Record<string, string> = {};
     // Extract JWT from cookie (same cookie name used by axios interceptor)
-    const tokenMatch = document.cookie.match(/(?:^|;\s*)access_token_lf=([^;]*)/);
+    const tokenMatch = document.cookie.match(/(?:^|;\s*)access_token_ag=([^;]*)/);
     if (tokenMatch?.[1]) {
       headers["Authorization"] = `Bearer ${decodeURIComponent(tokenMatch[1])}`;
     }
@@ -997,7 +997,7 @@ export default function AgentOrchestrator() {
     suggestionTimerRef.current = setTimeout(() => {
       const suggestUrl = `${getURL("ORCHESTRATOR")}/suggestions?q=${encodeURIComponent(value.trim())}`;
       const headers: Record<string, string> = {};
-      const tokenMatch = document.cookie.match(/(?:^|;\s*)access_token_lf=([^;]*)/);
+      const tokenMatch = document.cookie.match(/(?:^|;\s*)access_token_ag=([^;]*)/);
       if (tokenMatch?.[1]) headers["Authorization"] = `Bearer ${decodeURIComponent(tokenMatch[1])}`;
       fetch(suggestUrl, { headers, credentials: "include" })
         .then((r) => r.ok ? r.json() : null)

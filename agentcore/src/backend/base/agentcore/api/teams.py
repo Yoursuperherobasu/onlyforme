@@ -211,7 +211,7 @@ async def teams_oauth_authorize(
     """
     auth_header = request.headers.get("Authorization", "")
     bearer_token = auth_header.split(" ", 1)[1] if auth_header.startswith("Bearer ") else None
-    cookie_token = request.cookies.get("access_token_lf")
+    cookie_token = request.cookies.get("access_token_ag")
     resolved_token = cookie_token or bearer_token or token
 
     if not resolved_token:

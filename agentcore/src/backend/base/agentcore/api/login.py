@@ -45,7 +45,7 @@ def _apply_auth_cookies(response: Response, tokens: dict, auth_settings, user: U
     refresh_expires = tokens.get("refresh_expires_in") if persistent_cookie else None
 
     response.set_cookie(
-        "refresh_token_lf",
+        "refresh_token_ag",
         tokens["refresh_token"],
         httponly=auth_settings.REFRESH_HTTPONLY,
         samesite=auth_settings.REFRESH_SAME_SITE,
@@ -54,7 +54,7 @@ def _apply_auth_cookies(response: Response, tokens: dict, auth_settings, user: U
         domain=auth_settings.COOKIE_DOMAIN,
     )
     response.set_cookie(
-        "access_token_lf",
+        "access_token_ag",
         tokens["access_token"],
         httponly=auth_settings.ACCESS_HTTPONLY,
         samesite=auth_settings.ACCESS_SAME_SITE,
@@ -63,7 +63,7 @@ def _apply_auth_cookies(response: Response, tokens: dict, auth_settings, user: U
         domain=auth_settings.COOKIE_DOMAIN,
     )
     response.set_cookie(
-        "apikey_tkn_lflw",
+        "apikey_tkn_ag",
         str(user.store_api_key),
         httponly=auth_settings.ACCESS_HTTPONLY,
         samesite=auth_settings.ACCESS_SAME_SITE,
@@ -350,7 +350,7 @@ async def refresh_token(
 ):
     auth_settings = get_settings_service().auth_settings
 
-    token = request.cookies.get("refresh_token_lf")
+    token = request.cookies.get("refresh_token_ag")
 
     if token:
         tokens = await create_refresh_token(token, db)
@@ -375,9 +375,9 @@ async def refresh_token(
 
 @router.post("/logout")
 async def logout(response: Response):
-    response.delete_cookie("refresh_token_lf")
-    response.delete_cookie("access_token_lf")
-    response.delete_cookie("apikey_tkn_lflw")
+    response.delete_cookie("refresh_token_ag")
+    response.delete_cookie("access_token_ag")
+    response.delete_cookie("apikey_tkn_ag")
     return {"message": "Logout successful"}
 
 # @router.post("/logout")
@@ -392,8 +392,8 @@ async def logout(response: Response):
 #         "secure": auth_settings.REFRESH_SECURE,
 #     }
 
-#     response.delete_cookie("refresh_token_lf", **cookie_params)
-#     response.delete_cookie("access_token_lf", **cookie_params)
-#     response.delete_cookie("apikey_tkn_lflw", **cookie_params)
+#     response.delete_cookie("refresh_token_ag", **cookie_params)
+#     response.delete_cookie("access_token_ag", **cookie_params)
+#     response.delete_cookie("apikey_tkn_ag", **cookie_params)
     
 #     return {"message": "Logout successful"}

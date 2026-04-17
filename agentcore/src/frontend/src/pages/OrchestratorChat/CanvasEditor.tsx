@@ -147,7 +147,7 @@ export default function CanvasEditor({
   }, [content, isEditing]);
 
   const _canvasCall = (body: Record<string, unknown>) => {
-    const tokenMatch = document.cookie.match(/(?:^|;\s*)access_token_lf=([^;]*)/);
+    const tokenMatch = document.cookie.match(/(?:^|;\s*)access_token_ag=([^;]*)/);
     const headers: Record<string, string> = { "Content-Type": "application/json" };
     if (tokenMatch?.[1]) {
       headers["Authorization"] = `Bearer ${decodeURIComponent(tokenMatch[1])}`;

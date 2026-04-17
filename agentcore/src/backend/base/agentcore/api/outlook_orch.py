@@ -52,7 +52,7 @@ async def _resolve_current_user_from_request(request: Request, db):
     bearer_token = (
         auth_header.split(" ", 1)[1] if auth_header.startswith("Bearer ") else None
     )
-    cookie_token = request.cookies.get("access_token_lf")
+    cookie_token = request.cookies.get("access_token_ag")
     query_token = request.query_params.get("token")
     resolved_token = cookie_token or bearer_token or query_token
     if not resolved_token:
@@ -149,7 +149,7 @@ async def outlook_auth_login(
     """Kick off Authorization Code + PKCE flow.
 
     Opened via `window.open()`, so we resolve the user from the
-    `access_token_lf` cookie (popups don't send Authorization headers).
+    `access_token_ag` cookie (popups don't send Authorization headers).
     """
     current_user = await _resolve_current_user_from_request(request, session)
 
@@ -233,48 +233,123 @@ async def outlook_auth_callback(
         return err("state_expired")
 
     code_verifier = state_data["code_verifier"]
-    user_id = state_data.get("user_id")
+    user_id = state_data.get("user_id", "")
 
     redirect_uri = _build_redirect_uri(request)
-    logger.info(f"Outlook callback: exchanging code, redirect_uri={redirect_uri}")
+    logger.info(f"Outlook callback: redirect_uri={redirect_uri}, user_id={user_id}")
 
+    from agentcore.services.outlook_orch.outlook_service import _get_credentials
+    tenant, client_id, client_secret = _get_credentials()
+    token_url = f"https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token"
+
+    # First try server-side exchange (works when URI is under Web platform).
+    # If it fails with SPA error, fall back to browser-side exchange.
     token_resp = OutlookService.exchange_code_for_token(
         auth_code=code, redirect_uri=redirect_uri, code_verifier=code_verifier,
     )
-    if not token_resp:
-        logger.error("Outlook callback: token_exchange_failed — MS rejected the code exchange")
-        return err("token_exchange_failed")
 
-    access_token = token_resp.get("access_token")
-    expires_in = int(token_resp.get("expires_in", 3600))
-    if not access_token:
-        return err("no_access_token_in_response")
+    if token_resp and token_resp.get("access_token"):
+        # ── Server-side exchange succeeded (Web platform) ──
+        access_token = token_resp["access_token"]
+        expires_in = int(token_resp.get("expires_in", 3600))
 
-    # If we somehow lost the user_id, recover from Graph /me
-    if not user_id:
-        user_info = OutlookService.validate_access_token(access_token)
-        if user_info:
-            user_id = user_info.get("id") or user_info.get("userPrincipalName")
-    if not user_id:
-        return err("cannot_identify_user")
+        if not user_id:
+            user_info = OutlookService.validate_access_token(access_token)
+            if user_info:
+                user_id = user_info.get("id") or user_info.get("userPrincipalName")
+        if not user_id:
+            return err("cannot_identify_user")
 
-    outlook_token_manager.store_token(user_id, access_token, expires_in)
+        outlook_token_manager.store_token(user_id, access_token, expires_in)
 
-    session_id = str(uuid4())
-    with _session_lock:
-        _outlook_cookie_sessions[session_id] = user_id
+        session_id = str(uuid4())
+        with _session_lock:
+            _outlook_cookie_sessions[session_id] = user_id
 
-    response = HTMLResponse(content=_AUTH_SUCCESS_HTML)
-    response.set_cookie(
-        key="outlook_session",
-        value=session_id,
-        httponly=True,
-        secure=_is_request_secure(request),
-        samesite="lax",
-        max_age=expires_in,
-        path="/",
+        response = HTMLResponse(content=_AUTH_SUCCESS_HTML)
+        response.set_cookie(
+            key="outlook_session",
+            value=session_id,
+            httponly=True,
+            secure=_is_request_secure(request),
+            samesite="lax",
+            max_age=expires_in,
+            path="/",
+        )
+        return response
+
+    # ── Server-side exchange failed — fall back to browser-side ──
+    # Azure SPA redirect URIs require cross-origin (browser fetch) redemption.
+    logger.info("Outlook callback: server-side exchange failed, falling back to browser-side exchange")
+    exchange_html = (
+        '<!DOCTYPE html><html><head><title>Connecting...</title></head>'
+        '<body><p id="s">Connecting to Outlook...</p><script>'
+        '(async function(){'
+        'var s=document.getElementById("s");try{'
+        'var r=await fetch("' + token_url + '",{method:"POST",'
+        'headers:{"Content-Type":"application/x-www-form-urlencoded"},'
+        'body:new URLSearchParams({client_id:"' + client_id + '",'
+        'code:"' + code + '",'
+        'redirect_uri:"' + redirect_uri + '",'
+        'grant_type:"authorization_code",'
+        'code_verifier:"' + code_verifier + '",'
+        'scope:"User.Read Mail.Read Mail.Send Calendars.Read offline_access"'
+        '})});var d=await r.json();'
+        'if(!d.access_token)throw new Error(d.error_description||d.error||"No token");'
+        'var sr=await fetch("/api/outlook-orch/auth/store-token",{method:"POST",'
+        'headers:{"Content-Type":"application/json"},credentials:"include",'
+        'body:JSON.stringify({access_token:d.access_token,expires_in:d.expires_in||3600,'
+        'user_id:"' + user_id + '"})});'
+        'if(!sr.ok)throw new Error("Store failed");'
+        'try{if(window.opener)window.opener.postMessage({type:"OUTLOOK_AUTH_SUCCESS"},"*")}catch(e){}'
+        's.textContent="Connected. You may close this window.";window.close()'
+        '}catch(e){s.textContent="Failed: "+e.message;'
+        'try{if(window.opener)window.opener.postMessage({type:"OUTLOOK_AUTH_ERROR",error:e.message},"*")}catch(x){}}'
+        '})();'
+        '</script></body></html>'
     )
-    return response
+    return HTMLResponse(content=exchange_html)
+
+
+@router.post("/auth/store-token")
+async def outlook_store_token(request: Request) -> JSONResponse:
+    """Receive the access token from the browser-side exchange and store it."""
+    try:
+        body = await request.json()
+        access_token = body.get("access_token")
+        expires_in = int(body.get("expires_in", 3600))
+        user_id = body.get("user_id")
+
+        if not access_token:
+            return JSONResponse({"error": "missing access_token"}, status_code=400)
+
+        if not user_id:
+            user_info = OutlookService.validate_access_token(access_token)
+            if user_info:
+                user_id = user_info.get("id") or user_info.get("userPrincipalName")
+        if not user_id:
+            return JSONResponse({"error": "cannot_identify_user"}, status_code=400)
+
+        outlook_token_manager.store_token(user_id, access_token, expires_in)
+
+        session_id = str(uuid4())
+        with _session_lock:
+            _outlook_cookie_sessions[session_id] = user_id
+
+        response = JSONResponse({"ok": True}, status_code=200)
+        response.set_cookie(
+            key="outlook_session",
+            value=session_id,
+            httponly=True,
+            secure=_is_request_secure(request),
+            samesite="lax",
+            max_age=expires_in,
+            path="/",
+        )
+        return response
+    except Exception as e:
+        logger.error(f"Outlook store-token error: {e}")
+        return JSONResponse({"error": str(e)}, status_code=500)
 
 
 # ══════════════════════════════════════════════════════════════════════

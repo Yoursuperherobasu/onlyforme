@@ -16,7 +16,7 @@ export default function OrchestratorImageGallery() {
 
   // Fetch AI-generated images from dedicated MiBuddy endpoint
   useEffect(() => {
-    const tokenMatch = document.cookie.match(/(?:^|;\s*)access_token_lf=([^;]*)/);
+    const tokenMatch = document.cookie.match(/(?:^|;\s*)access_token_ag=([^;]*)/);
     const headers: Record<string, string> = {};
     if (tokenMatch?.[1]) headers["Authorization"] = `Bearer ${decodeURIComponent(tokenMatch[1])}`;
 

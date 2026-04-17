@@ -77,9 +77,9 @@ describe("getAuthCookie", () => {
 
   it("should handle different token names", () => {
     const testCases = [
-      { tokenName: "access_token_lf", value: "access-123" },
-      { tokenName: "refresh_token_lf", value: "refresh-456" },
-      { tokenName: "apikey_tkn_lflw", value: "api-789" },
+      { tokenName: "access_token_ag", value: "access-123" },
+      { tokenName: "refresh_token_ag", value: "refresh-456" },
+      { tokenName: "apikey_tkn_ag", value: "api-789" },
     ];
 
     testCases.forEach(({ tokenName, value }) => {

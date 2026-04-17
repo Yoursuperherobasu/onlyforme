@@ -34,7 +34,7 @@ from agentcore.services.auth.token_revocation import is_user_token_revoked
 
 oauth2_login = OAuth2PasswordBearer(tokenUrl="api/login", auto_error=False)
 # HTTPBearer scheme — allows pasting a raw access token in Swagger's Authorize dialog
-http_bearer = HTTPBearer(auto_error=False, description="Paste your access_token_lf value here")
+http_bearer = HTTPBearer(auto_error=False, description="Paste your access_token_ag value here")
 API_KEY_NAME = "x-api-key"
 
 api_key_query = APIKeyQuery(name=API_KEY_NAME, scheme_name="API key query", auto_error=False)
@@ -240,7 +240,7 @@ async def get_current_user_for_websocket(
     websocket: WebSocket,
     db: AsyncSession,
 ) -> User | UserRead:
-    token = websocket.cookies.get("access_token_lf") or websocket.query_params.get("token")
+    token = websocket.cookies.get("access_token_ag") or websocket.query_params.get("token")
     if token:
         user = await get_current_user_by_jwt(token, db)
         if user:

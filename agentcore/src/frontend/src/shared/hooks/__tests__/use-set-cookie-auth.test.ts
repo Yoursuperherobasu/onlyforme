@@ -57,7 +57,7 @@ describe("setAuthCookie", () => {
   });
 
   it("should set a cookie with correct options", () => {
-    const tokenName = "access_token_lf";
+    const tokenName = "access_token_ag";
     const tokenValue = "test-access-token";
 
     setAuthCookie(mockCookies, tokenName, tokenValue);
@@ -71,9 +71,9 @@ describe("setAuthCookie", () => {
 
   it("should handle different token types", () => {
     const testCases = [
-      { tokenName: "access_token_lf", value: "access-123" },
-      { tokenName: "refresh_token_lf", value: "refresh-456" },
-      { tokenName: "apikey_tkn_lflw", value: "api-789" },
+      { tokenName: "access_token_ag", value: "access-123" },
+      { tokenName: "refresh_token_ag", value: "refresh-456" },
+      { tokenName: "apikey_tkn_ag", value: "api-789" },
     ];
 
     testCases.forEach(({ tokenName, value }) => {
