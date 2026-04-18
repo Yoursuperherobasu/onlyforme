@@ -24,23 +24,49 @@ IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
 async def _file_to_base64_url(file_path: str) -> str | None:
     """Convert a file path to a base64 data URL for multimodal LLM input.
 
-    The file_path is a storage-relative path like '{user_id}/{filename}'.
-    Reads from the agentcore storage service (local disk or Azure Blob).
-    Returns None if the file can't be read.
+    The file_path is a storage-relative path like '{user_id}/chat-images/{filename}'.
+    Reads from local disk first, then falls back to Azure Blob Storage (MiBuddy container).
+    Returns None if the file can't be read from either location.
     """
     try:
         from agentcore.services.deps import get_settings_service
         settings = get_settings_service()
         config_dir = Path(settings.settings.config_dir)
 
-        # file_path format: "{user_id}/{filename}" — resolve to storage dir
+        file_name = file_path.split("/")[-1]
+        mime_type = mimetypes.guess_type(file_name)[0] or "image/png"
+        data: bytes | None = None
+
+        # Try 1: Local disk
         actual_path = config_dir / file_path
-        if not actual_path.exists():
-            logger.warning(f"File not found at {actual_path}")
+        if actual_path.exists():
+            data = actual_path.read_bytes()
+            logger.info(f"[FileToBase64] Read from local: {actual_path}")
+
+        # Try 2: Azure Blob Storage (MiBuddy container)
+        if data is None:
+            try:
+                from agentcore.services.mibuddy.docqa_storage import _get_container
+                container = await _get_container()
+                if container:
+                    blob_client = container.get_blob_client(file_path)
+                    download = await blob_client.download_blob()
+                    data = await download.readall()
+                    logger.info(f"[FileToBase64] Read from blob: {file_path}")
+            except Exception as blob_err:
+                logger.debug(f"[FileToBase64] Blob read failed: {blob_err}")
+
+        # Try 3: Fallback — search knowledge_base_storage directory
+        if data is None:
+            kb_path = config_dir / "knowledge_base_storage" / file_path
+            if kb_path.exists():
+                data = kb_path.read_bytes()
+                logger.info(f"[FileToBase64] Read from KB storage: {kb_path}")
+
+        if data is None:
+            logger.warning(f"[FileToBase64] File not found anywhere: {file_path}")
             return None
 
-        mime_type = mimetypes.guess_type(str(actual_path))[0] or "image/png"
-        data = actual_path.read_bytes()
         b64 = base64.b64encode(data).decode("utf-8")
         return f"data:{mime_type};base64,{b64}"
     except Exception as e:
