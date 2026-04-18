@@ -399,7 +399,7 @@ function ImageGalleryView({
 
   // Fetch AI-generated images from MiBuddy dedicated endpoint
   useEffect(() => {
-    const tokenMatch = document.cookie.match(/(?:^|;\s*)access_token_lf=([^;]*)/);
+    const tokenMatch = document.cookie.match(/(?:^|;\s*)access_token_ag=([^;]*)/);
     const headers: Record<string, string> = {};
     if (tokenMatch?.[1]) headers["Authorization"] = `Bearer ${decodeURIComponent(tokenMatch[1])}`;
 
@@ -636,7 +636,7 @@ export default function AgentOrchestrator() {
       // Model mode: upload to MiBuddy dedicated container
       const formData = new FormData();
       formData.append("file", file);
-      const tokenMatch = document.cookie.match(/(?:^|;\s*)access_token_lf=([^;]*)/);
+      const tokenMatch = document.cookie.match(/(?:^|;\s*)access_token_ag=([^;]*)/);
       const headers: Record<string, string> = {};
       if (tokenMatch?.[1]) headers["Authorization"] = `Bearer ${decodeURIComponent(tokenMatch[1])}`;
 
@@ -754,6 +754,26 @@ export default function AgentOrchestrator() {
   const { data: apiSessions, refetch: refetchSessions } = useGetOrchSessions();
   const { mutate: deleteSession } = useDeleteOrchSession();
 
+  /* MiBuddy-parity share-link deep-link: when the page mounts with
+   * `?session=<id>` in the URL (typical when a user pastes a shared
+   * link), remember the session id. ProtectedRoute has already bounced
+   * an unauthenticated viewer through login before we get here. */
+  const [pendingSharedId, setPendingSharedId] = useState<string | null>(null);
+  const [isSharedReadOnly, setIsSharedReadOnly] = useState(false);
+  const sharedLinkCapturedRef = useRef(false);
+  useEffect(() => {
+    if (sharedLinkCapturedRef.current) return;
+    sharedLinkCapturedRef.current = true;
+    const params = new URLSearchParams(window.location.search);
+    const sid = params.get("session");
+    if (!sid) return;
+    setPendingSharedId(sid);
+    setShowImageGallery(false);
+    // Strip the query param so a refresh doesn't re-trigger.
+    const clean = window.location.pathname + window.location.hash;
+    window.history.replaceState({}, "", clean);
+  }, []);
+
   const agents: Agent[] = useMemo(
     () => (apiAgents ? mapApiAgents(apiAgents) : []),
     [apiAgents],
@@ -853,6 +873,62 @@ export default function AgentOrchestrator() {
     }
   }, [apiSessionMessages, effectiveSessionId, apiSessions, agents]);
 
+  /* Resolve a pending share-link session once the user's own session
+   * list has loaded. If the shared session belongs to the viewer, take
+   * the normal selection path (the useGetOrchMessages hook will then
+   * fetch it). Otherwise treat the UUID as a MiBuddy-style share token
+   * and pull messages from the `/sessions/{id}/shared-messages`
+   * endpoint (authenticated, no owner filter), rendering them in
+   * read-only mode. */
+  useEffect(() => {
+    if (!pendingSharedId) return;
+    if (apiSessions === undefined) return; // sessions still loading
+    const owned = apiSessions.some((s) => s.session_id === pendingSharedId);
+    if (owned) {
+      setActiveSessionId(pendingSharedId);
+      setIsSharedReadOnly(false);
+      setPendingSharedId(null);
+      return;
+    }
+    let cancelled = false;
+    const tokenMatch = document.cookie.match(/(?:^|;\s*)access_token_ag=([^;]*)/);
+    const headers: Record<string, string> = {};
+    if (tokenMatch?.[1]) {
+      headers["Authorization"] = `Bearer ${decodeURIComponent(tokenMatch[1])}`;
+    }
+    const url = `${getURL("ORCHESTRATOR")}/sessions/${encodeURIComponent(pendingSharedId)}/shared-messages`;
+    fetch(url, { headers, credentials: "include" })
+      .then(async (res) => {
+        if (!res.ok) {
+          const body = await res.text().catch(() => "");
+          throw new Error(res.status === 404
+            ? "This shared chat does not exist or has been deleted."
+            : `Failed to load shared chat (${res.status}) ${body}`);
+        }
+        return res.json();
+      })
+      .then((payload: { is_owner: boolean; messages: OrchMessageResponse[] }) => {
+        if (cancelled) return;
+        const mapped = mapApiMessages(payload.messages || []);
+        setMessages(mapped);
+        setCurrentSessionId(pendingSharedId);
+        setActiveSessionId(null); // don't trigger user-scoped fetch
+        setIsSharedReadOnly(!payload.is_owner);
+        setPendingSharedId(null);
+      })
+      .catch((err: Error) => {
+        if (cancelled) return;
+        useAlertStore.getState().setErrorData?.({
+          title: "Could not load shared chat",
+          list: [err.message],
+        });
+        setPendingSharedId(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [pendingSharedId, apiSessions]);
+
   // Fetch available models from backend
   useEffect(() => {
     let cancelled = false;
@@ -860,7 +936,7 @@ export default function AgentOrchestrator() {
     const modelsUrl = `${getURL("ORCHESTRATOR")}/models`;
     const headers: Record<string, string> = {};
     // Extract JWT from cookie (same cookie name used by axios interceptor)
-    const tokenMatch = document.cookie.match(/(?:^|;\s*)access_token_lf=([^;]*)/);
+    const tokenMatch = document.cookie.match(/(?:^|;\s*)access_token_ag=([^;]*)/);
     if (tokenMatch?.[1]) {
       headers["Authorization"] = `Bearer ${decodeURIComponent(tokenMatch[1])}`;
     }
@@ -1151,7 +1227,7 @@ export default function AgentOrchestrator() {
     suggestionTimerRef.current = setTimeout(() => {
       const suggestUrl = `${getURL("ORCHESTRATOR")}/suggestions?q=${encodeURIComponent(value.trim())}`;
       const headers: Record<string, string> = {};
-      const tokenMatch = document.cookie.match(/(?:^|;\s*)access_token_lf=([^;]*)/);
+      const tokenMatch = document.cookie.match(/(?:^|;\s*)access_token_ag=([^;]*)/);
       if (tokenMatch?.[1]) headers["Authorization"] = `Bearer ${decodeURIComponent(tokenMatch[1])}`;
       fetch(suggestUrl, { headers, credentials: "include" })
         .then((r) => r.ok ? r.json() : null)
@@ -1333,6 +1409,13 @@ export default function AgentOrchestrator() {
   const handleSend = useCallback(async () => {
     const hasFiles = uploadFiles.some((f) => f.path && !f.loading && !f.error);
     if (!canInteract || (!input.trim() && !hasFiles) || isSending) return;
+    if (isSharedReadOnly) {
+      useAlertStore.getState().setErrorData?.({
+        title: "This is a shared read-only conversation",
+        list: ["Start a new chat to continue with your own account."],
+      });
+      return;
+    }
 
     // Outlook intent handling moved to the backend: the MiBuddy-ported
     // intent classifier now returns "outlook_query" for email/calendar
@@ -1745,11 +1828,13 @@ export default function AgentOrchestrator() {
     setSelectedModelId("");
     setNoAgentMode(true);
     setShowImageGallery(false);
+    setIsSharedReadOnly(false);
   };
 
   const handleSelectSession = (sessionId: string) => {
     setActiveSessionId(sessionId);
     setShowImageGallery(false);
+    setIsSharedReadOnly(false);
   };
 
   /* ──────────── Session rename / share (MiBuddy-parity helpers) ────────────
@@ -1806,14 +1891,17 @@ export default function AgentOrchestrator() {
   };
 
   const handleShareSession = async (sessionId: string) => {
-    const url = `${window.location.origin}${window.location.pathname}?session=${encodeURIComponent(sessionId)}`;
+    // MiBuddy-parity share: the link opens the orchestrator page with
+    // `?session=<id>` selected. If the recipient is already signed in,
+    // the session loads immediately. If not, ProtectedRoute bounces them
+    // to login and returns to the same URL afterwards.
+    const url = `${window.location.origin}/orchestrator-chat?session=${encodeURIComponent(sessionId)}`;
     try {
       await navigator.clipboard.writeText(url);
       useAlertStore.getState().setSuccessData?.({
         title: t("Share link copied to clipboard"),
       });
     } catch {
-      // Fallback: prompt the user so they can copy manually.
       window.prompt(t("Copy this share link:"), url);
     }
   };
@@ -2753,6 +2841,11 @@ export default function AgentOrchestrator() {
         {/* ================ MESSAGES ================ */}
         <div className="flex flex-1 flex-col items-center overflow-y-auto">
           <div className="w-full max-w-3xl px-6 pb-44 pt-6">
+            {isSharedReadOnly && (
+              <div className="mb-4 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-700 dark:bg-amber-900/30 dark:text-amber-200">
+                {t("Shared conversation — read only. Start a new chat to continue on your own account.")}
+              </div>
+            )}
             {messages.map((msg, idx) => {
               // Context reset divider
               if (msg.category === "context_reset") {
@@ -3222,8 +3315,8 @@ export default function AgentOrchestrator() {
                       }
                       setShowPlusMenu(!showPlusMenu);
                     }}
-                    disabled={isSending || !canInteract}
-                    className={`flex h-9 w-9 items-center justify-center rounded-full text-muted-foreground transition-colors ${(isSending || !canInteract) ? "cursor-not-allowed opacity-50" : "hover:bg-accent hover:text-foreground"}`}
+                    disabled={isSending || !canInteract || isSharedReadOnly}
+                    className={`flex h-9 w-9 items-center justify-center rounded-full text-muted-foreground transition-colors ${(isSending || !canInteract || isSharedReadOnly) ? "cursor-not-allowed opacity-50" : "hover:bg-accent hover:text-foreground"}`}
                     title={t("More options")}
                   >
                     <Plus size={18} />
@@ -3233,8 +3326,8 @@ export default function AgentOrchestrator() {
                 {/* Upload image button */}
                 <button
                   onClick={() => fileInputRef.current?.click()}
-                  disabled={isSending || !canInteract}
-                  className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors ${(isSending || !canInteract) ? "cursor-not-allowed opacity-50" : "hover:bg-accent hover:text-foreground"}`}
+                  disabled={isSending || !canInteract || isSharedReadOnly}
+                  className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors ${(isSending || !canInteract || isSharedReadOnly) ? "cursor-not-allowed opacity-50" : "hover:bg-accent hover:text-foreground"}`}
                   title={t("Upload image")}
                 >
                   <ImagePlus size={18} />
@@ -3245,7 +3338,7 @@ export default function AgentOrchestrator() {
                   value={input}
                   onChange={(e) => handleInputChange(e.target.value)}
                   onPaste={handlePaste}
-                  disabled={isSending || !canInteract}
+                  disabled={isSending || !canInteract || isSharedReadOnly}
                   onKeyDown={(e) => {
                     if (showSuggestions && suggestions.length > 0) {
                       if (e.key === "ArrowDown") {
@@ -3276,14 +3369,16 @@ export default function AgentOrchestrator() {
                     }
                   }}
                   placeholder={
-                    !canInteract
-                      ? t("You do not have permission to interact with agents.")
-                      : isSending
-                        ? t("Waiting for response...")
-                        : t("Start typing with @ to chat with an agent")
+                    isSharedReadOnly
+                      ? t("Read-only shared conversation")
+                      : !canInteract
+                        ? t("You do not have permission to interact with agents.")
+                        : isSending
+                          ? t("Waiting for response...")
+                          : t("Start typing with @ to chat with an agent")
                   }
                   rows={1}
-                  className={`min-w-0 flex-1 resize-none border-none bg-transparent px-2 py-1.5 text-[15px] leading-6 text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-0 ${(isSending || !canInteract) ? "cursor-not-allowed opacity-50" : ""}`}
+                  className={`min-w-0 flex-1 resize-none border-none bg-transparent px-2 py-1.5 text-[15px] leading-6 text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-0 ${(isSending || !canInteract || isSharedReadOnly) ? "cursor-not-allowed opacity-50" : ""}`}
                 />
 
                 <input
@@ -3298,11 +3393,11 @@ export default function AgentOrchestrator() {
                 {/* Mic */}
                 <button
                   onClick={handleMicClick}
-                  disabled={isSending || !canInteract}
+                  disabled={isSending || !canInteract || isSharedReadOnly}
                   className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full transition-colors ${
                     isListening
                       ? "bg-red-500 text-white animate-pulse"
-                      : (isSending || !canInteract)
+                      : (isSending || !canInteract || isSharedReadOnly)
                         ? "cursor-not-allowed text-muted-foreground opacity-50"
                         : "text-muted-foreground hover:bg-accent hover:text-foreground"
                   }`}
@@ -3314,9 +3409,9 @@ export default function AgentOrchestrator() {
                 {/* Send */}
                 <button
                   onClick={handleSend}
-                  disabled={(!input.trim() && !uploadFiles.some((f) => f.path)) || isSending || !canInteract}
+                  disabled={(!input.trim() && !uploadFiles.some((f) => f.path)) || isSending || !canInteract || isSharedReadOnly}
                   className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full transition-colors ${
-                    (input.trim() || uploadFiles.some((f) => f.path)) && !isSending && canInteract
+                    (input.trim() || uploadFiles.some((f) => f.path)) && !isSending && canInteract && !isSharedReadOnly
                       ? "bg-foreground text-background hover:opacity-90"
                       : "bg-muted text-muted-foreground"
                   }`}

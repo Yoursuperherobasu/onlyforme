@@ -138,10 +138,21 @@ class DatabaseService(Service):
     def _get_connect_args(self):
         settings = self.settings_service.settings
 
-        if settings.db_driver_connection_settings is not None:
-            return settings.db_driver_connection_settings
+        connect_args: dict = dict(settings.db_driver_connection_settings or {})
 
-        return {}
+        
+        url_lower = self.database_url.lower()
+        if "asyncpg" in url_lower:
+            server_settings = dict(connect_args.get("server_settings", {}))
+            server_settings.setdefault("timezone", "UTC")
+            connect_args["server_settings"] = server_settings
+        elif "postgres" in url_lower:
+            # psycopg / psycopg2 accept libpq "options" for server parameters.
+            existing = connect_args.get("options", "") or ""
+            if "timezone" not in existing.lower():
+                connect_args["options"] = (f"{existing} -c timezone=UTC").strip()
+
+        return connect_args
 
     @asynccontextmanager
     async def with_session(self):

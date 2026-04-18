@@ -101,8 +101,9 @@ class AgentBase(SQLModel):
     @field_serializer("updated_at")
     def serialize_datetime(self, value):
         if isinstance(value, datetime):
-            value = value.replace(microsecond=0)
-            return value.strftime("%Y-%m-%d %H:%M:%S")
+            if value.tzinfo is None:
+                value = value.replace(tzinfo=timezone.utc)
+            return value.replace(microsecond=0).isoformat()
         return value
 
     @field_validator("updated_at", mode="before")

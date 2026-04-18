@@ -126,15 +126,37 @@ export function AuthProvider({ children }): React.ReactElement {
             Boolean((error as AxiosError)?.message);
 
           if (isTransportFailure) {
-            // Keep the current auth state during transient wake-up / network /
-            // certificate failures so the user is not forced out unnecessarily.
-            return;
+            // On deployed environments (AKS), idle connections get dropped by
+            // the ingress / load-balancer.  If the session has also expired
+            // the backend would return 401 — but the request never reaches it
+            // because the stale TCP connection fails first.  Retry once after
+            // a short delay so the browser opens a fresh connection and we can
+            // distinguish "truly offline" from "session expired on AKS".
+            try {
+              await new Promise((r) => setTimeout(r, 1500));
+              const retryRes = await fetch("/api/users/whoami", {
+                credentials: "include",
+              });
+              if (retryRes.ok) {
+                // Retry succeeded — network was just briefly down, session is
+                // still valid.  Next scheduled getUser() picks up fresh data.
+                return;
+              }
+              if (retryRes.status !== 401 && retryRes.status !== 403) {
+                // Server error but not auth — keep auth state.
+                return;
+              }
+              // 401/403 — session has expired, fall through to logout below.
+            } catch {
+              // Still a transport failure — genuinely offline, keep auth.
+              return;
+            }
           }
 
           clearLocalAuthState();
           useAuthStore.getState().setUserData(null);
 
-          if (status === 401 || status === 403) {
+          if (status === 401 || status === 403 || isTransportFailure) {
             try {
               await mutateLogoutAsync(undefined);
             } catch {
