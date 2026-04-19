@@ -509,8 +509,6 @@ class LangGraphAdapter:
         # Compile
         try:
             compile_kwargs: dict[str, Any] = {}
-            if self.is_cyclic:
-                compile_kwargs["recursion_limit"] = 50
             # Checkpointer is required for Human-in-the-Loop (interrupt() to work).
             # Only attach it when the graph contains HITL nodes — attaching it
             # unconditionally causes LangGraph to msgpack-serialize the full state
@@ -898,7 +896,9 @@ class LangGraphAdapter:
             # Thread ID for LangGraph checkpointer — identifies this run's state.
             # Required for interrupt() (HITL) to save and resume graph state.
             thread_id = self._session_id or str(uuid4())
-            lg_config = {"configurable": {"thread_id": thread_id}}
+            lg_config: dict[str, Any] = {"configurable": {"thread_id": thread_id}}
+            if self.is_cyclic:
+                lg_config["recursion_limit"] = 50
 
             # Execute the compiled graph
             final_state = None
