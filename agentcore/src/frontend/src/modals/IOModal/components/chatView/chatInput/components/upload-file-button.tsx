@@ -17,7 +17,7 @@ const UploadFileButton = ({
     <ShadTooltip
       styleClasses="z-50"
       side="right"
-      content="Attach image (png, jpg, jpeg)"
+      content="Attach a file (images or documents)"
     >
       <div>
         <input

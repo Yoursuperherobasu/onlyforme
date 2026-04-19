@@ -188,6 +188,23 @@ function DetailModal({
             <StatusBadge status={item.status} />
           </div>
 
+          {/* Read-only notice for creator view (not the assignee) */}
+          {isPending && item.assigned_to && !isAssignee && (
+            <div className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm dark:border-amber-700 dark:bg-amber-950/30">
+              <IconComponent
+                name="Eye"
+                className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400"
+              />
+              <span className="text-amber-800 dark:text-amber-300">
+                {t("You triggered this request. Only")}{" "}
+                <span className="font-semibold">
+                  {item.assigned_to_name || t("the assignee")}
+                </span>{" "}
+                {t("can approve or reject — this view is read-only.")}
+              </span>
+            </div>
+          )}
+
           {/* Assigned To info + inline delegation */}
           {item.assigned_to_name && (
             <div className="rounded-md border border-border bg-muted/30 px-3 py-2 space-y-2">
@@ -668,7 +685,6 @@ export default function HITLApprovalsPage(): JSX.Element {
                     t("Assigned To"),
                     t("Requested"),
                     t("Status"),
-                    "",
                   ].map((h, idx) => (
                     <th
                       key={h || `col-${idx}`}
@@ -683,7 +699,7 @@ export default function HITLApprovalsPage(): JSX.Element {
                 {filteredItems.length === 0 ? (
                   <tr>
                     <td
-                      colSpan={8}
+                      colSpan={7}
                       className="px-4 py-12 text-center text-sm text-muted-foreground"
                     >
                       <IconComponent
@@ -699,8 +715,6 @@ export default function HITLApprovalsPage(): JSX.Element {
                   filteredItems.map((item) => {
                     const actions = item.interrupt_data?.actions ?? [];
                     const question = item.interrupt_data?.question ?? "-";
-                    const isPending = item.status === "pending";
-                    const isActing = actingThreadId === item.thread_id;
 
                     return (
                       <tr
@@ -771,7 +785,14 @@ export default function HITLApprovalsPage(): JSX.Element {
                               {item.assigned_to_name}
                             </p>
                           ) : (
-                            <span className="text-xs text-muted-foreground/50">-</span>
+                            <span
+                              className="text-xs italic text-muted-foreground"
+                              title={t(
+                                "No department admin is assigned to review this run yet",
+                              )}
+                            >
+                              {t("Unassigned")}
+                            </span>
                           )}
                         </td>
 
@@ -783,50 +804,6 @@ export default function HITLApprovalsPage(): JSX.Element {
                         {/* Status */}
                         <td className="px-4 py-3">
                           <StatusBadge status={item.status} />
-                        </td>
-
-                        {/* Action buttons (only for pending) */}
-                        <td
-                          className="px-4 py-3"
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          {isPending && (
-                            <div className="flex gap-1.5 opacity-0 transition-opacity group-hover:opacity-100">
-                              {actions
-                                .slice(0, 2)
-                                .map((action) => {
-                                  const isReject = action
-                                    .toLowerCase()
-                                    .includes("reject");
-                                  return (
-                                    <button
-                                      key={action}
-                                      disabled={isActing || (isReject ? !canReject : !canApprove)}
-                                      onClick={() =>
-                                        (isReject ? canReject : canApprove) &&
-                                        handleAction(item.thread_id, action, "")
-                                      }
-                                      title={action}
-                                      className={`rounded px-2.5 py-1 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
-                                        isReject
-                                          ? "bg-red-100 text-red-700 hover:bg-red-200 dark:bg-red-900/30 dark:text-red-400 dark:hover:bg-red-900/50"
-                                          : "bg-green-100 text-green-700 hover:bg-green-200 dark:bg-green-900/30 dark:text-green-400 dark:hover:bg-green-900/50"
-                                      }`}
-                                    >
-                                      {isActing ? "\u2026" : action}
-                                    </button>
-                                  );
-                                })}
-                              <button
-                                disabled={isActing || !canReject}
-                                onClick={() => handleCancel(item.thread_id)}
-                                title={t("Cancel run")}
-                                className="rounded px-2.5 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
-                              >
-                                \u2715
-                              </button>
-                            </div>
-                          )}
                         </td>
                       </tr>
                     );

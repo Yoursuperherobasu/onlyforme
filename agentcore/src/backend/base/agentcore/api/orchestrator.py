@@ -180,6 +180,19 @@ class OrchChatResponse(BaseModel):
     context_reset: bool = False
 
 
+class EditMessageRequest(BaseModel):
+    """Payload for editing a past user message (MiBuddy-style in-place UPSERT)."""
+    edited_text: str
+    enable_reasoning: bool = False
+    image_mode: bool = False
+
+
+class EditMessageResponse(BaseModel):
+    """Response from the edit endpoint — contains updated user + agent messages."""
+    user_message: OrchMessageResponse
+    agent_message: OrchMessageResponse
+
+
 class OrchModelSummary(BaseModel):
     model_id: UUID
     display_name: str
@@ -1443,12 +1456,12 @@ async def orch_chat(
             result = await handle_web_search(body.input_value, system_message=get_system_identity_prompt())
             response_text = result["response_text"]
             resp_model_name = result.get("model_name", "gemini")
-            # If user explicitly picked the model → show its name.
-            # If intent classifier decided → show generic "Web Search".
+            # Use the actual model's display name (user-selected OR WEB_SEARCH_MODEL_NAME)
             if routing.get("intent") == "web_search_explicit" and resp_model_id:
                 sender_name = await _get_model_display_name(session, resp_model_id)
             else:
-                sender_name = "Web Search"
+                settings_svc = get_settings_service().settings
+                sender_name = settings_svc.web_search_model_name or "Web Search"
 
         elif mode == "image_gen":
             from agentcore.services.mibuddy.image_gen_handler import handle_image_generation
@@ -1459,12 +1472,12 @@ async def orch_chat(
             )
             response_text = result["response_text"]
             resp_model_name = result.get("model_name", "image-generation")
-            # If user explicitly picked the model → show its name.
-            # If intent classifier decided → show generic "Image Generator".
+            # Use the actual image-gen model's display name (e.g. "Nano Banana")
             if routing.get("intent") == "image_generation_explicit" and resp_model_id:
                 sender_name = await _get_model_display_name(session, resp_model_id)
             else:
-                sender_name = "Image Generator"
+                settings_svc = get_settings_service().settings
+                sender_name = settings_svc.image_gen_model_name or "Image Generator"
 
         elif mode == "outlook_query":
             # Port of MiBuddy's outlook agent. We delegate to the verbatim
@@ -1630,23 +1643,65 @@ async def orch_chat_stream(
             settings_svc = get_settings_service()
             sender_name = settings_svc.settings.company_kb_name or "Knowledge Base"
         elif mode == "web_search":
-            # If user explicitly picked a web-search-capable model → show its name.
-            # If intent classifier decided → show generic "Web Search".
+            # Use the actual model's display name (either the user-selected one, or
+            # the configured WEB_SEARCH_MODEL_NAME that the handler falls back to).
             if intent == "web_search_explicit" and resp_model_id:
                 sender_name = await _get_model_display_name(session, resp_model_id)
             else:
-                sender_name = "Web Search"
+                settings_svc = get_settings_service().settings
+                sender_name = settings_svc.web_search_model_name or "Web Search"
+                # Override resp_model_id to the WEB_SEARCH_MODEL_NAME registry entry
+                # so the frontend can auto-switch the dropdown to it.
+                try:
+                    from agentcore.services.model_service_client import fetch_registry_models_async
+                    ws_name = (settings_svc.web_search_model_name or "").strip().lower()
+                    if ws_name:
+                        _all = await fetch_registry_models_async(active_only=True) or []
+                        _match = next((m for m in _all if (m.get("display_name") or "").strip().lower() == ws_name), None)
+                        if _match and _match.get("id"):
+                            resp_model_id = UUID(str(_match["id"]))
+                except Exception:
+                    pass
         elif mode == "image_gen":
-            # Same pattern: explicit selection shows model name, intent-driven shows generic label.
+            # Use the actual image-gen model's display name (e.g. "Nano Banana"),
+            # not generic "Image Generator". When intent routed here, show the
+            # configured IMAGE_GEN_MODEL_NAME.
             if intent == "image_generation_explicit" and resp_model_id:
                 sender_name = await _get_model_display_name(session, resp_model_id)
             else:
-                sender_name = "Image Generator"
+                settings_svc = get_settings_service().settings
+                sender_name = settings_svc.image_gen_model_name or "Image Generator"
+                # Override resp_model_id to the IMAGE_GEN_MODEL_NAME registry entry
+                try:
+                    from agentcore.services.model_service_client import fetch_registry_models_async
+                    ig_name = (settings_svc.image_gen_model_name or "").strip().lower()
+                    if ig_name:
+                        _all = await fetch_registry_models_async(active_only=True) or []
+                        _match = next((m for m in _all if (m.get("display_name") or "").strip().lower() == ig_name), None)
+                        if _match and _match.get("id"):
+                            resp_model_id = UUID(str(_match["id"]))
+                except Exception:
+                    pass
         elif mode == "outlook_query":
             sender_name = "Outlook"
 
         queue: asyncio.Queue = asyncio.Queue()
         event_manager = create_default_event_manager(queue)
+
+        # Fire the "routing" event IMMEDIATELY so the frontend can update the
+        # model dropdown before the (potentially slow) response begins. This
+        # gives instant visual feedback — e.g. user picks "MiBuddy AI", asks
+        # "latest news", dropdown flips to "Web Search" right away instead of
+        # waiting for the response to complete.
+        try:
+            event_manager.on_routing(data={
+                "routed_model_id": str(resp_model_id) if resp_model_id else None,
+                "routed_model_name": sender_name,
+                "mode": mode,
+            })
+        except Exception as _rerr:
+            logger.debug(f"[ORCH-STREAM] routing event emit failed (non-critical): {_rerr}")
+
         _input_value = body.input_value
         _session_id = body.session_id
         _user_id = current_user.id
@@ -1815,6 +1870,11 @@ async def orch_chat_stream(
                     # MiBuddy parity: tell the frontend when the backend
                     # auto-enabled canvas (compose/reply email).
                     "auto_canvas": bool(result.get("auto_canvas", False)),
+                    # Tell the frontend which model actually produced the response.
+                    # Used by the UI to sync the model dropdown when smart router
+                    # / intent classifier routed to a different model than the user selected.
+                    "routed_model_id": str(_resp_model_id) if _resp_model_id else None,
+                    "routed_model_name": _sender_name,
                 })
             except Exception as exc:
                 logger.exception(f"[ORCH-STREAM] Direct mode error: {exc}")
@@ -2165,6 +2225,165 @@ async def get_orch_session_messages(
         logger.error(f"Error getting orch session messages: {e}")
         raise HTTPException(status_code=500, detail=str(e)) from e
 
+
+@router.put(
+    "/messages/{message_id}/edit",
+    response_model=EditMessageResponse,
+    status_code=200,
+    dependencies=[Depends(PermissionChecker(["interact_agents"]))],
+)
+async def edit_orch_message(
+    *,
+    session: DbSession,
+    current_user: CurrentActiveUser,
+    message_id: str,
+    body: EditMessageRequest,
+):
+    """Edit a past user message in-place (MiBuddy-style UPSERT).
+
+    - Updates the user message's text to `edited_text`.
+    - Finds the NEXT agent response in the same session (by timestamp).
+    - Regenerates a fresh response via the same model the original used.
+    - Updates the agent response's text in-place (keeps same message ID).
+    - Returns both updated rows.
+
+    Messages AFTER the edited pair are LEFT UNTOUCHED in the DB (MiBuddy behavior).
+    The frontend is responsible for hiding them in the UI.
+    """
+    try:
+        # 1. Fetch the user message being edited
+        user_msg = await session.get(OrchConversationTable, UUID(message_id))
+        if user_msg is None:
+            raise HTTPException(status_code=404, detail="Message not found")
+        if user_msg.sender != "user":
+            raise HTTPException(status_code=400, detail="Only user messages can be edited")
+        if user_msg.user_id != current_user.id:
+            raise HTTPException(status_code=403, detail="Cannot edit another user's message")
+
+        # 2. Find the next agent message in the same session (the response to this user msg)
+        next_agent_stmt = (
+            select(OrchConversationTable)
+            .where(
+                OrchConversationTable.session_id == user_msg.session_id,
+                OrchConversationTable.sender == "agent",
+                OrchConversationTable.timestamp > user_msg.timestamp,
+            )
+            .order_by(OrchConversationTable.timestamp.asc())
+        )
+        next_agent_rows = (await session.exec(next_agent_stmt)).all()
+        agent_msg = next_agent_rows[0] if next_agent_rows else None
+
+        # 3. Update the user message text first (in-place).
+        # Note: OrchConversationTable doesn't have an `updated_at` column — the
+        # original timestamp is preserved on edits (matches MiBuddy behavior).
+        user_msg.text = body.edited_text
+        session.add(user_msg)
+        await session.flush()
+
+        # 4. Regenerate response. We call direct_model_chat with the edited prompt.
+        # We use the same model that generated the original response.
+        resp_model_id = getattr(agent_msg, "model_id", None) if agent_msg else None
+        if not resp_model_id:
+            resp_model_id = user_msg.model_id if hasattr(user_msg, "model_id") else None
+        if not resp_model_id:
+            # Last-resort fallback
+            settings = get_settings_service().settings
+            if settings.default_chat_model_id:
+                resp_model_id = UUID(settings.default_chat_model_id)
+
+        if not resp_model_id:
+            raise HTTPException(
+                status_code=400,
+                detail="Cannot regenerate: no model_id associated with this conversation.",
+            )
+
+        # Call direct_model_chat with ONLY the edited user prompt (MiBuddy behavior —
+        # no prior history included in regeneration context).
+        from agentcore.services.mibuddy.direct_model_chat import direct_model_chat
+        result = await direct_model_chat(
+            model_id=str(resp_model_id),
+            input_value=body.edited_text,
+            session_id=user_msg.session_id,
+            files=None,
+            enable_reasoning=body.enable_reasoning,
+        )
+        new_response_text = result.get("response_text", "")
+        new_reasoning = result.get("reasoning_content")
+        new_model_name = result.get("model_name", "")
+
+        # 5. Update the agent message in-place (if one exists) or create a new one
+        if agent_msg is not None:
+            agent_msg.text = new_response_text
+            if hasattr(agent_msg, "reasoning_content"):
+                agent_msg.reasoning_content = new_reasoning
+            session.add(agent_msg)
+        else:
+            # Edge case: user edited a message that had no response yet.
+            # Create a new agent message right after the user message.
+            agent_msg = OrchConversationTable(
+                id=uuid4(),
+                sender="agent",
+                sender_name=await _get_model_display_name(session, resp_model_id),
+                session_id=user_msg.session_id,
+                text=new_response_text,
+                user_id=user_msg.user_id,
+                model_id=resp_model_id,
+                reasoning_content=new_reasoning,
+                timestamp=datetime.now(timezone.utc).replace(tzinfo=None),
+                files=[],
+                properties={},
+                category="message",
+                content_blocks=[],
+            )
+            await orch_add_message(agent_msg, session)
+
+        await session.commit()
+        await session.refresh(user_msg)
+        await session.refresh(agent_msg)
+
+        logger.info(f"[ORCH] Edited message {message_id} in session {user_msg.session_id}")
+
+        # 6. Return both updated rows
+        return EditMessageResponse(
+            user_message=OrchMessageResponse(
+                id=user_msg.id,
+                timestamp=user_msg.timestamp.isoformat() if user_msg.timestamp else "",
+                sender=user_msg.sender,
+                sender_name=user_msg.sender_name,
+                session_id=user_msg.session_id,
+                text=user_msg.text,
+                agent_id=user_msg.agent_id,
+                deployment_id=user_msg.deployment_id,
+                model_id=getattr(user_msg, "model_id", None),
+                reasoning_content=getattr(user_msg, "reasoning_content", None),
+                category=user_msg.category or "message",
+                files=user_msg.files if user_msg.files else None,
+                properties=user_msg.properties if isinstance(user_msg.properties, dict) else None,
+                content_blocks=user_msg.content_blocks if user_msg.content_blocks else None,
+            ),
+            agent_message=OrchMessageResponse(
+                id=agent_msg.id,
+                timestamp=agent_msg.timestamp.isoformat() if agent_msg.timestamp else "",
+                sender=agent_msg.sender,
+                sender_name=agent_msg.sender_name,
+                session_id=agent_msg.session_id,
+                text=agent_msg.text,
+                agent_id=agent_msg.agent_id,
+                deployment_id=agent_msg.deployment_id,
+                model_id=getattr(agent_msg, "model_id", None),
+                model_name=new_model_name,
+                reasoning_content=getattr(agent_msg, "reasoning_content", None),
+                category=agent_msg.category or "message",
+                files=agent_msg.files if agent_msg.files else None,
+                properties=agent_msg.properties if isinstance(agent_msg.properties, dict) else None,
+                content_blocks=agent_msg.content_blocks if agent_msg.content_blocks else None,
+            ),
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error editing message {message_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.get("/sessions/{session_id}/shared-messages", status_code=200)

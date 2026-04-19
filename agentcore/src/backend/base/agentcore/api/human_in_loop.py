@@ -184,37 +184,82 @@ async def list_pending_hitl(
         status: "pending" (default) — only PENDING requests
                 "all"              — all requests regardless of status
 
-    Returns only requests explicitly assigned to or created by the current user.
-    No user (including superusers) sees all requests by default — they must be
-    assigned or delegated to see deployed-run HIL requests.
+    Returns deployed-run HIL requests where the current user is *either* the
+    assigned approver *or* the creator:
+
+      - Assignee (dept admin) can act (approve/reject/delegate).
+      - Creator (developer who ran the flow from orch chat) sees the request
+        as read-only so they know which requests are pending and who is
+        blocking — but cannot act. ``_check_hitl_authorization`` enforces
+        this server-side.
+
+    Playground runs are excluded — developers approve those inline in the
+    orchestrator chat and they should never appear in this queue.
     """
     stmt = select(HITLRequest).order_by(col(HITLRequest.requested_at).desc())
 
     if status_filter != "all":
         stmt = stmt.where(HITLRequest.status == HITLStatus.PENDING)
 
-    from sqlalchemy import and_, or_
+    from sqlalchemy import or_
     stmt = stmt.where(
+        HITLRequest.is_deployed_run == True,  # noqa: E712
         or_(
-            # Published/deployed runs: only the assigned approver sees them
-            and_(
-                HITLRequest.is_deployed_run == True,  # noqa: E712
-                HITLRequest.assigned_to == current_user.id,
-            ),
-            # Playground runs: creator sees their own (current behavior)
-            and_(
-                HITLRequest.is_deployed_run == False,  # noqa: E712
-                or_(
-                    HITLRequest.user_id == current_user.id,
-                    HITLRequest.user_id.is_(None),
-                ),
-            ),
-        )
+            HITLRequest.assigned_to == current_user.id,
+            HITLRequest.user_id == current_user.id,
+        ),
     )
 
     result = await session.exec(stmt)
     rows = result.all()
     return await _enrich_with_agent_names(rows, session)
+
+
+@router.get("/thread-status")
+async def get_hitl_thread_statuses(
+    current_user: CurrentActiveUser,
+    session: DbSession,
+    thread_ids: str = Query(..., description="Comma-separated thread IDs"),
+) -> list[dict[str, Any]]:
+    """Return status info for HITL records by thread_id.
+
+    Used by the orchestrator chat so the *creator* of a paused deployed run
+    (who is usually not the assignee) can still see the resolution flip from
+    pending → approved/rejected once the dept admin decides. The HITL
+    Approvals list endpoint filters by assignee, so it cannot serve this
+    purpose for the creator.
+
+    Only returns records where the current user is the creator (``user_id``)
+    or the assignee (``assigned_to``). Other threads are silently omitted.
+    Returns a minimal payload — no interrupt data, no checkpoint.
+    """
+    ids = [t.strip() for t in thread_ids.split(",") if t.strip()]
+    if not ids:
+        return []
+
+    from sqlalchemy import or_ as _or
+
+    stmt = (
+        select(HITLRequest)
+        .where(col(HITLRequest.thread_id).in_(ids))
+        .where(
+            _or(
+                HITLRequest.user_id == current_user.id,
+                HITLRequest.assigned_to == current_user.id,
+            )
+        )
+        .order_by(col(HITLRequest.requested_at).asc())
+    )
+    rows = (await session.exec(stmt)).all()
+    return [
+        {
+            "thread_id": r.thread_id,
+            "status": r.status.value if hasattr(r.status, "value") else str(r.status),
+            "requested_at": r.requested_at.isoformat() if r.requested_at else None,
+            "decided_at": r.decided_at.isoformat() if r.decided_at else None,
+        }
+        for r in rows
+    ]
 
 
 @router.get("/{thread_id}/state", response_model=HITLRequestRead)

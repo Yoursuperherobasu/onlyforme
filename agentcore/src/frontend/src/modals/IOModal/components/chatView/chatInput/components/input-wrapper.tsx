@@ -31,6 +31,7 @@ interface InputWrapperProps {
   setShowAudioInput: (value: boolean) => void;
   currentAgentId: string;
   playgroundPage: boolean;
+  hasPendingHitl?: boolean;
 }
 
 const InputWrapper: React.FC<InputWrapperProps> = ({
@@ -49,6 +50,7 @@ const InputWrapper: React.FC<InputWrapperProps> = ({
   setShowAudioInput,
   currentAgentId,
   playgroundPage,
+  hasPendingHitl,
 }) => {
   const classNameFilePreview = `flex w-full items-center gap-2 py-2 overflow-auto`;
 
@@ -95,6 +97,7 @@ const InputWrapper: React.FC<InputWrapperProps> = ({
           inputRef={inputRef}
           files={files}
           isDragging={isDragging}
+          hasPendingHitl={hasPendingHitl}
         />
 
         <div className={classNameFilePreview}>
@@ -115,7 +118,7 @@ const InputWrapper: React.FC<InputWrapperProps> = ({
             {(!playgroundPage ||
               (playgroundPage && ENABLE_IMAGE_ON_PLAYGROUND)) && (
               <UploadFileButton
-                isBuilding={isBuilding}
+                isBuilding={isBuilding || !!hasPendingHitl}
                 fileInputRef={fileInputRef}
                 handleFileChange={handleFileChange}
                 handleButtonClick={handleButtonClick}
@@ -133,6 +136,7 @@ const InputWrapper: React.FC<InputWrapperProps> = ({
                 noInput={noInput}
                 chatValue={chatValue}
                 files={files}
+                hasPendingHitl={hasPendingHitl}
               />
             </div>
           </div>

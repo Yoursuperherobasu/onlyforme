@@ -9,6 +9,7 @@ export const CustomChatInput = ({
   setFiles,
   isDragging,
   playgroundPage,
+  hasPendingHitl,
 }: ChatInputType) => {
   return (
     <ChatInput
@@ -19,6 +20,7 @@ export const CustomChatInput = ({
       setFiles={setFiles}
       isDragging={isDragging}
       playgroundPage={playgroundPage}
+      hasPendingHitl={hasPendingHitl}
     />
   );
 };
