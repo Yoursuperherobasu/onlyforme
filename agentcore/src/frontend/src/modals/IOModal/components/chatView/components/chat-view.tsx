@@ -153,6 +153,25 @@ export default function ChatView({
     return { ...derived, ...manualHitlMap };
   }, [chatHistory, manualHitlMap]);
 
+  // Block the composer while an HITL message is awaiting an approve/reject.
+  // Why: new user input before the decision resumes desyncs the UI/agent state.
+  // Detects HITL via properties.hitl OR text pattern (some rows miss the flag),
+  // and treats any unresolved HITL (no entry in hitlDoneMap) as pending.
+  const hasPendingHitl = useMemo(() => {
+    if (!chatHistory) return false;
+    return chatHistory.some((msg) => {
+      if (msg.isSend) return false;
+      const flagged = (msg.properties as any)?.hitl === true;
+      const text = String(msg.message ?? "").toLowerCase();
+      const inferred =
+        text.includes("waiting for human review") &&
+        text.includes("available actions");
+      if (!flagged && !inferred) return false;
+      const id = msg.id ? String(msg.id) : "";
+      return !id || !hitlDoneMap[id];
+    });
+  }, [chatHistory, hitlDoneMap]);
+
   const ref = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -272,6 +291,7 @@ export default function ChatView({
             playgroundPage={!!playgroundPage}
             noInput={!inputTypes.includes("ChatInput")}
             sendMessage={async ({ repeat, files }) => {
+              if (hasPendingHitl) return;
               await sendMessage({ repeat, files });
               track("Playground Message Sent");
             }}
@@ -279,6 +299,7 @@ export default function ChatView({
             files={files}
             setFiles={setFiles}
             isDragging={isDragging}
+            hasPendingHitl={hasPendingHitl}
           />
         </div>
       </div>

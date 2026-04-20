@@ -560,6 +560,7 @@ export type ChatInputType = {
     files?: string[];
   }) => Promise<void>;
   playgroundPage: boolean;
+  hasPendingHitl?: boolean;
 };
 
 export type editNodeToggleType = {

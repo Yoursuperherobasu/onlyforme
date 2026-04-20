@@ -13,6 +13,35 @@ if TYPE_CHECKING:
     from agentcore.graph_langgraph.vertex_wrapper import LangGraphVertex
 
 
+def _clear_component_output_cache(vertex: Any) -> None:
+    """Clear the per-Output cached values on the underlying component instance.
+
+    Components cache each Output method's result in ``_outputs_map[name].value``. On a
+    cycle re-entry we reset ``vertex.built``, but unless we also blank these cached
+    values ``_get_output_result()`` short-circuits and the output methods never re-run.
+    """
+    try:
+        component = getattr(vertex, "custom_component", None)
+        if component is None:
+            return
+        # Prefer the component's own helper if present; otherwise clear manually.
+        reset_fn = getattr(component, "_reset_all_output_values", None)
+        if callable(reset_fn):
+            reset_fn()
+            return
+        outputs_map = getattr(component, "_outputs_map", None)
+        if not isinstance(outputs_map, dict):
+            return
+        from agentcore.template.field.base import UNDEFINED
+        for output in outputs_map.values():
+            try:
+                output.value = UNDEFINED
+            except Exception:
+                pass
+    except Exception:
+        logger.opt(exception=True).debug(f"Failed to clear output cache on {getattr(vertex, 'id', '?')}")
+
+
 def create_node_function(vertex: LangGraphVertex, *, is_cycle_router: bool = False):
     """Convert an AgentCore Vertex to a LangGraph node function.
 
@@ -66,6 +95,10 @@ def create_node_function(vertex: LangGraphVertex, *, is_cycle_router: bool = Fal
             vertex.built = False
             vertex.built_object = None
             vertex.built_result = None
+            # Component caches per-Output values in _outputs_map[name].value; without
+            # clearing them, _get_output_result() short-circuits and the output methods
+            # (item_output / done_output) never re-run, so the loop spins forever.
+            _clear_component_output_cache(vertex)
 
         # ------------------------------------------------------------------
         # 1. ROUTING GUARD — skip vertices marked INACTIVE by upstream routers.
@@ -92,17 +125,42 @@ def create_node_function(vertex: LangGraphVertex, *, is_cycle_router: bool = Fal
         #     function (add_conditional_edges) instead.
         # ------------------------------------------------------------------
         cycle_verts = state.get("cycle_vertices", [])
-        if vertex.id not in cycle_verts:
-            predecessors = state.get("predecessor_map", {}).get(vertex.id, [])
-            if predecessors:
-                vertices_results = state.get("vertices_results", {})
-                missing = [p for p in predecessors if p not in vertices_results]
-                if missing:
-                    logger.debug(
-                        f"Vertex {vertex.id} ({vertex.display_name}) waiting for "
-                        f"predecessors: {missing} — skipping this invocation"
-                    )
-                    return {}
+        predecessors = state.get("predecessor_map", {}).get(vertex.id, [])
+        if predecessors:
+            vertices_results = state.get("vertices_results", {})
+
+            # Choose which predecessors to wait for:
+            # - Routing cycle vertex (Loop / SmartRouter): skip predecessors that are also
+            #   cycle vertices — those are back-edges that won't have fired on iter 1 and
+            #   would deadlock the cycle. Still wait for external predecessors (e.g.
+            #   Knowledge Base feeding Loop.data).
+            # - Cycle body vertex (Parser, Prompt Template, Agent inside the loop body):
+            #   wait for ALL forward predecessors so they run in dependency order. Without
+            #   this, a body vertex can fire prematurely on the first scheduling round and
+            #   receive a literal vertex-ID string in place of its upstream's real result.
+            # - Non-cycle vertex: wait for all predecessors as usual.
+            if vertex.id in cycle_verts and is_cycle_router:
+                relevant_preds = [p for p in predecessors if p not in cycle_verts]
+            else:
+                relevant_preds = predecessors
+
+            missing = [p for p in relevant_preds if p not in vertices_results]
+            if missing:
+                logger.debug(
+                    f"Vertex {vertex.id} ({vertex.display_name}) waiting for "
+                    f"predecessors: {missing} — skipping this invocation"
+                )
+                return {}
+
+        # Cycle body re-execution: non-routing cycle vertices (e.g. Parser inside a Loop)
+        # keep their built state across LangGraph invocations, so they would skip the
+        # rebuild and feed the same first-iteration result back to the routing vertex
+        # forever. Reset here so each cycle iteration runs the body with fresh inputs.
+        if vertex.id in cycle_verts and not is_cycle_router:
+            vertex.built = False
+            vertex.built_object = None
+            vertex.built_result = None
+            _clear_component_output_cache(vertex)
 
         logger.debug(f"Executing node for vertex: {vertex.id} ({vertex.display_name})")
         start_time = time.time()
@@ -174,6 +232,32 @@ def create_node_function(vertex: LangGraphVertex, *, is_cycle_router: bool = Fal
                 # ----------------------------------------------------------
                 # 4. DEPENDENCY RESOLUTION from state
                 # ----------------------------------------------------------
+                # CYCLE BODY FIX: For cycle body vertices (Parser/Prompt/Agent inside a
+                # Loop), update_raw_params with overwrite=True replaces the upstream
+                # vertex_id string (e.g. "Loop-u2xzV") with the resolved Data object on
+                # iter 1. On subsequent iterations _resolve_vertex_dependencies sees the
+                # value is no longer a string and skips resolution → vertex keeps using
+                # the iter-1 data forever, producing identical output each cycle.
+                # Snapshot the original raw_params on first encounter and restore them
+                # before each cycle iteration so resolution always re-reads from state.
+                if vertex.id in cycle_verts:
+                    snapshot_attr = "_cycle_raw_params_snapshot"
+                    snapshot = getattr(vertex, snapshot_attr, None)
+                    if snapshot is None:
+                        # First time: save the originals.
+                        try:
+                            import copy as _copy
+                            setattr(vertex, snapshot_attr, _copy.copy(vertex.raw_params))
+                        except Exception:
+                            pass
+                    else:
+                        # Restore the originals so we re-resolve from state each iter.
+                        try:
+                            for _k, _v in snapshot.items():
+                                vertex.raw_params[_k] = _v
+                        except Exception:
+                            pass
+
                 resolved_params = _resolve_vertex_dependencies(vertex, state)
                 if resolved_params:
                     vertex.update_raw_params(resolved_params, overwrite=True)
@@ -947,6 +1031,9 @@ def _resolve_vertex_dependencies(vertex: LangGraphVertex, state: AgentCoreState)
     """
     resolved_params = {}
 
+    predecessor_map = state.get("predecessor_map", {}) or {}
+    predecessors = set(predecessor_map.get(vertex.id, []))
+
     for key, value in vertex.raw_params.items():
         # Case 1: Value is a vertex ID (string matching pattern)
         if isinstance(value, str) and value in state["vertices_results"]:
@@ -955,6 +1042,29 @@ def _resolve_vertex_dependencies(vertex: LangGraphVertex, state: AgentCoreState)
                 source_output = _get_source_output_name(vertex, value, key)
                 result = _extract_from_result(result, source_output)
             resolved_params[key] = result
+
+        # Case 1b: Value is a predecessor vertex ID whose result is NOT yet in state.
+        # Happens for cycle-internal vertices when LangGraph schedules siblings in the
+        # same routing step with a stale state snapshot. Fall back to the upstream
+        # vertex's own cached built_result so we never pass the literal ID string through.
+        # (state["vertices_results"] stores built_result, not result — see line ~263.)
+        elif isinstance(value, str) and value in predecessors:
+            upstream = vertex.graph.get_vertex(value) if hasattr(vertex.graph, "get_vertex") else None
+            upstream_built = getattr(upstream, "built_result", None) if upstream is not None else None
+            if upstream_built is not None:
+                if isinstance(upstream_built, dict):
+                    source_output = _get_source_output_name(vertex, value, key)
+                    upstream_built = _extract_from_result(upstream_built, source_output)
+                resolved_params[key] = upstream_built
+                logger.debug(
+                    f"[_resolve_vertex_dependencies] Fallback resolved {vertex.id}.{key} "
+                    f"from upstream {value}.built_result (type={type(upstream_built).__name__})"
+                )
+            else:
+                logger.warning(
+                    f"[_resolve_vertex_dependencies] Predecessor {value} has no built_result yet "
+                    f"when resolving {vertex.id}.{key} — value will pass through as string"
+                )
 
         # Case 2: Value is a list that might contain vertex IDs
         elif isinstance(value, list):

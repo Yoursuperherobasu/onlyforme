@@ -57,6 +57,12 @@ class Parser(Node):
             info="Formatted text output.",
             method="parse_combined_text",
         ),
+        Output(
+            display_name="Parsed Data",
+            name="parsed_data",
+            info="Same parsed text wrapped as a Data object. Use this to feed the Loop component's loop-back (∞) handle.",
+            method="parse_combined_data",
+        ),
     ]
 
     def update_build_config(self, build_config, field_value, field_name=None):
@@ -137,6 +143,11 @@ class Parser(Node):
         combined_text = self.sep.join(lines)
         self.status = combined_text
         return Message(text=combined_text)
+
+    def parse_combined_data(self) -> Data:
+        """Same as parse_combined_text but returns a Data object so the result can be wired into Loop's ∞ handle."""
+        message = self.parse_combined_text()
+        return Data(data={"text": message.text})
 
     def convert_to_string(self) -> Message:
         """Convert input data to string with proper error handling."""

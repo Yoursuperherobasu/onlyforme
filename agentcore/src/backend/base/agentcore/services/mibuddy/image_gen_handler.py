@@ -70,14 +70,21 @@ async def _save_generated_image(
 ) -> str:
     """Save a generated image to storage and create a File DB record.
 
-    Returns the local serving URL: /files/images/{user_id}/{filename}
+    Returns a URL the frontend can render:
+    - If the Azure Blob container has public access → returns the RAW BLOB URL
+      (MiBuddy-style, shareable without auth)
+    - Otherwise → returns the authenticated proxy URL: /api/files/images/...
     """
     from datetime import datetime, timezone
     from uuid import uuid4
 
     from agentcore.services.deps import session_scope
     from agentcore.services.database.models.file.model import File as UserFile
-    from agentcore.services.mibuddy.docqa_storage import save_file as mibuddy_save, FileCategory
+    from agentcore.services.mibuddy.docqa_storage import (
+        save_file as mibuddy_save,
+        FileCategory,
+        get_public_blob_url,
+    )
 
     # Generate filename
     ts = datetime.now(tz=timezone.utc).strftime("%Y-%m-%d_%H-%M-%S")
@@ -88,7 +95,6 @@ async def _save_generated_image(
     file_size = len(image_bytes)
 
     # Create DB record so it appears in My Images gallery
-    # Name must be unique (DB constraint) — use filename which already has timestamp + random hex
     display_name = file_name
     try:
         async with session_scope() as db:
@@ -105,8 +111,12 @@ async def _save_generated_image(
     except Exception as e:
         logger.warning(f"[ImageGen] Failed to save image to DB: {e}")
 
-    # URL must be /api/files/images/{user_id}/{filename} (two segments only)
-    # The serving endpoint fallback searches generated-images/ folder automatically
+    # Prefer the raw Azure Blob URL (MiBuddy-style) — shareable without auth
+    # when the container is configured for public blob access. Falls back to
+    # the authenticated proxy URL if blob storage isn't set up.
+    public_url = await get_public_blob_url(file_path)
+    if public_url:
+        return public_url
     return f"/api/files/images/{user_id}/{file_name}"
 
 

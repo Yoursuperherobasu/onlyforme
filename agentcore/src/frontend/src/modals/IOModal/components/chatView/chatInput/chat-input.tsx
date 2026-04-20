@@ -33,6 +33,7 @@ export default function ChatInput({
   setFiles,
   isDragging,
   playgroundPage,
+  hasPendingHitl,
 }: ChatInputType): JSX.Element {
   const currentAgentId = useAgentsManagerStore((state) => state.currentAgentId);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -168,6 +169,7 @@ export default function ChatInput({
   const setChatValueStore = useUtilityStore((state) => state.setChatValueStore);
 
   const send = async () => {
+    if (hasPendingHitl) return;
     const storedChatValue = chatValue;
     const filesToSend = files
       .map((file) => file.path ?? "")
@@ -193,6 +195,7 @@ export default function ChatInput({
     return (
       event.key === "Enter" &&
       !isBuilding &&
+      !hasPendingHitl &&
       !event.shiftKey &&
       !event.nativeEvent.isComposing
     );
@@ -256,6 +259,7 @@ export default function ChatInput({
             setShowAudioInput={setShowAudioInput}
             currentAgentId={currentAgentId}
             playgroundPage={playgroundPage}
+            hasPendingHitl={!!hasPendingHitl}
           />
         </motion.div>
       )}

@@ -19,6 +19,7 @@ type ButtonSendWrapperProps = {
   noInput: boolean;
   chatValue: string;
   files: FilePreviewType[];
+  hasPendingHitl?: boolean;
 };
 
 const ButtonSendWrapper = ({
@@ -26,6 +27,7 @@ const ButtonSendWrapper = ({
   noInput,
   chatValue,
   files,
+  hasPendingHitl,
 }: ButtonSendWrapperProps) => {
   const stopBuilding = useAgentStore((state) => state.stopBuilding);
 
@@ -46,6 +48,7 @@ const ButtonSendWrapper = ({
 
   const handleClick = (e: React.MouseEvent<HTMLButtonElement>) => {
     e.stopPropagation();
+    if (hasPendingHitl) return;
     if (showStopButton && isBuilding) {
       stopBuilding();
     } else if (!showStopButton) {
@@ -55,9 +58,13 @@ const ButtonSendWrapper = ({
 
   return (
     <Button
-      className={buttonClasses}
+      className={classNames(
+        buttonClasses,
+        hasPendingHitl ? "cursor-not-allowed opacity-50" : "",
+      )}
       onClick={handleClick}
       unstyled
+      disabled={hasPendingHitl}
       data-testid={showStopButton ? "button-stop" : "button-send"}
     >
       <Case condition={showStopButton}>

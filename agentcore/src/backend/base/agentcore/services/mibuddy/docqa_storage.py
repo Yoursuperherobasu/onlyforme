@@ -90,6 +90,28 @@ def _build_blob_path(user_id: str, category: FileCategory, file_name: str) -> st
     return f"{user_id}/{category.value}/{file_name}"
 
 
+async def get_public_blob_url(blob_path: str) -> str | None:
+    """Return the raw Azure Blob Storage URL for a given path.
+
+    Matches MiBuddy's behavior — returns the direct public-access URL,
+    suitable for sharing outside the app. Requires the blob container to
+    have "Blob" public access level configured in Azure Portal.
+
+    Format: https://<account>.blob.core.windows.net/<container>/<blob_path>
+
+    Returns None if blob storage isn't configured.
+    """
+    container = await _get_container()
+    if container is None:
+        return None
+    try:
+        blob_client = container.get_blob_client(blob_path)
+        return blob_client.url
+    except Exception as e:
+        logger.debug(f"[MiBuddy] Failed to build public blob URL: {e}")
+        return None
+
+
 # ---------------------------------------------------------------------------
 # Save
 # ---------------------------------------------------------------------------

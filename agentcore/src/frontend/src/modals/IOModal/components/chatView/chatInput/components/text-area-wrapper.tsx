@@ -14,6 +14,7 @@ const TextAreaWrapper = ({
   inputRef,
   files,
   isDragging,
+  hasPendingHitl,
 }) => {
   const getPlaceholderText = (
     isDragging: boolean,
@@ -23,6 +24,8 @@ const TextAreaWrapper = ({
       return "Drop here";
     } else if (noInput) {
       return CHAT_INPUT_PLACEHOLDER;
+    } else if (hasPendingHitl) {
+      return "Waiting for human review — approve or reject to continue";
     } else {
       return "Send a message...";
     }
@@ -52,7 +55,7 @@ const TextAreaWrapper = ({
       }}
       rows={1}
       ref={inputRef}
-      disabled={isBuilding || noInput}
+      disabled={isBuilding || noInput || hasPendingHitl}
       style={{
         resize: "none",
         bottom: `${inputRef?.current?.scrollHeight}px`,

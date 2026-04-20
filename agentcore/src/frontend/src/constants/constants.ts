@@ -923,7 +923,18 @@ export const MAX_BATCH_SIZE = 50;
 export const MODAL_CLASSES =
   "nopan nodelete nodrag  noflow fixed inset-0 bottom-0 left-0 right-0 top-0 z-50 overflow-auto bg-black/50 backdrop-blur-sm data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0";
 
-export const ALLOWED_IMAGE_INPUT_EXTENSIONS = ["png", "jpg", "jpeg"];
+// Playground file upload: allow images + documents (parity with OrchestratorChat).
+// Previously restricted to images only — agents can now accept docs for RAG /
+// summarization / analysis.
+export const ALLOWED_IMAGE_INPUT_EXTENSIONS = [
+  // Images
+  "png", "jpg", "jpeg", "gif", "webp", "bmp", "svg",
+  // Documents
+  "pdf", "docx", "xlsx", "pptx", "txt", "md", "csv",
+  // Code / markup
+  "json", "html", "css", "php", "rb", "sh", "tex", "py", "js", "ts", "tsx", "jsx",
+  "yml", "yaml", "xml", "sql", "c", "cpp", "h", "hpp", "java", "go", "rs",
+];
 
 export const componentsToIgnoreUpdate = ["CustomComponent"];
 
