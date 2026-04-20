@@ -423,15 +423,17 @@ function ImageGalleryView({
 
   const handleDownload = async (src: string, name: string) => {
     try {
-      // Authenticated endpoints (/api/orchestrator/images/...) require JWT header.
-      // Plain fetch(src) fails silently → falls back to window.open which just
-      // opens/expands the image instead of downloading it.
+      // MiBuddy-style: public blob URLs (https://...blob.core.windows.net/...) need
+      // no auth. Our proxied /api/... URLs need JWT. Auto-detect which applies.
+      const isPublicBlob = /\.blob\.core\.windows\.net\//i.test(src);
       const headers: Record<string, string> = {};
-      const tokenMatch = document.cookie.match(/(?:^|;\s*)access_token_lf=([^;]*)/);
-      if (tokenMatch?.[1]) {
-        headers["Authorization"] = `Bearer ${decodeURIComponent(tokenMatch[1])}`;
+      if (!isPublicBlob) {
+        const tokenMatch = document.cookie.match(/(?:^|;\s*)access_token_lf=([^;]*)/);
+        if (tokenMatch?.[1]) {
+          headers["Authorization"] = `Bearer ${decodeURIComponent(tokenMatch[1])}`;
+        }
       }
-      const res = await fetch(src, { headers, credentials: "include" });
+      const res = await fetch(src, isPublicBlob ? {} : { headers, credentials: "include" });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
@@ -467,12 +469,16 @@ function ImageGalleryView({
     try {
       // Try sharing the actual image file (better UX — shared as a file attachment
       // instead of just a link). Works on mobile & modern desktop browsers.
+      // Public blob URLs don't need auth; our /api/... proxied URLs do.
+      const isPublicBlob = /\.blob\.core\.windows\.net\//i.test(src);
       const headers: Record<string, string> = {};
-      const tokenMatch = document.cookie.match(/(?:^|;\s*)access_token_lf=([^;]*)/);
-      if (tokenMatch?.[1]) {
-        headers["Authorization"] = `Bearer ${decodeURIComponent(tokenMatch[1])}`;
+      if (!isPublicBlob) {
+        const tokenMatch = document.cookie.match(/(?:^|;\s*)access_token_lf=([^;]*)/);
+        if (tokenMatch?.[1]) {
+          headers["Authorization"] = `Bearer ${decodeURIComponent(tokenMatch[1])}`;
+        }
       }
-      const res = await fetch(src, { headers, credentials: "include" });
+      const res = await fetch(src, isPublicBlob ? {} : { headers, credentials: "include" });
       if (res.ok) {
         const blob = await res.blob();
         const file = new File([blob], name || `image-${Date.now()}.png`, {
