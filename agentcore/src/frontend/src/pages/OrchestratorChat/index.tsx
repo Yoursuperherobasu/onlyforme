@@ -1,6 +1,6 @@
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
-import { Send, Sparkles, ChevronDown, Plus, MessageSquare, PanelLeftClose, PanelLeft, User, Loader2, Trash2, Check, ImagePlus, X, Clock, Search, Image, Archive, ChevronRight, Globe, BookOpen, Headphones, Info, HelpCircle, Mic, AudioLines, FileUp, Paintbrush, Lightbulb, Upload, MoreVertical, Folder, ArrowLeft, File, FileText, Shield, CheckCircle2, SquarePen, Mail, Download, Copy, Pencil, Share2 } from "lucide-react";
+import { Send, Sparkles, ChevronDown, Plus, MessageSquare, PanelLeftClose, PanelLeft, User, Loader2, Trash2, Check, ImagePlus, X, Clock, Search, Image, Archive, ChevronRight, Globe, BookOpen, Headphones, Info, HelpCircle, Mic, AudioLines, FileUp, Paintbrush, Lightbulb, Upload, MoreVertical, Folder, ArrowLeft, File as FileIcon, FileText, Shield, CheckCircle2, SquarePen, Mail, Download, Copy, Pencil, Share2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import {
   useGetOrchAgents,
@@ -3479,7 +3479,7 @@ export default function AgentOrchestrator() {
                                     onClick={() => { handleExportText(msg.content); setExportMenuOpenId(null); }}
                                     className="flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-left text-sm text-foreground hover:bg-accent"
                                   >
-                                    <File size={14} className="text-muted-foreground" />
+                                    <FileIcon size={14} className="text-muted-foreground" />
                                     <span>{t("Text")}</span>
                                   </button>
                                 </div>
@@ -4038,7 +4038,7 @@ export default function AgentOrchestrator() {
                   {item.type === "folder" ? (
                     <Folder size={20} className="shrink-0 text-blue-500" />
                   ) : (
-                    <File size={20} className="shrink-0 text-muted-foreground" />
+                    <FileIcon size={20} className="shrink-0 text-muted-foreground" />
                   )}
                   <div className="min-w-0 flex-1">
                     <div className="truncate font-medium">{item.name}</div>
