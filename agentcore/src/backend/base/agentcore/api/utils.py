@@ -158,13 +158,19 @@ async def _get_agent_name(agent_id: uuid.UUID) -> str:
 
 
 def _apply_session_to_graph(graph: LangGraphAdapter, kwargs: dict) -> None:
-    """Apply session_id to a cached graph's vertices."""
+    """Apply session_id (and refresh user identity) on a cached graph."""
     session_id = kwargs.get("session_id") or str(graph.agent_id)
     for vid in graph.has_session_id_vertices:
         vertex = graph.get_vertex(vid)
         if vertex:
             vertex.update_raw_params({"session_id": session_id}, overwrite=True)
     graph.session_id = session_id
+    # Refresh user identity so the cached adapter does not pin the first
+    # caller's user_id / user_name onto every subsequent run's traces.
+    if kwargs.get("user_id") is not None:
+        graph.user_id = kwargs.get("user_id")
+    if kwargs.get("user_name") is not None:
+        graph.user_name = kwargs.get("user_name")
 
 
 async def build_graph_from_data(agent_id: uuid.UUID | str, payload: dict, **kwargs):
@@ -225,6 +231,7 @@ async def build_graph_from_data(agent_id: uuid.UUID | str, payload: dict, **kwar
         kwargs.get("user_id"),
         project_id=project_id,
         project_name=project_name,
+        user_name=kwargs.get("user_name"),
     )
 
     for vertex_id in graph.has_session_id_vertices:

@@ -555,12 +555,18 @@ async def generate_agent_events(
         else:
             effective_session_id = agent_id_str
 
+        # Strip email domain so the Langfuse Users tab shows e.g. "ather.irfan"
+        # instead of "ather.irfan@motherson.com". UUID is still kept in trace metadata.
+        _raw_user_label = current_user.username or current_user.display_name or current_user.email or ""
+        user_display = _raw_user_label.split("@", 1)[0] or None
+
         if not data:
             return await build_graph_from_db(
                 agent_id=agent_id,
                 session=fresh_session,
                 chat_service=chat_service,
                 user_id=str(current_user.id),
+                user_name=user_display,
                 session_id=effective_session_id,
             )
 
@@ -573,6 +579,7 @@ async def generate_agent_events(
             agent_id=agent_id_str,
             payload=data.model_dump(),
             user_id=str(current_user.id),
+            user_name=user_display,
             agent_name=agent_name,
             session_id=effective_session_id,
             chat_service=chat_service,

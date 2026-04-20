@@ -45,6 +45,7 @@ class LangGraphAdapter:
         user_id: str | None = None,
         project_id: str | None = None,
         project_name: str | None = None,
+        user_name: str | None = None,
     ) -> None:
         """Initialize the LangGraph adapter.
 
@@ -58,6 +59,7 @@ class LangGraphAdapter:
         self.agent_id = str(agent_id) if agent_id else None
         self.agent_name = agent_name
         self.user_id = user_id
+        self.user_name = user_name
         self.project_id = project_id
         self.project_name = project_name
         
@@ -200,6 +202,7 @@ class LangGraphAdapter:
         user_id: str | None = None,
         project_id: str | None = None,
         project_name: str | None = None,
+        user_name: str | None = None,
     ) -> LangGraphAdapter:
         """Create adapter from JSON payload.
 
@@ -227,6 +230,7 @@ class LangGraphAdapter:
                 user_id=user_id,
                 project_id=project_id,
                 project_name=project_name,
+                user_name=user_name,
             )
             adapter.add_nodes_and_edges(vertices_data, edges_data)
             
@@ -726,6 +730,7 @@ class LangGraphAdapter:
                 run_id=run_id,
                 run_name=run_name,
                 user_id=self.user_id,
+                user_name=self.user_name,
                 session_id=self._session_id,
                 agent_id=self.agent_id,
                 agent_name=self.agent_name,

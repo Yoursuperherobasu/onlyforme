@@ -1105,6 +1105,60 @@ async def _hard_delete_user_assets(
     await session.exec(delete(Project).where(Project.user_id == user_id))
 
 
+async def _ensure_langfuse_org_admin_binding(
+    session: DbSession,
+    *,
+    org: Organization,
+    actor: User,
+) -> None:
+    """Idempotently provision the Langfuse org + admin project for an AgentCore org.
+
+    Safe to call from any code path that creates or reuses an Organization
+    (add_user, patch_user, etc.). The underlying service short-circuits if a
+    binding already exists, so repeated calls are no-ops.
+    """
+    try:
+        provisioning_service = get_langfuse_provisioning_service()
+        if provisioning_service.enabled:
+            await provisioning_service.provision_org_admin_project(
+                session,
+                org=org,
+                actor=actor,
+            )
+    except LangfuseProvisioningError as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Langfuse provisioning failed; organization change rolled back: {exc}",
+        ) from exc
+
+
+async def _ensure_langfuse_department_binding(
+    session: DbSession,
+    *,
+    org: Organization,
+    department: Department,
+    actor: User,
+) -> None:
+    """Idempotently provision the Langfuse project for an AgentCore department.
+
+    Safe to call from any code path that creates or reuses a Department.
+    """
+    try:
+        provisioning_service = get_langfuse_provisioning_service()
+        if provisioning_service.enabled:
+            await provisioning_service.provision_department_project(
+                session,
+                org=org,
+                department=department,
+                actor=actor,
+            )
+    except LangfuseProvisioningError as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Langfuse provisioning failed; department change rolled back: {exc}",
+        ) from exc
+
+
 @router.post("/", response_model=UserRead, status_code=201)
 async def add_user(
     user: UserCreate,
@@ -1234,19 +1288,11 @@ async def add_user(
                 role_id=root_role.id,
                 actor_user_id=current_user.id,
             )
-            try:
-                provisioning_service = get_langfuse_provisioning_service()
-                if provisioning_service.enabled:
-                    await provisioning_service.provision_org_admin_project(
-                        session,
-                        org=org,
-                        actor=current_user,
-                    )
-            except LangfuseProvisioningError as exc:
-                raise HTTPException(
-                    status_code=500,
-                    detail=f"Langfuse provisioning failed; organization creation rolled back: {exc}",
-                ) from exc
+            await _ensure_langfuse_org_admin_binding(
+                session,
+                org=org,
+                actor=current_user,
+            )
 
         elif creator_role == "super_admin":
             org_id = await _resolve_creator_org(session, current_user, organization_name)
@@ -1302,20 +1348,12 @@ async def add_user(
                     role_id=role_entity.id,
                     actor_user_id=current_user.id,
                 )
-                try:
-                    provisioning_service = get_langfuse_provisioning_service()
-                    if provisioning_service.enabled:
-                        await provisioning_service.provision_department_project(
-                            session,
-                            org=org,
-                            department=department,
-                            actor=current_user,
-                        )
-                except LangfuseProvisioningError as exc:
-                    raise HTTPException(
-                        status_code=500,
-                        detail=f"Langfuse provisioning failed; department creation rolled back: {exc}",
-                    ) from exc
+                await _ensure_langfuse_department_binding(
+                    session,
+                    org=org,
+                    department=department,
+                    actor=current_user,
+                )
             else:
                 if target_role in ORG_SCOPED_NON_DEPARTMENT_ROLES:
                     new_user.department_admin_email = None
@@ -2269,6 +2307,16 @@ async def patch_user(
                         status_code=400,
                         detail="Organization name is required for super admin.",
                     )
+                # Back-fill any missing Langfuse binding for the existing org.
+                existing_org = await session.get(
+                    Organization, existing_super_admin_org.org_id
+                )
+                if existing_org:
+                    await _ensure_langfuse_org_admin_binding(
+                        session,
+                        org=existing_org,
+                        actor=user,
+                    )
             else:
                 organization = await _find_organization_by_normalized_name(
                     session,
@@ -2302,6 +2350,17 @@ async def patch_user(
                     org_id=organization.id,
                     role_id=root_role.id,
                     actor_user_id=user.id,
+                )
+
+                # Mirror the org/admin-project into Langfuse. Idempotent — if the
+                # org already has an active binding, the service short-circuits.
+                # Without this call, promoting a previously-registered user to
+                # super_admin via PATCH leaves Langfuse out of sync with the
+                # AgentCore org.
+                await _ensure_langfuse_org_admin_binding(
+                    session,
+                    org=organization,
+                    actor=user,
                 )
 
         if not update_password:

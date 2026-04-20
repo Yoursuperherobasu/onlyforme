@@ -195,12 +195,14 @@ class LangFuseTracer(BaseTracer):
         langfuse_public_key: str | None = None,
         langfuse_secret_key: str | None = None,
         environment: str | None = None,
+        user_name: str | None = None,
     ) -> None:
         self.trace_name = trace_name
         self.trace_type = trace_type
         self.project_name = project_name
         self.trace_id = trace_id
         self.user_id = user_id
+        self.user_name = user_name
         self.session_id = session_id
         self.agent_id = agent_id or trace_name
         self.agent_name = agent_name
@@ -264,11 +266,17 @@ class LangFuseTracer(BaseTracer):
             # observability layer can use it instead of Langfuse's potentially
             # timezone-inconsistent trace timestamp.
             from datetime import datetime as _dt, timezone as _tz
+            # The value sent to Langfuse as the trace's user_id. Prefer the
+            # human-readable username so the Langfuse Users tab is drill-downable;
+            # fall back to the UUID when no username was propagated.
+            langfuse_user_id = self.user_name or self.user_id
+
             trace_metadata = {
                 "agent_id": self.agent_id,
                 "agent_name": self.agent_name,
                 "run_id": str(self.trace_id),
-                "user_id": self.user_id,
+                "user_id": langfuse_user_id,
+                "user_uuid": self.user_id,
                 "session_id": self.session_id,
                 "trace_created_at_utc": _dt.now(_tz.utc).isoformat(),
             }
@@ -302,7 +310,7 @@ class LangFuseTracer(BaseTracer):
 
             # v3: Use propagate_attributes for user_id, session_id
             self._propagate_context = propagate_attributes(
-                user_id=self.user_id,
+                user_id=langfuse_user_id,
                 session_id=self.session_id,
             )
             self._propagate_context.__enter__()
@@ -320,7 +328,7 @@ class LangFuseTracer(BaseTracer):
             except Exception:
                 pass
 
-            logger.info(f"Langfuse v3 tracer ready: agent={self.agent_name}, user={self.user_id}, session={self.session_id}")
+            logger.info(f"Langfuse v3 tracer ready: agent={self.agent_name}, user={langfuse_user_id} (uuid={self.user_id}), session={self.session_id}")
 
         except ImportError:
             logger.warning("langfuse not installed - tracing disabled")
