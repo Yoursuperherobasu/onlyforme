@@ -713,6 +713,24 @@ export default function AgentOrchestrator() {
   // are not connected to anything.
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const TEXTAREA_MAX_HEIGHT = 124;
+
+  // Auto-grow textarea to fit content (MiBuddy-style), up to max height
+  const autoGrowTextarea = useCallback(() => {
+    const ta = textareaRef.current;
+    if (!ta) return;
+    ta.style.height = "auto";
+    const sh = ta.scrollHeight;
+    if (sh <= TEXTAREA_MAX_HEIGHT) {
+      ta.style.overflowY = "hidden";
+      ta.style.height = `${sh}px`;
+    } else {
+      ta.style.overflowY = "auto";
+      ta.style.height = `${TEXTAREA_MAX_HEIGHT}px`;
+    }
+  }, []);
+
+  useEffect(() => { autoGrowTextarea(); }, [input, autoGrowTextarea]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const modelPickerRef = useRef<HTMLDivElement>(null);
@@ -3880,7 +3898,7 @@ export default function AgentOrchestrator() {
               )}
 
               {/* Single-line input row: [+] [img] [textarea grows] [mic] [send] */}
-              <div className="flex items-center gap-1 px-3 py-2">
+              <div className="flex items-end gap-1 px-3 py-2">
                 {/* ---- Addon: Plus menu button ----
                     In AGENT mode: directly opens the file picker (simpler UX).
                     In MODEL (No Agent) mode: opens the full menu with Create image, Canvas, etc. */}
@@ -3964,7 +3982,8 @@ export default function AgentOrchestrator() {
                             : t("Start typing with @ to chat with an agent")
                   }
                   rows={1}
-                  className={`min-w-0 flex-1 resize-none border-none bg-transparent px-2 py-1.5 text-[15px] leading-6 text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-0 ${(isSending || !canInteract || isSharedReadOnly || hasPendingHitl) ? "cursor-not-allowed opacity-50" : ""}`}
+                  style={{ maxHeight: TEXTAREA_MAX_HEIGHT }}
+                  className={`min-w-0 flex-1 resize-none overflow-y-hidden border-none bg-transparent px-2 py-1.5 text-[15px] leading-6 text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-0 ${(isSending || !canInteract || isSharedReadOnly || hasPendingHitl) ? "cursor-not-allowed opacity-50" : ""}`}
                 />
 
                 <input
