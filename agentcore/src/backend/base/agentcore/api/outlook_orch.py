@@ -66,7 +66,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/outlook-orch", tags=["Outlook (Orchestrator)"])
 
-# ── OAuth state storage (in-process, like MiBuddy) ────────────────────
+# ── OAuth state storage (in-process, same as MiBuddy) ─────────────────
 _PKCE_STATE_TTL = 600  # seconds
 _pkce_states: Dict[str, Dict[str, Any]] = {}
 _pkce_lock = threading.Lock()
@@ -204,152 +204,99 @@ async def outlook_auth_callback(
     error: Optional[str] = None,
     error_description: Optional[str] = None,
 ) -> HTMLResponse:
-    """Complete PKCE flow and set the outlook_session cookie."""
-    def err(reason: str) -> HTMLResponse:
-        # Use .replace() rather than .format() — see comment on
-        # _AUTH_ERROR_HTML above.
+    """Completes Authorization Code + PKCE flow and sets cookie session.
+
+    Exact copy of MiBuddy's `/outlook/auth/callback` logic.
+    """
+    def error_response(reason: str) -> HTMLResponse:
         safe_reason = _html_escape(reason).replace("'", "\\'")
         return HTMLResponse(
             content=_AUTH_ERROR_HTML.replace("__OUTLOOK_ERR__", safe_reason),
         )
 
     if error:
-        logger.warning(f"Outlook OAuth error from MS: {error} - {error_description}")
-        return err(error)
+        logger.warning(f"Outlook OAuth error from Microsoft: {error} - {error_description}")
+        return error_response(error)
+
     if not code or not state:
-        logger.error("Outlook callback: missing code or state param")
-        return err("missing_code_or_state")
+        return error_response("missing_code_or_state")
 
     with _pkce_lock:
         state_data = _pkce_states.pop(state, None)
-        active_states = len(_pkce_states)
+
     if not state_data:
-        logger.error(f"Outlook callback: invalid_state — state key not found in memory. "
-                     f"Active PKCE states: {active_states}. This usually means the "
-                     f"login and callback hit different workers/pods.")
-        return err("invalid_state")
+        logger.warning("Outlook OAuth callback: state not found in _pkce_states (possible multi-instance issue or replay)")
+        return error_response("invalid_state")
+
     if time.time() - state_data.get("created_at", 0) > _PKCE_STATE_TTL:
-        logger.error("Outlook callback: state_expired — PKCE state too old")
-        return err("state_expired")
+        return error_response("state_expired")
 
     code_verifier = state_data["code_verifier"]
-    user_id = state_data.get("user_id", "")
+    user_id = state_data.get("user_id")
 
+    # Use the SAME deterministic redirect_uri that was used during /authorize
     redirect_uri = _build_redirect_uri(request)
-    logger.info(f"Outlook callback: redirect_uri={redirect_uri}, user_id={user_id}")
+    logger.info(f"Outlook OAuth callback: redirect_uri={redirect_uri}")
 
+    # Direct token exchange — exact MiBuddy pattern
     from agentcore.services.outlook_orch.outlook_service import _get_credentials
     tenant, client_id, client_secret = _get_credentials()
-    token_url = f"https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token"
 
-    # First try server-side exchange (works when URI is under Web platform).
-    # If it fails with SPA error, fall back to browser-side exchange.
-    token_resp = OutlookService.exchange_code_for_token(
-        auth_code=code, redirect_uri=redirect_uri, code_verifier=code_verifier,
-    )
-
-    if token_resp and token_resp.get("access_token"):
-        # ── Server-side exchange succeeded (Web platform) ──
-        access_token = token_resp["access_token"]
-        expires_in = int(token_resp.get("expires_in", 3600))
-
-        if not user_id:
-            user_info = OutlookService.validate_access_token(access_token)
-            if user_info:
-                user_id = user_info.get("id") or user_info.get("userPrincipalName")
-        if not user_id:
-            return err("cannot_identify_user")
-
-        outlook_token_manager.store_token(user_id, access_token, expires_in)
-
-        session_id = str(uuid4())
-        with _session_lock:
-            _outlook_cookie_sessions[session_id] = user_id
-
-        response = HTMLResponse(content=_AUTH_SUCCESS_HTML)
-        response.set_cookie(
-            key="outlook_session",
-            value=session_id,
-            httponly=True,
-            secure=_is_request_secure(request),
-            samesite="lax",
-            max_age=expires_in,
-            path="/",
-        )
-        return response
-
-    # ── Server-side exchange failed — fall back to browser-side ──
-    # Azure SPA redirect URIs require cross-origin (browser fetch) redemption.
-    logger.info("Outlook callback: server-side exchange failed, falling back to browser-side exchange")
-    exchange_html = (
-        '<!DOCTYPE html><html><head><title>Connecting...</title></head>'
-        '<body><p id="s">Connecting to Outlook...</p><script>'
-        '(async function(){'
-        'var s=document.getElementById("s");try{'
-        'var r=await fetch("' + token_url + '",{method:"POST",'
-        'headers:{"Content-Type":"application/x-www-form-urlencoded"},'
-        'body:new URLSearchParams({client_id:"' + client_id + '",'
-        'code:"' + code + '",'
-        'redirect_uri:"' + redirect_uri + '",'
-        'grant_type:"authorization_code",'
-        'code_verifier:"' + code_verifier + '",'
-        'scope:"User.Read Mail.Read Mail.Send Calendars.Read offline_access"'
-        '})});var d=await r.json();'
-        'if(!d.access_token)throw new Error(d.error_description||d.error||"No token");'
-        'var sr=await fetch("/api/outlook-orch/auth/store-token",{method:"POST",'
-        'headers:{"Content-Type":"application/json"},credentials:"include",'
-        'body:JSON.stringify({access_token:d.access_token,expires_in:d.expires_in||3600,'
-        'user_id:"' + user_id + '"})});'
-        'if(!sr.ok)throw new Error("Store failed");'
-        'try{if(window.opener)window.opener.postMessage({type:"OUTLOOK_AUTH_SUCCESS"},"*")}catch(e){}'
-        's.textContent="Connected. You may close this window.";window.close()'
-        '}catch(e){s.textContent="Failed: "+e.message;'
-        'try{if(window.opener)window.opener.postMessage({type:"OUTLOOK_AUTH_ERROR",error:e.message},"*")}catch(x){}}'
-        '})();'
-        '</script></body></html>'
-    )
-    return HTMLResponse(content=exchange_html)
-
-
-@router.post("/auth/store-token")
-async def outlook_store_token(request: Request) -> JSONResponse:
-    """Receive the access token from the browser-side exchange and store it."""
     try:
-        body = await request.json()
-        access_token = body.get("access_token")
-        expires_in = int(body.get("expires_in", 3600))
-        user_id = body.get("user_id")
-
-        if not access_token:
-            return JSONResponse({"error": "missing access_token"}, status_code=400)
-
-        if not user_id:
-            user_info = OutlookService.validate_access_token(access_token)
-            if user_info:
-                user_id = user_info.get("id") or user_info.get("userPrincipalName")
-        if not user_id:
-            return JSONResponse({"error": "cannot_identify_user"}, status_code=400)
-
-        outlook_token_manager.store_token(user_id, access_token, expires_in)
-
-        session_id = str(uuid4())
-        with _session_lock:
-            _outlook_cookie_sessions[session_id] = user_id
-
-        response = JSONResponse({"ok": True}, status_code=200)
-        response.set_cookie(
-            key="outlook_session",
-            value=session_id,
-            httponly=True,
-            secure=_is_request_secure(request),
-            samesite="lax",
-            max_age=expires_in,
-            path="/",
+        token_resp = requests.post(
+            f"https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token",
+            data={
+                "client_id": client_id,
+                "client_secret": client_secret,
+                "grant_type": "authorization_code",
+                "code": code,
+                "redirect_uri": redirect_uri,
+                "code_verifier": code_verifier,
+            },
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            timeout=15,
         )
-        return response
-    except Exception as e:
-        logger.error(f"Outlook store-token error: {e}")
-        return JSONResponse({"error": str(e)}, status_code=500)
+    except Exception as exc:
+        logger.error(f"Network error during token exchange: {exc}")
+        return error_response("token_exchange_network_error")
+
+    if token_resp.status_code != 200:
+        logger.error(f"Token exchange failed ({token_resp.status_code}): {token_resp.text[:500]}")
+        return error_response("token_exchange_failed")
+
+    token_data = token_resp.json()
+    access_token = token_data.get("access_token")
+    expires_in = int(token_data.get("expires_in", 3600))
+
+    if not access_token:
+        return error_response("no_access_token_in_response")
+
+    if not user_id:
+        user_info = OutlookService.validate_access_token(access_token)
+        if user_info:
+            user_id = user_info.get("id") or user_info.get("userPrincipalName")
+
+    if not user_id:
+        return error_response("cannot_identify_user")
+
+    outlook_token_manager.store_token(user_id, access_token, expires_in)
+
+    session_id = str(uuid4())
+    with _session_lock:
+        _outlook_cookie_sessions[session_id] = user_id
+
+    is_secure = _is_request_secure(request)
+    response = HTMLResponse(content=_AUTH_SUCCESS_HTML)
+    response.set_cookie(
+        key="outlook_session",
+        value=session_id,
+        httponly=True,
+        secure=is_secure,
+        samesite="lax",
+        max_age=expires_in,
+        path="/",
+    )
+    return response
 
 
 # ══════════════════════════════════════════════════════════════════════
