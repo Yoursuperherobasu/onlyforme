@@ -1,18 +1,24 @@
 /**
- * Canvas editor — port of MiBuddy's canvas UI (Answer.tsx:1344-1406).
+ * Canvas editor — port of MiBuddy's canvas UI.
  *
  * Renders an assistant message inside a bordered, editable card. The
  * user can click the "Edit" action to modify the content inline
  * (contentEditable div); edits auto-save to the backend with a debounce.
  * A "DRAFT" action opens the user's mail client pre-populated with
  * the content — matches MiBuddy's Outlook-draft hand-off.
+ *
+ * Floating panel + reading-level slider matches MiBuddy exactly.
  */
 import { useEffect, useRef, useState } from "react";
-import { Pencil, Check, Mail, Smile, BookOpen, Loader2 } from "lucide-react";
+import { Pencil, Check, Mail, Loader2 } from "lucide-react";
+
+// MiBuddy SVG icons
+import emojiActWord from "@/assets/emojiAct_word.svg";
+import emojiActRemove from "@/assets/emojiAct_remove.svg";
+import readingLavelWhite from "@/assets/reading-lavel-white.svg";
+import readingLavel from "@/assets/reading-lavel.svg";
 
 // Reading levels — matches MiBuddy's READING_LEVELS constant.
-// The "reading level" entry is the middle "keep current" sentinel: clicking
-// it is a no-op, consistent with MiBuddy's NON_CLICKABLE_INDEX behaviour.
 const READING_LEVELS = [
   "kindergarten",
   "middle school",
@@ -38,10 +44,7 @@ interface CanvasEditorProps {
   onContentChange?: (newContent: string) => void;
 }
 
-/* Minimal markdown → HTML for the initial render (headings, bullets,
-   paragraphs, bold/italic, inline code). Keeps the editable div
-   friendly for plain-prose drafts like emails/memos which is 90% of
-   canvas usage. Heavy markdown is rare in canvas responses. */
+/* Minimal markdown → HTML for the initial render */
 function mdToHtml(md: string): string {
   const esc = (s: string) =>
     s
@@ -84,7 +87,6 @@ function mdToHtml(md: string): string {
     }
     if (inUl) { out.push("</ul>"); inUl = false; }
     if (inOl) { out.push("</ol>"); inOl = false; }
-    // inline replacements on escaped text
     let body = esc(line)
       .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
       .replace(/\*([^*]+)\*/g, "<em>$1</em>")
@@ -112,8 +114,6 @@ function htmlToPlain(html: string): string {
     .trim();
 }
 
-/** Extract "Subject: ...\n\nBody..." — matches MiBuddy's emailDraft
- *  parsing so the DRAFT button pre-fills the mailto subject. */
 function extractSubjectBody(text: string): { subject?: string; body: string } {
   const m = text.match(/^Subject:\s*(.+?)\r?\n\r?\n([\s\S]*)$/i);
   if (m) return { subject: m[1].trim(), body: m[2].trim() };
@@ -140,11 +140,28 @@ export default function CanvasEditor({
 
   const editorRef = useRef<HTMLDivElement>(null);
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const trackRef = useRef<HTMLDivElement>(null);
+  const readingLevelRef = useRef<HTMLDivElement>(null);
 
   // Keep `current` in sync when a new message streams in
   useEffect(() => {
     if (!isEditing) setCurrent(content);
   }, [content, isEditing]);
+
+  // Close reading level panel on click outside (MiBuddy behaviour)
+  useEffect(() => {
+    if (!showReadingLevel) return;
+    const handleClickOutside = (event: MouseEvent) => {
+      if (
+        readingLevelRef.current &&
+        !readingLevelRef.current.contains(event.target as Node)
+      ) {
+        setShowReadingLevel(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [showReadingLevel]);
 
   const _canvasCall = (body: Record<string, unknown>) => {
     const tokenMatch = document.cookie.match(/(?:^|;\s*)access_token_ag=([^;]*)/);
@@ -224,6 +241,27 @@ export default function CanvasEditor({
     }
   };
 
+  // Drag-based reading level (MiBuddy's updateValueFromY)
+  const updateValueFromY = (clientY: number) => {
+    if (!trackRef.current) return;
+    const rect = trackRef.current.getBoundingClientRect();
+    const offsetY = rect.bottom - clientY;
+    const percentage = Math.min(Math.max(offsetY / rect.height, 0), 1);
+    const newIndex = Math.round(percentage * (READING_LEVELS.length - 1));
+    setActiveReadingIndex(newIndex);
+  };
+
+  const handleMouseDown = (e: React.MouseEvent) => {
+    updateValueFromY(e.clientY);
+    const onMove = (ev: MouseEvent) => updateValueFromY(ev.clientY);
+    const onUp = () => {
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+    };
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+  };
+
   const handleInput = (e: React.FormEvent<HTMLDivElement>) => {
     const html = e.currentTarget.innerHTML;
     setCurrent(html);
@@ -233,7 +271,6 @@ export default function CanvasEditor({
 
   const toggleEdit = () => {
     if (isEditing) {
-      // Save immediately on toggle off
       if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
       const html = editorRef.current?.innerHTML ?? current;
       persist(html);
@@ -256,8 +293,6 @@ export default function CanvasEditor({
     }
   };
 
-  /* Initial HTML: if content already looks like HTML (starts with <),
-     use it directly; otherwise render markdown → HTML once. */
   const initialHtml =
     (current || "").trim().startsWith("<")
       ? current
@@ -277,7 +312,7 @@ export default function CanvasEditor({
       <div className="ac_canvas_actions">
         {saveState !== "idle" && (
           <span className="ac_canvas_save_indicator">
-            {saveState === "saving" ? "saving…" : "saved ✓"}
+            {saveState === "saving" ? "saving\u2026" : "saved \u2713"}
           </span>
         )}
         {showDraftButton && (
@@ -302,68 +337,100 @@ export default function CanvasEditor({
         </button>
       </div>
 
-      {/* Floating panel with emoji + reading-level buttons (MiBuddy port) */}
+      {/* Floating panel — MiBuddy exact port */}
       {isEditing && (
-        <>
-          <div className="ac_canvas_floating_panel">
-            <button
-              type="button"
-              className="ac_canvas_panel_btn"
-              disabled={panelLoading === "emoji"}
-              onClick={handleEmoji}
-              title={
-                emojiAction === "remove"
-                  ? "Add expressive emojis"
-                  : "Remove emojis"
-              }
+        <div className="canvas_editor_wrapper">
+          <div className="canvas_floating_panel">
+            {/* Emoji toggle */}
+            <div
+              className="canvas_icon_wrapper"
+              onClick={() => { if (!panelLoading) handleEmoji(); }}
+              style={{
+                opacity: panelLoading === "emoji" ? 0.6 : 1,
+                pointerEvents: panelLoading === "emoji" ? "none" : "auto",
+                cursor: panelLoading === "emoji" ? "not-allowed" : "pointer",
+              }}
             >
-              {panelLoading === "emoji" ? (
-                <Loader2 size={18} className="animate-spin" />
-              ) : (
-                <Smile size={18} />
-              )}
-            </button>
-            <button
-              type="button"
-              className="ac_canvas_panel_btn"
-              disabled={panelLoading === "reading"}
-              onClick={() => setShowReadingLevel((v) => !v)}
-              title="Change reading level"
+              <img
+                src={emojiAction === "words" ? emojiActRemove : emojiActWord}
+                alt={emojiAction}
+              />
+              {panelLoading === "emoji" && <div className="canvas_icon_loader" />}
+            </div>
+
+            {/* Reading level toggle */}
+            <div
+              className="canvas_icon_wrapper"
+              onClick={() => {
+                if (panelLoading) return;
+                setShowReadingLevel((prev) => !prev);
+              }}
+              style={{
+                opacity: panelLoading === "reading" ? 0.6 : 1,
+                pointerEvents: panelLoading === "reading" ? "none" : "auto",
+                cursor: panelLoading === "reading" ? "not-allowed" : "pointer",
+              }}
             >
-              {panelLoading === "reading" ? (
-                <Loader2 size={18} className="animate-spin" />
-              ) : (
-                <BookOpen size={18} />
-              )}
-            </button>
+              <img src={readingLavelWhite} alt="reading level" />
+              {panelLoading === "reading" && <div className="canvas_icon_loader" />}
+            </div>
           </div>
 
-          {/* Reading-level vertical slider */}
+          {/* Reading level vertical slider — MiBuddy exact port */}
           {showReadingLevel && (
-            <div className="ac_reading_level_wrapper">
-              <div className="ac_reading_level_label">
+            <div className="reading_level_wrapper" ref={readingLevelRef}>
+              <div className="reading_level_label">
                 {READING_LEVELS[activeReadingIndex]}
               </div>
-              <div className="ac_reading_track">
-                {READING_LEVELS.map((lvl, i) => {
-                  const active = i === activeReadingIndex;
-                  const disabled = i === NON_CLICKABLE_INDEX;
-                  return (
-                    <div
-                      key={lvl}
-                      className={`ac_reading_dot ${active ? "active" : ""} ${disabled ? "disabled" : ""}`}
-                      title={lvl}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        if (!disabled) handleReadingLevel(i);
-                      }}
-                    />
-                  );
-                })}
+              <div className="slider-wrapper reading_track">
+                <div
+                  className="slider-track"
+                  ref={trackRef}
+                  onMouseDown={handleMouseDown}
+                  onClick={(e) => updateValueFromY(e.clientY)}
+                >
+                  <div
+                    className="slider-fill"
+                    style={{
+                      height: `${(activeReadingIndex / (READING_LEVELS.length - 1)) * 100}%`,
+                    }}
+                  />
+                  <div
+                    className="slider-thumb"
+                    style={{
+                      bottom: `${(activeReadingIndex / (READING_LEVELS.length - 1)) * 100}%`,
+                    }}
+                  />
+                  {READING_LEVELS.map((_, index) => {
+                    const isDisabled = index === NON_CLICKABLE_INDEX;
+                    const isActive = index === activeReadingIndex;
+                    return (
+                      <div
+                        key={index}
+                        className={`track-dot ${isActive ? "active" : ""} ${isDisabled ? "disabled" : ""}`}
+                        style={{
+                          bottom: `${(index / (READING_LEVELS.length - 1)) * 100}%`,
+                          cursor: "pointer",
+                        }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (panelLoading === "reading") return;
+                          handleReadingLevel(index);
+                        }}
+                      >
+                        {isActive && (
+                          <div className="reading_lavel_icon">
+                            <img src={readingLavel} alt="reading level" />
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
             </div>
           )}
-        </>
+        </div>
       )}
     </div>
   );
