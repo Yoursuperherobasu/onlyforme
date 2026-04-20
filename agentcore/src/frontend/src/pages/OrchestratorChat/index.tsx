@@ -3381,25 +3381,22 @@ export default function AgentOrchestrator() {
                     )
                   : undefined;
               return (
-                <div key={msg.id} className="flex items-start gap-4 py-5">
-                  {/* Avatar */}
+                <div key={msg.id} className={`flex py-5 ${isUser ? "justify-end" : "items-start gap-4"}`}>
+                  {/* Avatar — only for agent messages */}
+                  {!isUser && (
                   <div
                     className={`mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden ${
-                      isUser
-                        ? "rounded-full bg-muted"
-                        : matchedModel
+                      matchedModel
                           ? "rounded-lg bg-muted"
                           : "rounded-lg"
                     }`}
                     style={
-                      !isUser && !matchedModel
+                      !matchedModel
                         ? { background: getAgentColor(msg.agentName) }
                         : undefined
                     }
                   >
-                    {isUser ? (
-                      <User size={16} className="text-muted-foreground" />
-                    ) : matchedModel?.icon ? (
+                    {matchedModel?.icon ? (
                       <img
                         src={matchedModel.icon}
                         alt=""
@@ -3409,22 +3406,26 @@ export default function AgentOrchestrator() {
                       <Sparkles size={16} color="white" />
                     )}
                   </div>
+                  )}
 
                   {/* Content */}
-                  <div className="min-w-0 flex-1">
+                  <div className={isUser ? "max-w-[80%]" : "min-w-0 flex-1"}>
+                    {!isUser && (
                     <div className="mb-1 flex items-center gap-2 text-sm font-semibold text-foreground">
-                      {isUser ? t("You") : msg.agentName}
+                      {msg.agentName}
                       <span className="text-xs font-normal text-muted-foreground">
                         {msg.timestamp}
                       </span>
                     </div>
+                    )}
                     {isThinking ? (
                       <div className="flex items-center gap-2">
                         <Loader2 size={16} className="animate-spin text-muted-foreground" />
                         <span className="text-sm text-muted-foreground">{t("Thinking...")}</span>
                       </div>
                     ) : isUser ? (
-                      <div className="group/usermsg text-[15px] leading-relaxed text-foreground/80">
+                      <>
+                      <div className="group/usermsg rounded-lg bg-[#edf5fd] px-4 py-2.5 text-[15px] leading-relaxed text-foreground/80 shadow-sm dark:bg-accent">
                         {editingMsgId === msg.id && noAgentMode ? (
                           // Inline editor — matches MiBuddy's UX: textarea + Cancel/Send buttons
                           <div className="rounded-xl border border-border bg-muted/30 p-3">
@@ -3489,30 +3490,29 @@ export default function AgentOrchestrator() {
                                 })}
                               </div>
                             )}
-                            {/* Prompt action buttons — Copy and Edit
-                                Shown ONLY in model mode (No Agent), not when chatting with an agent.
-                                Always visible (no hover-only) — matches MiBuddy UX. */}
-                            {msg.content && !isSending && noAgentMode && (
-                              <div className="mt-1.5 flex items-center gap-1">
-                                <button
-                                  onClick={() => handleCopyMessage(msg.content, msg.id)}
-                                  className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
-                                  title={copiedMsgId === msg.id ? t("Copied!") : t("Copy")}
-                                >
-                                  {copiedMsgId === msg.id ? <Check size={13} className="text-green-600" /> : <Copy size={13} />}
-                                </button>
-                                <button
-                                  onClick={() => handleStartEdit(msg.id, msg.content)}
-                                  className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
-                                  title={t("Edit prompt")}
-                                >
-                                  <Pencil size={13} />
-                                </button>
-                              </div>
-                            )}
                           </>
                         )}
                       </div>
+                      {/* Prompt action buttons — Copy and Edit (outside bubble) */}
+                      {msg.content && !isSending && noAgentMode && (
+                        <div className="mt-1 flex items-center justify-end gap-1">
+                          <button
+                            onClick={() => handleCopyMessage(msg.content, msg.id)}
+                            className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
+                            title={copiedMsgId === msg.id ? t("Copied!") : t("Copy")}
+                          >
+                            {copiedMsgId === msg.id ? <Check size={13} className="text-green-600" /> : <Copy size={13} />}
+                          </button>
+                          <button
+                            onClick={() => handleStartEdit(msg.id, msg.content)}
+                            className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
+                            title={t("Edit prompt")}
+                          >
+                            <Pencil size={13} />
+                          </button>
+                        </div>
+                      )}
+                      </>
                     ) : (
                       <div className="text-[15px] leading-relaxed text-foreground/80">
                         {/* CoT Reasoning — collapsible pill + panel */}
