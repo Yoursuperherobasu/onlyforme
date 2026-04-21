@@ -137,6 +137,7 @@ export default function CanvasEditor({
   );
   const [emojiAction, setEmojiAction] = useState<"words" | "remove">("remove");
   const [panelLoading, setPanelLoading] = useState<null | "emoji" | "reading">(null);
+  const [hasSelectedReadingLevel, setHasSelectedReadingLevel] = useState(false);
 
   const editorRef = useRef<HTMLDivElement>(null);
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -148,9 +149,19 @@ export default function CanvasEditor({
     if (!isEditing) setCurrent(content);
   }, [content, isEditing]);
 
+  const resetReadingLevel = () => {
+    setActiveReadingIndex(NON_CLICKABLE_INDEX);
+    setHasSelectedReadingLevel(false);
+  };
+
   // Close reading level panel on click outside (MiBuddy behaviour)
   useEffect(() => {
-    if (!showReadingLevel) return;
+    if (!showReadingLevel && !hasSelectedReadingLevel) {
+      resetReadingLevel();
+    }
+    if (!showReadingLevel && hasSelectedReadingLevel) {
+      setHasSelectedReadingLevel(false);
+    }
     const handleClickOutside = (event: MouseEvent) => {
       if (
         readingLevelRef.current &&
@@ -193,6 +204,7 @@ export default function CanvasEditor({
   const handleReadingLevel = async (index: number) => {
     if (index === NON_CLICKABLE_INDEX) return;
     setActiveReadingIndex(index);
+    setHasSelectedReadingLevel(true);
     setShowReadingLevel(false);
     setPanelLoading("reading");
     try {
@@ -260,6 +272,10 @@ export default function CanvasEditor({
     };
     document.addEventListener("mousemove", onMove);
     document.addEventListener("mouseup", onUp);
+  };
+
+  const handleTrackClick = (e: React.MouseEvent) => {
+    updateValueFromY(e.clientY);
   };
 
   const handleInput = (e: React.FormEvent<HTMLDivElement>) => {
@@ -387,7 +403,7 @@ export default function CanvasEditor({
                   className="slider-track"
                   ref={trackRef}
                   onMouseDown={handleMouseDown}
-                  onClick={(e) => updateValueFromY(e.clientY)}
+                  onClick={handleTrackClick}
                 >
                   <div
                     className="slider-fill"
