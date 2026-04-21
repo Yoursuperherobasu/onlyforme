@@ -189,20 +189,77 @@ async def process_and_ingest(
 # Search documents in Pinecone
 # ---------------------------------------------------------------------------
 
+def _extract_match_text(match: dict) -> str:
+    """Pull text out of a Pinecone match, handling the various shapes."""
+    return (
+        match.get("text", "")
+        or match.get("metadata", {}).get("page_content", "")
+        or match.get("metadata", {}).get("text", "")
+    )
+
+
+async def _discover_session_files(
+    index_name: str,
+    namespace: str,
+    query_embedding: list[float],
+    query: str,
+) -> list[str]:
+    """Best-effort discovery of which source files exist in this namespace.
+
+    Used when the caller doesn't know which files were uploaded earlier in the
+    session (e.g. follow-up questions after the initial upload). We issue one
+    broad query and collect unique `source_file` values from the metadata.
+    """
+    from agentcore.services.pinecone_service_client import async_search_via_service
+
+    try:
+        result = await async_search_via_service(
+            index_name=index_name,
+            namespace=namespace,
+            text_key="page_content",
+            query=query,
+            query_embedding=query_embedding,
+            number_of_results=50,
+        )
+    except Exception as e:
+        logger.warning(f"[DocQA] File discovery query failed: {e}")
+        return []
+
+    matches = result.get("results", []) or result.get("matches", [])
+    files: list[str] = []
+    seen: set[str] = set()
+    for match in matches:
+        source = match.get("metadata", {}).get("source_file") or match.get("source_file")
+        if source and source not in seen:
+            seen.add(source)
+            files.append(source)
+    return files
+
+
 async def search_documents(
     query: str,
     session_id: str,
     top_k: int | None = None,
-) -> list[str]:
+    file_list: list[str] | None = None,
+) -> list[dict]:
     """Search Pinecone for relevant document chunks.
+
+    When `file_list` is provided (or discoverable), queries Pinecone once PER
+    FILE with a source_file filter, so every file contributes chunks even when
+    one file dominates the relevance score. This prevents the "only 1 file in
+    the answer" failure mode when the user uploads multiple files.
 
     Args:
         query: User's question.
         session_id: Chat session ID (Pinecone namespace).
-        top_k: Number of chunks to retrieve (defaults to settings).
+        top_k: Total chunks to retrieve for single-file or unfiltered queries.
+            For per-file retrieval, chunks-per-file is derived from this value
+            and the file count (min 2, max 5 per file).
+        file_list: Optional list of source filenames to search across. If None,
+            we try to discover the files that exist in this session's namespace.
 
     Returns:
-        List of relevant text chunks.
+        List of dicts: [{"text": str, "source_file": str, "score": float}, ...]
     """
     from agentcore.services.ltm.embeddings import embed_single
     from agentcore.services.pinecone_service_client import async_search_via_service
@@ -212,7 +269,6 @@ async def search_documents(
     if top_k is None:
         top_k = settings.doc_qa_top_k
 
-    # Generate query embedding
     logger.info(f"[DocQA] Generating query embedding for: '{query[:80]}...'")
     query_embedding = await embed_single(query)
     if not query_embedding:
@@ -220,78 +276,159 @@ async def search_documents(
         return []
     logger.info(f"[DocQA] Query embedding generated (dim={len(query_embedding)})")
 
-    # Retry search up to 3 times (Pinecone serverless may need time after first ingestion)
-    for attempt in range(3):
-        try:
-            logger.info(f"[DocQA] Searching Pinecone: index={index_name} namespace={session_id[:12]}... top_k={top_k} (attempt {attempt + 1}/3)")
-            result = await async_search_via_service(
-                index_name=index_name,
-                namespace=session_id,
-                text_key="page_content",
-                query=query,
-                query_embedding=query_embedding,
-                number_of_results=top_k,
-            )
+    import asyncio
 
-            # Pinecone service returns {"results": [...]} not {"matches": [...]}
-            matches = result.get("results", []) or result.get("matches", [])
-            logger.info(f"[DocQA] Pinecone returned {len(matches)} matches")
-            for i, match in enumerate(matches):
-                score = match.get("score", 0)
-                meta = match.get("metadata", {})
-                source = meta.get("source_file", "?")
-                chunk_idx = meta.get("chunk_index", "?")
-                # Text may be in "text" (from search response) or "page_content" (from metadata)
-                text_preview = (match.get("text", "") or meta.get("page_content", "") or meta.get("text", ""))[:80]
-                logger.info(f"[DocQA]   Match {i+1}: score={score:.4f} source={source} chunk={chunk_idx} text='{text_preview}...'")
+    # Resolve which files to search across.
+    files_to_search: list[str] = list(file_list) if file_list else []
+    if not files_to_search:
+        files_to_search = await _discover_session_files(
+            index_name=index_name,
+            namespace=session_id,
+            query_embedding=query_embedding,
+            query=query,
+        )
+        if files_to_search:
+            logger.info(f"[DocQA] Discovered {len(files_to_search)} file(s) in session: {files_to_search}")
 
-            chunks = []
-            for match in matches:
-                # Pinecone service returns text in "text" field (popped from metadata by text_key)
-                text = match.get("text", "") or match.get("metadata", {}).get("page_content", "") or match.get("metadata", {}).get("text", "")
-                if text:
-                    chunks.append(text)
+    # Pick per-file top-K. Single file → use the configured top_k as-is.
+    # Multi-file → clamp 2-5 chunks per file so context stays manageable.
+    if len(files_to_search) <= 1:
+        per_file_k = top_k
+    else:
+        per_file_k = max(2, min(5, top_k))
 
-            if chunks:
-                logger.info(f"[DocQA] Retrieved {len(chunks)} relevant chunks for query (attempt {attempt + 1})")
-                return chunks
+    # Fallback path: no files known → run a single unfiltered query (legacy behavior).
+    if not files_to_search:
+        logger.info(f"[DocQA] No file list available, running unfiltered search (top_k={top_k})")
+        for attempt in range(3):
+            try:
+                result = await async_search_via_service(
+                    index_name=index_name,
+                    namespace=session_id,
+                    text_key="page_content",
+                    query=query,
+                    query_embedding=query_embedding,
+                    number_of_results=top_k,
+                )
+                matches = result.get("results", []) or result.get("matches", [])
+                chunks = _matches_to_chunks(matches)
+                if chunks:
+                    logger.info(f"[DocQA] Retrieved {len(chunks)} chunks (attempt {attempt + 1})")
+                    return chunks
+                if attempt < 2:
+                    logger.info(f"[DocQA] 0 chunks, retrying in 5s (attempt {attempt + 1}/3)")
+                    await asyncio.sleep(5)
+            except Exception as e:
+                logger.error(f"[DocQA] Pinecone search failed (attempt {attempt + 1}): {e}")
+                if attempt < 2:
+                    await asyncio.sleep(5)
+        logger.warning("[DocQA] Search returned 0 chunks after all retries")
+        return []
 
-            if attempt < 2:
-                import asyncio
-                logger.info(f"[DocQA] Search returned 0 chunks, retrying in 5s (attempt {attempt + 1}/3)")
-                await asyncio.sleep(5)
+    # Per-file retrieval path.
+    logger.info(
+        f"[DocQA] Per-file search: {len(files_to_search)} file(s) × {per_file_k} chunks each "
+        f"in namespace {session_id[:12]}..."
+    )
 
-        except Exception as e:
-            logger.error(f"[DocQA] Pinecone search failed (attempt {attempt + 1}): {e}")
-            if attempt < 2:
-                import asyncio
-                await asyncio.sleep(5)
+    async def _search_one_file(file_name: str) -> list[dict]:
+        for attempt in range(3):
+            try:
+                result = await async_search_via_service(
+                    index_name=index_name,
+                    namespace=session_id,
+                    text_key="page_content",
+                    query=query,
+                    query_embedding=query_embedding,
+                    number_of_results=per_file_k,
+                    metadata_filter={"source_file": {"$eq": file_name}},
+                )
+                matches = result.get("results", []) or result.get("matches", [])
+                chunks = _matches_to_chunks(matches, default_source=file_name)
+                if chunks:
+                    return chunks
+                if attempt < 2:
+                    await asyncio.sleep(5)
+            except Exception as e:
+                logger.warning(f"[DocQA] Search failed for file '{file_name}' (attempt {attempt + 1}): {e}")
+                if attempt < 2:
+                    await asyncio.sleep(5)
+        return []
 
-    logger.warning("[DocQA] Search returned 0 chunks after all retries")
-    return []
+    per_file_results = await asyncio.gather(
+        *(_search_one_file(f) for f in files_to_search),
+        return_exceptions=False,
+    )
+
+    all_chunks: list[dict] = []
+    for file_name, file_chunks in zip(files_to_search, per_file_results):
+        logger.info(f"[DocQA]   {file_name}: {len(file_chunks)} chunk(s) retrieved")
+        all_chunks.extend(file_chunks)
+
+    logger.info(f"[DocQA] Retrieved {len(all_chunks)} total chunks across {len(files_to_search)} file(s)")
+    return all_chunks
+
+
+def _matches_to_chunks(matches: list, default_source: str | None = None) -> list[dict]:
+    """Normalize Pinecone matches into [{text, source_file, score}, ...]."""
+    chunks: list[dict] = []
+    for match in matches:
+        text = _extract_match_text(match)
+        if not text:
+            continue
+        meta = match.get("metadata", {}) or {}
+        source = meta.get("source_file") or match.get("source_file") or default_source or "unknown"
+        chunks.append({
+            "text": text,
+            "source_file": source,
+            "score": match.get("score", 0.0),
+        })
+    return chunks
 
 
 # ---------------------------------------------------------------------------
 # Build document Q&A prompt
 # ---------------------------------------------------------------------------
 
-def build_doc_qa_prompt(query: str, chunks: list[str]) -> str:
-    """Build an LLM prompt with document context.
+def build_doc_qa_prompt(query: str, chunks: list) -> str:
+    """Build an LLM prompt with document context, grouped by source file.
 
-    Args:
-        query: User's original question.
-        chunks: Retrieved document chunks.
+    Accepts either:
+    - list[dict]  with {text, source_file, score} (new format)
+    - list[str]   plain text chunks (legacy)
 
-    Returns:
-        Enriched prompt with document context.
+    When chunks carry source_file metadata, each file's chunks are grouped
+    under a `[Source: filename]` header so the LLM can cite and reason across
+    multiple files.
     """
     if not chunks:
         return query
 
-    context = "\n\n---\n\n".join(chunks)
+    # Legacy format: plain strings.
+    if isinstance(chunks[0], str):
+        context = "\n\n---\n\n".join(chunks)
+    else:
+        grouped: dict[str, list[str]] = {}
+        order: list[str] = []
+        for c in chunks:
+            src = c.get("source_file") or "unknown"
+            if src not in grouped:
+                grouped[src] = []
+                order.append(src)
+            grouped[src].append(c.get("text", ""))
+
+        sections: list[str] = []
+        for src in order:
+            body = "\n\n".join(t for t in grouped[src] if t)
+            if body:
+                sections.append(f"[Source: {src}]\n{body}")
+        context = "\n\n---\n\n".join(sections)
+
     return (
         "You are answering questions based on the uploaded documents. "
         "Use ONLY the following document context to answer. "
+        "If information comes from multiple documents, synthesize across them "
+        "and mention the source filenames when relevant. "
         "If the answer is not in the context, say so.\n\n"
         f"## Document Context\n\n{context}\n\n"
         f"## Question\n\n{query}"

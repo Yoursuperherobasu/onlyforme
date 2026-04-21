@@ -1519,8 +1519,16 @@ async def orch_chat(
                 if count > 0:
                     await asyncio.sleep(5)
 
-            # Search for relevant chunks
-            chunks = await search_documents(body.input_value, body.session_id)
+            # Pass the filenames of files uploaded this turn so search_documents
+            # can query Pinecone per-file and guarantee every file contributes.
+            # For follow-up turns with no new files, search_documents will
+            # discover the session's files automatically.
+            file_names_for_search = [Path(p).name for p in doc_files] if doc_files else None
+            chunks = await search_documents(
+                body.input_value,
+                body.session_id,
+                file_list=file_names_for_search,
+            )
             logger.info(f"[ORCH] Document search returned {len(chunks)} chunks")
 
             # Build enriched prompt and call model
@@ -1741,8 +1749,15 @@ async def orch_chat_stream(
                     else:
                         event_manager.on_token(data={"chunk": "🔍 Searching documents... "})
 
-                    # Search + build enriched prompt
-                    chunks = await search_documents(_input_value, _session_id)
+                    # Per-file search: pass filenames so each uploaded file gets
+                    # its own Pinecone query (prevents one file from dominating
+                    # top_k and starving the others).
+                    _file_names_for_search = [Path(p).name for p in _doc_files] if _doc_files else None
+                    chunks = await search_documents(
+                        _input_value,
+                        _session_id,
+                        file_list=_file_names_for_search,
+                    )
                     logger.info(f"[ORCH-STREAM] Document search returned {len(chunks)} chunks")
 
                     if chunks:
@@ -2848,15 +2863,13 @@ async def list_generated_images(
 ):
     """List AI-generated images for the current user from the MiBuddy container.
 
-    Returns raw Azure Blob URLs (MiBuddy-style) when the container is configured
-    for public blob access — shareable without auth. Falls back to auth-proxied
-    URLs when blob storage isn't configured.
+    Returns auth-proxied URLs that the frontend loads with JWT, so images
+    display regardless of whether the blob container has public access.
     """
     try:
         from agentcore.services.mibuddy.docqa_storage import (
             list_files,
             FileCategory,
-            get_public_blob_url,
         )
 
         user_id = str(current_user.id)
@@ -2864,12 +2877,9 @@ async def list_generated_images(
 
         images = []
         for name in sorted(file_names, reverse=True)[:20]:  # newest first, max 20
-            blob_path = f"{user_id}/generated-images/{name}"
-            public_url = await get_public_blob_url(blob_path)
-            src = public_url or f"/api/files/images/{user_id}/generated-images/{name}"
             images.append({
                 "name": name,
-                "src": src,
+                "src": f"/api/files/images/{user_id}/generated-images/{name}",
             })
         return images
     except Exception as e:
