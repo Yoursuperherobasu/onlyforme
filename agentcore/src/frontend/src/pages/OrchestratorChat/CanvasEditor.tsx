@@ -343,7 +343,7 @@ export default function CanvasEditor({
           <div className="canvas_floating_panel">
             {/* Emoji toggle */}
             <div
-              className="canvas_icon_wrapper"
+              className="emoji_lavel canvas_icon_wrapper"
               onClick={() => { if (!panelLoading) handleEmoji(); }}
               style={{
                 opacity: panelLoading === "emoji" ? 0.6 : 1,
@@ -360,7 +360,7 @@ export default function CanvasEditor({
 
             {/* Reading level toggle */}
             <div
-              className="canvas_icon_wrapper"
+              className="reading_level canvas_icon_wrapper"
               onClick={() => {
                 if (panelLoading) return;
                 setShowReadingLevel((prev) => !prev);
@@ -410,12 +410,15 @@ export default function CanvasEditor({
                         className={`track-dot ${isActive ? "active" : ""} ${isDisabled ? "disabled" : ""}`}
                         style={{
                           bottom: `${(index / (READING_LEVELS.length - 1)) * 100}%`,
-                          cursor: "pointer",
+                          pointerEvents: isDisabled ? "auto" : "auto",
+                          opacity: isDisabled ? 1 : 1,
+                          cursor: isDisabled ? "pointer" : "pointer",
                         }}
                         onClick={(e) => {
                           e.stopPropagation();
                           if (panelLoading === "reading") return;
                           handleReadingLevel(index);
+                          setShowReadingLevel(false);
                         }}
                       >
                         {isActive && (
