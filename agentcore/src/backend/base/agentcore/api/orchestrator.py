@@ -1013,6 +1013,51 @@ async def _get_model_display_name(session: DbSession, model_id: UUID) -> str:
     return "Model"
 
 
+async def _collect_session_doc_filenames(
+    session_id: str,
+    user_id: UUID | None = None,
+) -> list[str]:
+    """Aggregate doc filenames uploaded across a whole chat session.
+
+    Walks user messages in the session (by timestamp) and unions their `files`
+    field, keeping only entries whose extension is a supported doc type.
+    Returns just `Path(p).name` — the filenames are what Pinecone's
+    `source_file` metadata is keyed on for per-file search.
+
+    This is the authoritative "which files has the user uploaded in this
+    session?" source. Earlier we relied on a semantic Pinecone probe, but
+    that missed files whose chunks didn't happen to match the current
+    question (e.g. a follow-up question about HR policies would pull chunks
+    from the HR PDFs and leave a tech-spec .txt invisible — the file would
+    then silently drop out of the per-file search).
+    """
+    from agentcore.services.deps import session_scope
+    from agentcore.services.mibuddy.document_extractor import SUPPORTED_DOC_EXTENSIONS
+
+    async with session_scope() as db:
+        stmt = (
+            select(OrchConversationTable)
+            .where(
+                OrchConversationTable.session_id == session_id,
+                OrchConversationTable.sender == "user",
+            )
+            .order_by(OrchConversationTable.timestamp.asc())
+        )
+        if user_id is not None:
+            stmt = stmt.where(OrchConversationTable.user_id == user_id)
+        rows = (await db.exec(stmt)).all()
+
+    seen: set[str] = set()
+    names: list[str] = []
+    for row in rows:
+        for p in (row.files or []):
+            name = Path(p).name
+            if Path(p).suffix.lower() in SUPPORTED_DOC_EXTENSIONS and name not in seen:
+                seen.add(name)
+                names.append(name)
+    return names
+
+
 async def _route_request(
     session: DbSession,
     current_user: CurrentActiveUser,
@@ -1530,7 +1575,14 @@ async def orch_chat(
             if state.get("is_canvas_enabled") and not body.canvas_enabled:
                 logger.info("[ORCH] Outlook agent auto-enabled canvas")
             resp_model_name = "outlook"
-            sender_name = "Outlook"
+            # Label the reply with the underlying model that produced it,
+            # not the literal "Outlook". Matches the pattern used by
+            # model_direct / document_qa / web_search / image_gen so the UI
+            # always shows a model name (e.g. "MiBuddy AI", "gpt-5.1").
+            sender_name = (
+                await _get_model_display_name(session, resp_model_id)
+                if resp_model_id else "Outlook"
+            )
 
         elif mode == "document_qa":
             from agentcore.services.mibuddy.document_processor import process_and_ingest, search_documents, build_doc_qa_prompt
@@ -1545,17 +1597,27 @@ async def orch_chat(
                 if count > 0:
                     await asyncio.sleep(5)
 
-            # Pass the filenames of files uploaded this turn so search_documents
-            # can query Pinecone per-file and guarantee every file contributes.
-            # For follow-up turns with no new files, search_documents will
-            # discover the session's files automatically.
-            file_names_for_search = [Path(p).name for p in doc_files] if doc_files else None
+            # Authoritative session-wide file list — union of files uploaded
+            # across every user message in this session so per-file search
+            # sees every document, including ones whose chunks don't match
+            # the current query semantically. Merge this-turn's filenames
+            # defensively in case the user message hasn't been flushed yet.
+            file_names_for_search = await _collect_session_doc_filenames(
+                body.session_id, current_user.id,
+            )
+            for p in doc_files:
+                name = Path(p).name
+                if name not in file_names_for_search:
+                    file_names_for_search.append(name)
             chunks = await search_documents(
                 body.input_value,
                 body.session_id,
-                file_list=file_names_for_search,
+                file_list=file_names_for_search or None,
             )
-            logger.info(f"[ORCH] Document search returned {len(chunks)} chunks")
+            logger.info(
+                f"[ORCH] Document search returned {len(chunks)} chunks "
+                f"(session has {len(file_names_for_search)} file(s): {file_names_for_search})"
+            )
 
             # Build enriched prompt and call model
             enriched_prompt = build_doc_qa_prompt(body.input_value, chunks)
@@ -1719,7 +1781,13 @@ async def orch_chat_stream(
                 except Exception:
                     pass
         elif mode == "outlook_query":
-            sender_name = "Outlook"
+            # Same treatment as model_direct / document_qa — reply appears
+            # under the underlying model's display name rather than the
+            # literal "Outlook" so the UI shows what actually answered.
+            if resp_model_id:
+                sender_name = await _get_model_display_name(session, resp_model_id)
+            else:
+                sender_name = "Outlook"
 
         queue: asyncio.Queue = asyncio.Queue()
         event_manager = create_default_event_manager(queue)
@@ -1777,16 +1845,25 @@ async def orch_chat_stream(
                     else:
                         event_manager.on_token(data={"chunk": "🔍 Searching documents... "})
 
-                    # Per-file search: pass filenames so each uploaded file gets
-                    # its own Pinecone query (prevents one file from dominating
-                    # top_k and starving the others).
-                    _file_names_for_search = [Path(p).name for p in _doc_files] if _doc_files else None
+                    # Authoritative session-wide file list (see non-stream
+                    # branch for rationale). Merge this-turn's filenames
+                    # defensively in case the user message hasn't flushed.
+                    _file_names_for_search = await _collect_session_doc_filenames(
+                        _session_id, _user_id,
+                    )
+                    for p in _doc_files:
+                        name = Path(p).name
+                        if name not in _file_names_for_search:
+                            _file_names_for_search.append(name)
                     chunks = await search_documents(
                         _input_value,
                         _session_id,
-                        file_list=_file_names_for_search,
+                        file_list=_file_names_for_search or None,
                     )
-                    logger.info(f"[ORCH-STREAM] Document search returned {len(chunks)} chunks")
+                    logger.info(
+                        f"[ORCH-STREAM] Document search returned {len(chunks)} chunks "
+                        f"(session has {len(_file_names_for_search)} file(s): {_file_names_for_search})"
+                    )
 
                     if chunks:
                         event_manager.on_token(data={"chunk": f"Found {len(chunks)} relevant sections.\n\n"})
@@ -2334,51 +2411,259 @@ async def edit_orch_message(
         session.add(user_msg)
         await session.flush()
 
-        # 4. Regenerate response. We call direct_model_chat with the edited prompt.
-        # We use the same model that generated the original response.
-        resp_model_id = getattr(agent_msg, "model_id", None) if agent_msg else None
-        if not resp_model_id:
-            resp_model_id = user_msg.model_id if hasattr(user_msg, "model_id") else None
-        if not resp_model_id:
-            # Last-resort fallback
-            settings = get_settings_service().settings
-            if settings.default_chat_model_id:
-                resp_model_id = UUID(settings.default_chat_model_id)
+        # 4. Re-run intent classification on the edited prompt so the regenerated
+        # response goes through the correct mode handler (doc_qa, web_search,
+        # outlook_query, image_gen, kb_search, model_direct) — not always plain
+        # model chat. Previously the edit bypassed routing entirely and every
+        # edit regenerated as model_direct, losing doc/web/outlook/image features.
+        original_model_id = getattr(agent_msg, "model_id", None) if agent_msg else None
+        if not original_model_id:
+            original_model_id = getattr(user_msg, "model_id", None)
 
-        if not resp_model_id:
+        # default_chat_id acts as the "neutral" seed for routing. We do NOT pass
+        # original_model_id into the synthetic body because _route_request's
+        # Priority 0.5 force-routes to image_gen / web_search based on the
+        # model's capabilities — which would lock the edit into the original
+        # mode. E.g. an image-gen message edited to "what are today top news"
+        # would still hit Nano Banana instead of reaching the intent
+        # classifier. Using a plain chat model as the seed makes the router
+        # classify the edited TEXT and pick the right mode.
+        settings_fallback = get_settings_service().settings
+        default_chat_id: UUID | None = None
+        if settings_fallback.default_chat_model_id:
+            try:
+                default_chat_id = UUID(settings_fallback.default_chat_model_id)
+            except (ValueError, TypeError):
+                default_chat_id = None
+
+        if not original_model_id and not default_chat_id:
             raise HTTPException(
                 status_code=400,
                 detail="Cannot regenerate: no model_id associated with this conversation.",
             )
 
-        # Call direct_model_chat with ONLY the edited user prompt (MiBuddy behavior —
-        # no prior history included in regeneration context).
-        from agentcore.services.mibuddy.direct_model_chat import direct_model_chat
-        result = await direct_model_chat(
-            model_id=str(resp_model_id),
-            input_value=body.edited_text,
+        # Synthesise a request that mirrors what would have arrived if the user
+        # had typed this as a new message. Keep original files so doc_qa picks
+        # them up again; carry the request's reasoning / image-mode flags.
+        synthetic_body = OrchChatRequest(
             session_id=user_msg.session_id,
-            files=None,
+            model_id=default_chat_id,
+            input_value=body.edited_text,
+            files=user_msg.files if user_msg.files else None,
             enable_reasoning=body.enable_reasoning,
+            image_mode=body.image_mode,
         )
-        new_response_text = result.get("response_text", "")
-        new_reasoning = result.get("reasoning_content")
-        new_model_name = result.get("model_name", "")
+        routing = await _route_request(session, current_user, synthetic_body)
+        mode = routing["mode"]
+        # Fallback chain for the model that will actually answer:
+        #   routing's explicit model_id → default chat → caller's original.
+        _resp_model_candidate = routing.get("model_id") or default_chat_id or original_model_id
+        if not _resp_model_candidate:
+            # Guarded earlier (we raise if both original and default are
+            # missing), so this is defensive. Re-raise to keep the type
+            # checker happy about resp_model_id being non-None below.
+            raise HTTPException(
+                status_code=400,
+                detail="Cannot regenerate: no model_id resolvable for this edit.",
+            )
+        resp_model_id: UUID = _resp_model_candidate if isinstance(_resp_model_candidate, UUID) else UUID(str(_resp_model_candidate))
+        intent = routing.get("intent")
 
-        # 5. Update the agent message in-place (if one exists) or create a new one
+        new_response_text = ""
+        new_reasoning: str | None = None
+        new_model_name = ""
+        regen_sender_name = "Assistant"
+
+        if mode == "model_direct":
+            from agentcore.services.mibuddy.direct_model_chat import direct_model_chat
+            result = await direct_model_chat(
+                model_id=str(resp_model_id),
+                input_value=body.edited_text,
+                session_id=user_msg.session_id,
+                files=synthetic_body.files,
+                enable_reasoning=body.enable_reasoning,
+            )
+            new_response_text = result.get("response_text", "")
+            new_reasoning = result.get("reasoning_content")
+            new_model_name = result.get("model_name", "")
+            regen_sender_name = await _get_model_display_name(session, resp_model_id)
+
+        elif mode == "kb_search":
+            from agentcore.services.mibuddy.kb_search_handler import handle_kb_search
+            result = await handle_kb_search(body.edited_text)
+            new_response_text = result.get("response_text", "")
+            new_model_name = result.get("model_name", "knowledge-base")
+            settings_svc = get_settings_service().settings
+            regen_sender_name = settings_svc.company_kb_name or "Knowledge Base"
+
+        elif mode == "web_search":
+            from agentcore.services.mibuddy.web_search_handler import handle_web_search
+            from agentcore.services.mibuddy.system_prompts import get_system_identity_prompt
+            # Non-explicit web_search: swap resp_model_id to the configured
+            # WEB_SEARCH_MODEL_NAME registry entry so agent_msg.model_id
+            # reflects the actual model that answered (mirrors the main
+            # streaming flow — needed because the synthetic body uses
+            # default_chat_id as a seed, not the web-search model).
+            settings_svc = get_settings_service().settings
+            if intent == "web_search_explicit":
+                regen_sender_name = await _get_model_display_name(session, resp_model_id)
+            else:
+                regen_sender_name = settings_svc.web_search_model_name or "Web Search"
+                try:
+                    from agentcore.services.model_service_client import fetch_registry_models_async
+                    ws_name = (settings_svc.web_search_model_name or "").strip().lower()
+                    if ws_name:
+                        _all = await fetch_registry_models_async(active_only=True) or []
+                        _match = next(
+                            (m for m in _all if (m.get("display_name") or "").strip().lower() == ws_name),
+                            None,
+                        )
+                        if _match and _match.get("id"):
+                            resp_model_id = UUID(str(_match["id"]))
+                except Exception:  # noqa: BLE001
+                    pass
+            result = await handle_web_search(body.edited_text, system_message=get_system_identity_prompt())
+            new_response_text = result.get("response_text", "")
+            new_model_name = result.get("model_name", "gemini")
+
+        elif mode == "image_gen":
+            from agentcore.services.mibuddy.image_gen_handler import handle_image_generation
+            # Non-explicit image_gen: swap resp_model_id to the configured
+            # IMAGE_GEN_MODEL_NAME registry entry — otherwise we'd call
+            # handle_image_generation with default_chat_id (a text model).
+            settings_svc = get_settings_service().settings
+            if intent == "image_generation_explicit":
+                regen_sender_name = await _get_model_display_name(session, resp_model_id)
+            else:
+                regen_sender_name = settings_svc.image_gen_model_name or "Image Generator"
+                try:
+                    from agentcore.services.model_service_client import fetch_registry_models_async
+                    ig_name = (settings_svc.image_gen_model_name or "").strip().lower()
+                    if ig_name:
+                        _all = await fetch_registry_models_async(active_only=True) or []
+                        _match = next(
+                            (m for m in _all if (m.get("display_name") or "").strip().lower() == ig_name),
+                            None,
+                        )
+                        if _match and _match.get("id"):
+                            resp_model_id = UUID(str(_match["id"]))
+                except Exception:  # noqa: BLE001
+                    pass
+            result = await handle_image_generation(
+                body.edited_text,
+                model_id=str(resp_model_id),
+                user_id=str(current_user.id),
+            )
+            new_response_text = result.get("response_text", "")
+            new_model_name = result.get("model_name", "image-generation")
+
+        elif mode == "outlook_query":
+            from agentcore.services.mibuddy.outlook_agent import outlook_agent_node
+            state = {
+                "messages": [{"role": "user", "content": body.edited_text}],
+                "user_id": str(current_user.id),
+                "is_canvas_enabled": False,
+            }
+            state = await outlook_agent_node(state)
+            new_response_text = state.get("final_response", "") or (
+                "I couldn't process that Outlook request."
+            )
+            new_model_name = "outlook"
+            regen_sender_name = (
+                await _get_model_display_name(session, resp_model_id)
+                if resp_model_id else "Outlook"
+            )
+
+        elif mode == "document_qa":
+            from agentcore.services.mibuddy.document_processor import (
+                process_and_ingest,
+                search_documents,
+                build_doc_qa_prompt,
+            )
+            from agentcore.services.mibuddy.direct_model_chat import direct_model_chat
+
+            # Newly-attached files are rare on an edit (user usually edits text
+            # only), but handle them anyway for parity with the main chat path.
+            doc_files = routing.get("doc_files", [])
+            if doc_files:
+                count = await process_and_ingest(doc_files, user_msg.session_id)
+                if count > 0:
+                    await asyncio.sleep(5)
+
+            # Session-wide file list so per-file search sees every uploaded doc.
+            file_names_for_search = await _collect_session_doc_filenames(
+                user_msg.session_id, current_user.id,
+            )
+            for p in doc_files:
+                nm = Path(p).name
+                if nm not in file_names_for_search:
+                    file_names_for_search.append(nm)
+
+            chunks = await search_documents(
+                body.edited_text,
+                user_msg.session_id,
+                file_list=file_names_for_search or None,
+            )
+            enriched_prompt = build_doc_qa_prompt(body.edited_text, chunks)
+
+            if not resp_model_id:
+                raise HTTPException(status_code=400, detail="No model selected for document Q&A.")
+            image_files = routing.get("image_files", [])
+            result = await direct_model_chat(
+                model_id=str(resp_model_id),
+                input_value=enriched_prompt,
+                session_id=user_msg.session_id,
+                files=image_files,
+            )
+            new_response_text = result.get("response_text", "")
+            new_reasoning = result.get("reasoning_content")
+            new_model_name = result.get("model_name", "")
+            regen_sender_name = (
+                await _get_model_display_name(session, resp_model_id)
+                if resp_model_id else "Document Q&A"
+            )
+
+        else:
+            # Unknown or "agent" mode — edit doesn't support switching to an
+            # agent deployment on the fly. Fall back to plain model chat.
+            from agentcore.services.mibuddy.direct_model_chat import direct_model_chat
+            result = await direct_model_chat(
+                model_id=str(resp_model_id),
+                input_value=body.edited_text,
+                session_id=user_msg.session_id,
+                files=None,
+                enable_reasoning=body.enable_reasoning,
+            )
+            new_response_text = result.get("response_text", "")
+            new_reasoning = result.get("reasoning_content")
+            new_model_name = result.get("model_name", "")
+            regen_sender_name = await _get_model_display_name(session, resp_model_id)
+
+        if not new_response_text or not new_response_text.strip():
+            new_response_text = "No response was generated. Please try again."
+
+        logger.info(
+            f"[ORCH] Edit {message_id}: mode={mode} intent={intent} "
+            f"model_id={resp_model_id} sender_name={regen_sender_name}"
+        )
+
+        # 5. Update the agent message in-place (if one exists) or create a new one.
+        # Also refresh sender_name + model_id so the UI shows the correct model
+        # for the new mode (e.g. edit flipped from model_direct to image_gen).
         if agent_msg is not None:
             agent_msg.text = new_response_text
+            agent_msg.sender_name = regen_sender_name
+            if hasattr(agent_msg, "model_id") and resp_model_id:
+                agent_msg.model_id = resp_model_id
             if hasattr(agent_msg, "reasoning_content"):
                 agent_msg.reasoning_content = new_reasoning
             session.add(agent_msg)
         else:
             # Edge case: user edited a message that had no response yet.
-            # Create a new model response right after the user message.
-            # sender="model" — edit-regeneration always goes through model-direct.
             agent_msg = OrchConversationTable(
                 id=uuid4(),
                 sender="model",
-                sender_name=await _get_model_display_name(session, resp_model_id),
+                sender_name=regen_sender_name,
                 session_id=user_msg.session_id,
                 text=new_response_text,
                 user_id=user_msg.user_id,
