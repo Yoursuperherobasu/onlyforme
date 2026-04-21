@@ -1,3 +1,4 @@
+
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { Send, Sparkles, ChevronDown, Plus, MessageSquare, User, Loader2, Trash2, Check, ImagePlus, X, Clock, Search, Image, Archive, ChevronRight, Globe, BookOpen, Headphones, Info, HelpCircle, Mic, AudioLines, FileUp, Paintbrush, Lightbulb, Upload, MoreVertical, Folder, ArrowLeft, File, FileText, Shield, CheckCircle2, SquarePen, Mail, Download, Copy, Pencil, Share2, LayoutGrid, Bot } from "lucide-react";
@@ -50,14 +51,10 @@ import nanoBananaLogo from "@/assets/nano_banana_logo.png";
 import dalleLogo from "@/assets/dalle_logo.svg";
 import googleLogo from "@/assets/google_logo.svg";
 import defaultLlmLogo from "@/assets/default_llm_logo.png";
-import notebookLMLogo from "@/assets/notebooklm_logo.svg";
-import translatorLogo from "@/assets/translator_logo.png";
-// `?url` forces vite-plugin-svgr to give us a URL string (instead of a
-// React component) so these icons can be used as CSS `mask-image` via
-// <SidebarMaskIcon>. Without ?url the import resolves to a component
-// and `url(${src})` becomes invalid → masks silently drop → icons look
-// like plain filled squares.
-import imageLibraryLogo from "@/assets/image_library_logo.svg?url";
+import notebookLMLogo from "@/assets/notebooklm.svg";
+import translatorLogo from "@/assets/ai translator.svg";
+import imageLibraryLogo from "@/assets/image_library_logo.svg";
+import do33Logo from "@/assets/DO33M.16.svg";
 import miNewChatIcon from "@/assets/mibuddy_new_chat.svg?url";
 import miSearchIcon from "@/assets/mibuddy_search.svg?url";
 import miChatHistoryIcon from "@/assets/mibuddy_chat_history.svg?url";
@@ -65,14 +62,7 @@ import miArchiveIcon from "@/assets/mibuddy_archive.svg?url";
 import miInformationIcon from "@/assets/mibuddy_information.svg?url";
 import miHelpIcon from "@/assets/mibuddy_help.svg?url";
 
-// Sidebar icon renderer. Uses a plain <img> (same pattern that works for
-// the Applications section icons). The previous CSS-mask approach silently
-// failed because the Vite SVG import pipeline can resolve the default
-// export as a React component instead of a URL string, making
-// `mask-image: url(${src})` invalid and causing the <span> to show as a
-// solid colored rectangle. <img> handles both default-URL and
-// component-as-string cases more forgivingly, and the `invert`/`opacity`
-// filters below keep the icons visually muted in both themes.
+
 function SidebarMaskIcon({ src, className = "h-4 w-4 shrink-0" }: { src: string; className?: string }) {
   return (
     <img
@@ -2763,7 +2753,7 @@ export default function AgentOrchestrator() {
                   onClick={() => window.open("https://genai.motherson.com/do33", "_blank")}
                   className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm text-foreground hover:bg-accent"
                 >
-                  <img src={imageLibraryLogo} alt="" className="h-4 w-4 shrink-0 object-contain" />
+                  <img src={do33Logo} alt="" className="h-4 w-4 shrink-0 object-contain" />
                   <span>{t("DO33")}</span>
                 </button>
                 <button
@@ -2926,7 +2916,7 @@ export default function AgentOrchestrator() {
             onClick={() => { setShowAppsPopover(false); window.open("https://genai.motherson.com/do33", "_blank"); }}
             className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm text-foreground hover:bg-accent"
           >
-            <img src={imageLibraryLogo} alt="" className="h-5 w-5 shrink-0 object-contain" />
+            <img src={do33Logo} alt="" className="h-5 w-5 shrink-0 object-contain" />
             <span>{t("DO33")}</span>
           </button>
           <button
