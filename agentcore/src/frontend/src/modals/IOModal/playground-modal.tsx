@@ -218,6 +218,9 @@ export default function IOModal({
       files?: string[];
     }): Promise<void> => {
       if (isBuilding) return;
+      const hasMessageToSend = chatValue.trim().length > 0;
+      const hasFilesToSend = (files?.length ?? 0) > 0;
+      if (chatInput?.id && !hasMessageToSend && !hasFilesToSend) return;
       setChatValue("");
       setDisplayLoadingMessage(true);
 
