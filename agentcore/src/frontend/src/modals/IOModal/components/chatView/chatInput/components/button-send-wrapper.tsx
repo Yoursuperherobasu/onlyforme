@@ -35,6 +35,13 @@ const ButtonSendWrapper = ({
   const showStopButton = isBuilding || files.some((file) => file.loading);
   const showSendButton =
     !(isBuilding || files.some((file) => file.loading)) && !noInput;
+  const hasMessageToSend = chatValue.trim().length > 0;
+  const hasUploadedFiles = files.some((file) => Boolean(file.path));
+  const canSend = hasMessageToSend || hasUploadedFiles;
+  const disableSend =
+    !!hasPendingHitl ||
+    (showStopButton && !isBuilding) ||
+    (!showStopButton && !canSend);
 
   const getButtonState = () => {
     if (showStopButton) return BUTTON_STATES.SHOW_STOP;
@@ -48,7 +55,7 @@ const ButtonSendWrapper = ({
 
   const handleClick = (e: React.MouseEvent<HTMLButtonElement>) => {
     e.stopPropagation();
-    if (hasPendingHitl) return;
+    if (disableSend) return;
     if (showStopButton && isBuilding) {
       stopBuilding();
     } else if (!showStopButton) {
@@ -60,11 +67,11 @@ const ButtonSendWrapper = ({
     <Button
       className={classNames(
         buttonClasses,
-        hasPendingHitl ? "cursor-not-allowed opacity-50" : "",
+        disableSend ? "cursor-not-allowed opacity-50" : "",
       )}
       onClick={handleClick}
       unstyled
-      disabled={hasPendingHitl}
+      disabled={disableSend}
       data-testid={showStopButton ? "button-stop" : "button-send"}
     >
       <Case condition={showStopButton}>

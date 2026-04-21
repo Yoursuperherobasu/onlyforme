@@ -174,6 +174,9 @@ export default function ChatInput({
     const filesToSend = files
       .map((file) => file.path ?? "")
       .filter((file) => file !== "");
+    const hasMessageToSend = storedChatValue.trim().length > 0;
+    const canSend = hasMessageToSend || filesToSend.length > 0;
+    if (!canSend) return;
     const storedFiles = [...files];
     setFiles([]);
     try {
