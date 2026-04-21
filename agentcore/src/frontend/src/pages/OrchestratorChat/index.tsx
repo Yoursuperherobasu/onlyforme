@@ -1,6 +1,7 @@
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
-import { Send, Sparkles, ChevronDown, Plus, MessageSquare, PanelLeftClose, PanelLeft, User, Loader2, Trash2, Check, ImagePlus, X, Clock, Search, Image, Archive, ChevronRight, Globe, BookOpen, Headphones, Info, HelpCircle, Mic, AudioLines, FileUp, Paintbrush, Lightbulb, Upload, MoreVertical, Folder, ArrowLeft, File, FileText, Shield, CheckCircle2, SquarePen, Mail, Download, Copy, Pencil, Share2, LayoutGrid, Bot } from "lucide-react";
+import { Send, Sparkles, ChevronDown, Plus, MessageSquare, User, Loader2, Trash2, Check, ImagePlus, X, Clock, Search, Image, Archive, ChevronRight, Globe, BookOpen, Headphones, Info, HelpCircle, Mic, AudioLines, FileUp, Paintbrush, Lightbulb, Upload, MoreVertical, Folder, ArrowLeft, File, FileText, Shield, CheckCircle2, SquarePen, Mail, Download, Copy, Pencil, Share2, LayoutGrid, Bot } from "lucide-react";
+import { FaChevronLeft, FaChevronRight } from "react-icons/fa";
 import { useTranslation } from "react-i18next";
 import {
   useGetOrchAgents,
@@ -1264,6 +1265,9 @@ export default function AgentOrchestrator() {
       if (!(e.target as Element)?.closest?.("[data-apps-popover]")) {
         setShowAppsPopover(false);
       }
+      if (!(e.target as Element)?.closest?.("[data-agents-popover]")) {
+        setShowAgentsPopover(false);
+      }
       if (aiModelPickerRef.current && !aiModelPickerRef.current.contains(e.target as Node)) {
         setShowAiModelPicker(false);
         setShowMoreModels(false);
@@ -2432,27 +2436,36 @@ export default function AgentOrchestrator() {
     () => groupSessionsByDate(filteredArchivedSessions, t),
     [filteredArchivedSessions, t],
   );
+  const visibleAgents = useMemo(() => agents.slice(0, 5), [agents]);
+  const hiddenAgentsCount = Math.max(0, agents.length - visibleAgents.length);
 
   /* ------------------ RENDER ------------------ */
 
   return (
-    <div className="flex h-screen w-full overflow-hidden bg-background text-foreground">
+    <div className="relative flex h-screen w-full overflow-hidden bg-background text-foreground">
       {/* ================ SIDEBAR ================ */}
       <div
-        className={`flex flex-col overflow-hidden border-r border-border bg-muted transition-all duration-200 ${
+        className={`relative z-30 flex flex-col overflow-visible border-r border-border bg-muted transition-all duration-200 ${
           sidebarOpen ? "w-64 min-w-[16rem]" : "w-14 min-w-[3.5rem]"
         }`}
       >
-        {/* Sidebar Header */}
-        <div className={`flex items-center p-3 ${sidebarOpen ? "justify-between" : "justify-center"}`}>
+        {/* Second sidebar collapse toggle (fixed seam anchor) */}
+        <div className="absolute right-[-12px] top-[56px] z-[260] -translate-y-1/2">
           <button
             onClick={() => setSidebarOpen(!sidebarOpen)}
-            className="flex items-center rounded-md p-1.5 text-muted-foreground hover:bg-accent"
+            className="pointer-events-auto flex h-6 w-6 items-center justify-center rounded-full border border-gray-200 bg-white text-gray-700 shadow-md hover:bg-gray-100"
             title={sidebarOpen ? t("Collapse sidebar") : t("Expand sidebar")}
           >
-            {sidebarOpen ? <PanelLeftClose size={18} /> : <PanelLeft size={18} />}
+            {sidebarOpen ? (
+              <FaChevronLeft className="h-3.5 w-3.5" />
+            ) : (
+              <FaChevronRight className="h-3.5 w-3.5" />
+            )}
           </button>
         </div>
+
+        {/* Sidebar Header */}
+        <div className="flex h-12 items-center px-3" />
 
         {/* ---- Single scrollable region containing nav + apps + info + agents.
               Without this, expanding "Chat history" pushed the Applications
@@ -2813,6 +2826,27 @@ export default function AgentOrchestrator() {
             <SidebarMaskIcon src={miHelpIcon} />
             {sidebarOpen && <span>{t("Help")}</span>}
           </button>
+          {!sidebarOpen && (
+            <div data-agents-popover className="relative mt-0.5 flex justify-center">
+              <button
+                onClick={(e) => {
+                  const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                  const popoverHeight = 320;
+                  const margin = 12;
+                  const top = Math.max(
+                    margin,
+                    Math.min(rect.top, window.innerHeight - popoverHeight - margin),
+                  );
+                  setAgentsPopoverPos({ top, left: rect.right + 8 });
+                  setShowAgentsPopover(!showAgentsPopover);
+                }}
+                className="flex items-center justify-center rounded-lg p-2 text-muted-foreground hover:bg-accent hover:text-foreground"
+                title={t("Agents")}
+              >
+                <Bot size={18} />
+              </button>
+            </div>
+          )}
         </div>
 
         {/* Agents Panel — no internal scroll; participates in the single
@@ -2824,7 +2858,7 @@ export default function AgentOrchestrator() {
           </div>
           <div className="px-2 pb-2">
             <div className="flex flex-col gap-0.5">
-              {agents.map((agent) => (
+              {visibleAgents.map((agent) => (
                 <button
                   key={agent.id}
                   onClick={() => {
@@ -2846,6 +2880,27 @@ export default function AgentOrchestrator() {
                   </span>
                 </button>
               ))}
+              {hiddenAgentsCount > 0 && (
+                <button
+                  data-agents-popover
+                  onClick={(e) => {
+                    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                    const popoverHeight = 320;
+                    const margin = 12;
+                    const top = Math.max(
+                      margin,
+                      Math.min(rect.top - 8, window.innerHeight - popoverHeight - margin),
+                    );
+                    setAgentsPopoverPos({ top, left: rect.right + 8 });
+                    setShowAgentsPopover(true);
+                  }}
+                  className="mt-0.5 flex w-full items-center justify-between rounded-lg px-2 py-2 text-left text-[13px] text-muted-foreground hover:bg-accent hover:text-foreground"
+                  title={t("Show more agents")}
+                >
+                  <span>{t("More")}</span>
+                  <span className="text-xxs">+{hiddenAgentsCount}</span>
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -2881,6 +2936,38 @@ export default function AgentOrchestrator() {
             <img src={notebookLMLogo} alt="" className="h-5 w-5 shrink-0 object-contain" />
             <span>{t("NotebookLM")}</span>
           </button>
+        </div>
+      )}
+      {showAgentsPopover && (
+        <div
+          data-agents-popover
+          className="fixed z-[100] min-w-[220px] rounded-xl border border-border bg-popover p-1.5 shadow-lg"
+          style={{ top: agentsPopoverPos.top, left: agentsPopoverPos.left }}
+        >
+          <div className="px-2 py-1 text-xxs font-semibold uppercase tracking-wide text-muted-foreground">
+            {t("Agents")}
+          </div>
+          <div className="max-h-[260px] overflow-y-auto">
+            {agents.map((agent) => (
+              <button
+                key={agent.id}
+                onClick={() => {
+                  setSelectedModelId(agent.id);
+                  setShowModelPicker(false);
+                  setShowAgentsPopover(false);
+                }}
+                className={`flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-foreground hover:bg-accent ${
+                  selectedModelId === agent.id ? "bg-accent" : ""
+                }`}
+              >
+                <span
+                  className="h-2 w-2 shrink-0 rounded-full"
+                  style={{ background: agent.online ? agent.color : undefined }}
+                />
+                <span className="min-w-0 truncate">{agent.name}</span>
+              </button>
+            ))}
+          </div>
         </div>
       )}
 
@@ -3118,15 +3205,6 @@ export default function AgentOrchestrator() {
       <div className="relative flex flex-1 flex-col">
         {/* Top Bar */}
         <div className="flex h-[52px] shrink-0 items-center gap-2 border-b border-border px-4">
-          {!sidebarOpen && (
-            <button
-              onClick={() => setSidebarOpen(true)}
-              className="flex items-center rounded-md p-1.5 text-muted-foreground hover:bg-accent"
-            >
-              <PanelLeft size={18} />
-            </button>
-          )}
-
           {/* Agent selector */}
           <div ref={modelPickerRef} className="relative">
             <button
