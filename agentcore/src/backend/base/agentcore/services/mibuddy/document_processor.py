@@ -132,11 +132,17 @@ async def process_and_ingest(
         for i, chunk in enumerate(chunks):
             chunk_id = _make_chunk_id(session_id, file_name, i, chunk)
             all_chunks.append(chunk)
+            # Nest the metadata under a "metadata" key so the Pinecone service
+            # stores it as queryable metadata. Flat top-level keys (the old
+            # shape) were silently dropped by the service, which is why
+            # `item["metadata"]` came back empty on search.
             all_documents.append({
                 "page_content": chunk,
-                "source_file": file_name,
-                "chunk_index": i,
-                "session_id": session_id,
+                "metadata": {
+                    "source_file": file_name,
+                    "chunk_index": i,
+                    "session_id": session_id,
+                },
             })
             all_ids.append(chunk_id)
 
@@ -325,16 +331,118 @@ async def search_documents(
         logger.warning("[DocQA] Search returned 0 chunks after all retries")
         return []
 
-    # Per-file retrieval path.
+    # Per-file retrieval path — one broad Pinecone query, then distribute the
+    # returned chunks across files client-side. This is faster (single round
+    # trip) and robust even when the Pinecone service layer does not forward
+    # `metadata_filter` — any file that has ingested chunks will still surface.
     logger.info(
-        f"[DocQA] Per-file search: {len(files_to_search)} file(s) × {per_file_k} chunks each "
-        f"in namespace {session_id[:12]}..."
+        f"[DocQA] Broad search + per-file distribute: {len(files_to_search)} file(s) "
+        f"× {per_file_k} chunks each in namespace {session_id[:12]}..."
     )
 
-    async def _search_one_file(file_name: str) -> list[dict]:
-        for attempt in range(3):
+    # Pull a generous buffer so every file gets a chance to contribute even
+    # when one file's chunks dominate the top of the ranking.
+    broad_top_k = max(per_file_k * len(files_to_search) * 3, 30)
+
+    matches: list = []
+    for attempt in range(3):
+        try:
+            result = await async_search_via_service(
+                index_name=index_name,
+                namespace=session_id,
+                text_key="page_content",
+                query=query,
+                query_embedding=query_embedding,
+                number_of_results=broad_top_k,
+            )
+            matches = result.get("results", []) or result.get("matches", [])
+            if matches:
+                break
+            if attempt < 2:
+                logger.info(f"[DocQA] Broad search returned 0, retrying in 5s ({attempt + 1}/3)")
+                await asyncio.sleep(5)
+        except Exception as e:
+            logger.error(f"[DocQA] Broad Pinecone search failed (attempt {attempt + 1}): {e}")
+            if attempt < 2:
+                await asyncio.sleep(5)
+
+    # Log the distinct sources returned so mismatches jump out in the logs.
+    # Some Pinecone service wrappers flatten metadata into the top level;
+    # others keep a nested `metadata` dict. Probe both.
+    def _find_source(m: dict) -> str | None:
+        return (
+            (m.get("metadata", {}) or {}).get("source_file")
+            or m.get("source_file")
+            or (m.get("metadata", {}) or {}).get("sourceFile")
+            or m.get("sourceFile")
+        )
+
+    returned_sources: set[str] = set()
+    for m in matches:
+        s = _find_source(m)
+        if s:
+            returned_sources.add(s)
+    logger.info(
+        f"[DocQA] Broad search returned {len(matches)} match(es) covering "
+        f"{len(returned_sources)} source file(s): {sorted(returned_sources)}"
+    )
+    logger.info(f"[DocQA] Files we expected to find: {files_to_search}")
+
+    # Diagnostic: if we got matches but no source_file, dump the first match's
+    # keys and a small sample so we can see where the metadata actually lives.
+    if matches and not returned_sources:
+        import json
+        sample = matches[0]
+        try:
+            sample_keys = list(sample.keys()) if isinstance(sample, dict) else type(sample).__name__
+            meta_keys = list((sample.get("metadata") or {}).keys()) if isinstance(sample, dict) else []
+            logger.warning(
+                f"[DocQA] DIAGNOSTIC: match top-level keys={sample_keys}, "
+                f"metadata keys={meta_keys}"
+            )
+            # Truncated JSON dump of the first match for deeper inspection.
+            dump = json.dumps(sample, default=str)[:800]
+            logger.warning(f"[DocQA] DIAGNOSTIC: first match (truncated): {dump}")
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"[DocQA] DIAGNOSTIC: could not dump sample match: {exc}")
+
+    # Distribute: take top per_file_k chunks per expected file from the pool.
+    by_file: dict[str, list[dict]] = {f: [] for f in files_to_search}
+    for match in matches:
+        source = _find_source(match)
+        if not source or source not in by_file:
+            continue
+        if len(by_file[source]) >= per_file_k:
+            continue
+        text = _extract_match_text(match)
+        if not text:
+            continue
+        by_file[source].append({
+            "text": text,
+            "source_file": source,
+            "score": match.get("score", 0.0),
+        })
+
+    all_chunks: list[dict] = []
+    missing: list[str] = []
+    for file_name in files_to_search:
+        file_chunks = by_file[file_name]
+        logger.info(f"[DocQA]   {file_name}: {len(file_chunks)} chunk(s) from broad search")
+        all_chunks.extend(file_chunks)
+        if not file_chunks:
+            missing.append(file_name)
+
+    # Fallback for files that didn't surface in the broad search — try a
+    # targeted filtered query in case the filter IS supported and the broad
+    # search's top-K was too narrow.
+    if missing:
+        logger.info(
+            f"[DocQA] {len(missing)} file(s) had 0 chunks from broad search; "
+            f"attempting targeted filter as fallback: {missing}"
+        )
+        for file_name in missing:
             try:
-                result = await async_search_via_service(
+                fb_result = await async_search_via_service(
                     index_name=index_name,
                     namespace=session_id,
                     text_key="page_content",
@@ -343,27 +451,12 @@ async def search_documents(
                     number_of_results=per_file_k,
                     metadata_filter={"source_file": {"$eq": file_name}},
                 )
-                matches = result.get("results", []) or result.get("matches", [])
-                chunks = _matches_to_chunks(matches, default_source=file_name)
-                if chunks:
-                    return chunks
-                if attempt < 2:
-                    await asyncio.sleep(5)
+                fb_matches = fb_result.get("results", []) or fb_result.get("matches", [])
+                fb_chunks = _matches_to_chunks(fb_matches, default_source=file_name)
+                logger.info(f"[DocQA]   {file_name} (targeted): {len(fb_chunks)} chunk(s)")
+                all_chunks.extend(fb_chunks)
             except Exception as e:
-                logger.warning(f"[DocQA] Search failed for file '{file_name}' (attempt {attempt + 1}): {e}")
-                if attempt < 2:
-                    await asyncio.sleep(5)
-        return []
-
-    per_file_results = await asyncio.gather(
-        *(_search_one_file(f) for f in files_to_search),
-        return_exceptions=False,
-    )
-
-    all_chunks: list[dict] = []
-    for file_name, file_chunks in zip(files_to_search, per_file_results):
-        logger.info(f"[DocQA]   {file_name}: {len(file_chunks)} chunk(s) retrieved")
-        all_chunks.extend(file_chunks)
+                logger.warning(f"[DocQA]   {file_name} (targeted) failed: {e}")
 
     logger.info(f"[DocQA] Retrieved {len(all_chunks)} total chunks across {len(files_to_search)} file(s)")
     return all_chunks
@@ -404,7 +497,10 @@ def build_doc_qa_prompt(query: str, chunks: list) -> str:
     if not chunks:
         return query
 
-    # Legacy format: plain strings.
+    multi_file = False
+    file_names: list[str] = []
+
+    # Legacy format: plain strings — no source metadata available.
     if isinstance(chunks[0], str):
         context = "\n\n---\n\n".join(chunks)
     else:
@@ -423,13 +519,36 @@ def build_doc_qa_prompt(query: str, chunks: list) -> str:
             if body:
                 sections.append(f"[Source: {src}]\n{body}")
         context = "\n\n---\n\n".join(sections)
+        file_names = order
+        multi_file = len(order) > 1
+
+    if multi_file:
+        file_list_str = ", ".join(f'"{n}"' for n in file_names)
+        instruction = (
+            "You are answering a question based on multiple uploaded documents. "
+            f"The documents are: {file_list_str}.\n\n"
+            "STRICT RULES:\n"
+            "1. Use ONLY the document context below — do not invent, guess, or bring in outside knowledge.\n"
+            "2. Each chunk is prefixed with `[Source: filename]` showing which file it came from.\n"
+            "3. When you describe content, ALWAYS name the specific file it came from "
+            "(e.g. 'The file \"report.pdf\" explains...' or 'According to \"policy.txt\"...').\n"
+            "4. If the question asks to summarise, describe, or list what the files contain "
+            "(e.g. 'summarise these files', 'what do these documents cover'), produce a "
+            "separate summary for EACH file, naming every file explicitly.\n"
+            "5. Do NOT merge content from different files into one blurred paragraph — keep attribution clear.\n"
+            "6. If the answer is not in the provided context, say so honestly."
+        )
+    else:
+        only_file = file_names[0] if file_names else None
+        file_hint = f' "{only_file}"' if only_file else ""
+        instruction = (
+            f"You are answering a question based on the uploaded document{file_hint}. "
+            "Use ONLY the document context below to answer. "
+            "If the answer is not in the context, say so."
+        )
 
     return (
-        "You are answering questions based on the uploaded documents. "
-        "Use ONLY the following document context to answer. "
-        "If information comes from multiple documents, synthesize across them "
-        "and mention the source filenames when relevant. "
-        "If the answer is not in the context, say so.\n\n"
+        f"{instruction}\n\n"
         f"## Document Context\n\n{context}\n\n"
         f"## Question\n\n{query}"
     )

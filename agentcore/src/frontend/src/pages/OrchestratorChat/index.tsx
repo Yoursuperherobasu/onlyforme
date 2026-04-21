@@ -1,7 +1,8 @@
 
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
-import { Send, Sparkles, ChevronDown, Plus, MessageSquare, User, Loader2, Trash2, Check, ImagePlus, X, Clock, Search, Image, Archive, ChevronRight, Globe, BookOpen, Headphones, Info, HelpCircle, Mic, AudioLines, FileUp, Paintbrush, Lightbulb, Upload, MoreVertical, Folder, ArrowLeft, File, FileText, Shield, CheckCircle2, SquarePen, Mail, Download, Copy, Pencil, Share2, LayoutGrid, Bot } from "lucide-react";
+import { Send, Sparkles, ChevronDown, Plus, MessageSquare, User, Loader2, Trash2, Check, ImagePlus, X, Clock, Search, Image, Archive, ChevronRight, Globe, BookOpen, Headphones, Info, HelpCircle, Mic, AudioLines, FileUp, Paintbrush, Lightbulb, Upload, MoreVertical, Folder, ArrowLeft, File as FileIcon, FileText, Shield, CheckCircle2, SquarePen, Mail, Download, Copy, Pencil, Share2, LayoutGrid, Bot, ThumbsUp, ThumbsDown } from "lucide-react";
+import FeedbackPopup from "./FeedbackPopup";
 import { FaChevronLeft, FaChevronRight } from "react-icons/fa";
 import { useTranslation } from "react-i18next";
 import {
@@ -179,6 +180,18 @@ interface Message {
   // Canvas mode (MiBuddy-style) — if true, agent responses render in the
   // editable CanvasEditor card rather than as a plain MarkdownField.
   canvasEnabled?: boolean;
+  // True when the backend saved this row as sender="agent" (an agent
+  // deployment response). False when it came from direct model chat
+  // (backend sender="model"). Used by UI affordances that should only
+  // apply to one side — e.g. hiding the Teams/Outlook share menu on
+  // agent replies.
+  isAgentResponse?: boolean;
+  // Thumbs up/down feedback (MiBuddy-parity). Present only on assistant
+  // messages the user has rated; cleared when the user un-votes.
+  feedbackRating?: "up" | "down" | null;
+  feedbackReasons?: string[] | null;
+  feedbackComment?: string | null;
+  feedbackAt?: string | null;
 }
 
 interface FilePreview {
@@ -260,10 +273,24 @@ function mapApiMessages(apiMessages: OrchMessageResponse[]): Message[] {
       block.contents?.some((c: any) => c.type === "tool_use"),
     );
 
+    // Backend stores assistant messages with sender="agent" (agent deployments)
+    // or sender="model" (direct model chat). The UI treats both identically —
+    // normalize to "agent" at this boundary so existing sender === "agent"
+    // checks throughout this file don't each need to learn about "model".
+    // `isAgentResponse` preserves the original distinction for the handful
+    // of UI affordances that should only apply to one side (e.g. the
+    // Teams/Outlook share menu, shown only for model replies).
+    const isAgentResponse = m.sender === "agent";
+    const normalizedSender = (m.sender === "model" ? "agent" : m.sender) as
+      | "user"
+      | "agent"
+      | "system";
+
     return {
       id: m.id,
-      sender: m.sender as "user" | "agent" | "system",
-      agentName: m.sender === "agent" ? m.sender_name : undefined,
+      sender: normalizedSender,
+      agentName: normalizedSender === "agent" ? m.sender_name : undefined,
+      isAgentResponse: normalizedSender === "agent" ? isAgentResponse : undefined,
       content: m.text,
       timestamp: m.timestamp
         ? new Date(m.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
@@ -288,6 +315,11 @@ function mapApiMessages(apiMessages: OrchMessageResponse[]): Message[] {
         ? (props.is_deployed_run !== undefined ? !!props.is_deployed_run : false)
         : undefined,
       reasoningContent: (m as any).reasoning_content || undefined,
+      // Feedback (thumbs up/down) — hydrated from DB so state persists on reload.
+      feedbackRating: ((m as any).feedback_rating ?? null) as "up" | "down" | null,
+      feedbackReasons: ((m as any).feedback_reasons ?? null) as string[] | null,
+      feedbackComment: ((m as any).feedback_comment ?? null) as string | null,
+      feedbackAt: ((m as any).feedback_at ?? null) as string | null,
     };
   });
 }
@@ -682,6 +714,129 @@ export default function AgentOrchestrator() {
   // Inline prompt editing (user messages)
   const [editingMsgId, setEditingMsgId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState<string>("");
+  // Feedback popup (thumbs up/down) — opens when the user picks a rating or
+  // switches from one to the other. Null while no popup is active.
+  const [feedbackPopup, setFeedbackPopup] = useState<{
+    messageId: string;
+    mode: "up" | "down";
+    initialReasons: string[];
+    initialComment: string;
+  } | null>(null);
+
+  // ------------------------------------------------------------------
+  // Thumbs up/down feedback handlers (MiBuddy-parity)
+  //  1. First vote on a message         → opens popup, POST on submit
+  //  2. Clicking the opposite thumb     → opens popup for the new rating,
+  //                                       POST overwrites the same DB row
+  //  3. Clicking the active thumb again → DELETE endpoint clears the row
+  //  4. Double-click Submit in popup    → disabled while in-flight (see popup)
+  // ------------------------------------------------------------------
+  const feedbackAuthHeaders = (): Record<string, string> => {
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    const tokenMatch = document.cookie.match(/(?:^|;\s*)access_token_ag=([^;]*)/);
+    if (tokenMatch?.[1]) headers["Authorization"] = `Bearer ${decodeURIComponent(tokenMatch[1])}`;
+    return headers;
+  };
+
+  const handleRemoveFeedback = async (messageId: string): Promise<void> => {
+    const previous = messages.find((m) => m.id === messageId);
+    // Optimistic clear.
+    setMessages((prev) => prev.map((m) => (
+      m.id === messageId
+        ? { ...m, feedbackRating: null, feedbackReasons: null, feedbackComment: null, feedbackAt: null }
+        : m
+    )));
+
+    try {
+      const res = await fetch(
+        `${getURL("ORCHESTRATOR")}/messages/${encodeURIComponent(messageId)}/feedback`,
+        { method: "DELETE", headers: feedbackAuthHeaders(), credentials: "include" },
+      );
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    } catch (err) {
+      console.error("[handleRemoveFeedback] failed:", err);
+      if (previous) {
+        setMessages((prev) => prev.map((m) => (m.id === messageId ? previous : m)));
+      }
+      useAlertStore.getState().setErrorData?.({
+        title: "Could not remove rating",
+        list: ["Please try again."],
+      });
+    }
+  };
+
+  const handleThumbClick = (msg: Message, rating: "up" | "down") => {
+    if (msg.sender !== "agent") return;
+    // Case 3: clicking the already-active thumb → un-vote → DELETE.
+    if (msg.feedbackRating === rating) {
+      void handleRemoveFeedback(msg.id);
+      return;
+    }
+    // Cases 1 & 2: first vote or switch → open popup, pre-fill if switching.
+    setFeedbackPopup({
+      messageId: msg.id,
+      mode: rating,
+      initialReasons: msg.feedbackRating === rating ? (msg.feedbackReasons ?? []) : [],
+      initialComment: msg.feedbackRating === rating ? (msg.feedbackComment ?? "") : "",
+    });
+  };
+
+  const handleSubmitFeedback = async (reasons: string[], comment: string): Promise<void> => {
+    if (!feedbackPopup) return;
+    const { messageId, mode } = feedbackPopup;
+
+    // Optimistic update — UI fills the thumb immediately.
+    const previous = messages.find((m) => m.id === messageId);
+    setMessages((prev) => prev.map((m) => (
+      m.id === messageId
+        ? {
+            ...m,
+            feedbackRating: mode,
+            feedbackReasons: reasons.length ? reasons : null,
+            feedbackComment: comment || null,
+            feedbackAt: new Date().toISOString(),
+          }
+        : m
+    )));
+
+    try {
+      const res = await fetch(
+        `${getURL("ORCHESTRATOR")}/messages/${encodeURIComponent(messageId)}/feedback`,
+        {
+          method: "POST",
+          headers: feedbackAuthHeaders(),
+          credentials: "include",
+          body: JSON.stringify({ rating: mode, reasons, comment: comment || null }),
+        },
+      );
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      // Reconcile with server-returned state (authoritative).
+      setMessages((prev) => prev.map((m) => (
+        m.id === messageId
+          ? {
+              ...m,
+              feedbackRating: (data.feedback_rating ?? null) as "up" | "down" | null,
+              feedbackReasons: data.feedback_reasons ?? null,
+              feedbackComment: data.feedback_comment ?? null,
+              feedbackAt: data.feedback_at ?? null,
+            }
+          : m
+      )));
+      setFeedbackPopup(null);
+    } catch (err) {
+      console.error("[handleSubmitFeedback] failed:", err);
+      if (previous) {
+        setMessages((prev) => prev.map((m) => (m.id === messageId ? previous : m)));
+      }
+      useAlertStore.getState().setErrorData?.({
+        title: "Could not save feedback",
+        list: ["Please try again."],
+      });
+      throw err; // let FeedbackPopup re-enable Submit
+    }
+  };
+
   // Ref holder so handleSaveEdit can call handleSend without creating a circular
   // useCallback dependency chain. Accepts an optional override text for edit-and-send.
   const handleSendRef = useRef<((overrideText?: string) => void) | null>(null);
@@ -799,7 +954,7 @@ export default function AgentOrchestrator() {
     }
   };
 
-  const MAX_FILES = 5;
+  const MAX_FILES = 10;
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
@@ -1113,6 +1268,25 @@ export default function AgentOrchestrator() {
       });
     return () => { cancelled = true; };
   }, []);
+
+  // Default state on page open: No Agent selected, MiBuddy AI pre-selected in
+  // the model dropdown. MUST run exactly once — without the ref guard, picking
+  // an agent (which sets selectedAiModel=null) would re-trigger this effect and
+  // snap the UI back to MiBuddy AI, blocking agent selection entirely.
+  // Priority for model: explicit MiBuddy AI entry → is_default flag → first model.
+  const didDefaultSelectRef = useRef(false);
+  useEffect(() => {
+    if (didDefaultSelectRef.current) return;
+    if (aiModels.length === 0) return;
+    didDefaultSelectRef.current = true;
+    const mibuddy = aiModels.find((m) => /mibuddy[\s_-]?ai/i.test(m.name));
+    const defaultModel = mibuddy || aiModels.find((m) => m.is_default) || aiModels[0];
+    if (defaultModel) {
+      setSelectedAiModel(defaultModel.id);
+      setNoAgentMode(true);
+      setSelectedModelId("");
+    }
+  }, [aiModels]);
 
   // Keep HITL status in sync when decisions happen on HITL Approvals page.
   // This lets orchestrator chat hide the pending banner and show final status
@@ -1875,6 +2049,10 @@ export default function AgentOrchestrator() {
           content: "",  // empty = "Thinking..." state
           timestamp: timeNow(),
           canvasEnabled: isCanvasEnabled || undefined,
+          // Mirror the backend's sender="model" vs "agent" distinction so UI
+          // affordances (e.g. Teams/Outlook share menu) are hidden immediately
+          // for model replies instead of flashing until the post-send refetch.
+          isAgentResponse: !noAgentMode,
         },
       ]);
       setInput("");
@@ -3643,6 +3821,34 @@ export default function AgentOrchestrator() {
                         {msg.content && !isSending && !/!\[.*?\]\(.*?\)/.test(msg.content) && (
                           <div className="mt-1.5 flex items-center gap-1">
                             <button
+                              onClick={() => handleThumbClick(msg, "up")}
+                              className={`flex h-7 w-7 items-center justify-center rounded-md transition-colors ${
+                                msg.feedbackRating === "up"
+                                  ? "text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30"
+                                  : "text-muted-foreground hover:bg-accent hover:text-foreground"
+                              }`}
+                              title={msg.feedbackRating === "up" ? t("Remove rating") : t("Good response")}
+                            >
+                              <ThumbsUp
+                                size={13}
+                                fill={msg.feedbackRating === "up" ? "currentColor" : "none"}
+                              />
+                            </button>
+                            <button
+                              onClick={() => handleThumbClick(msg, "down")}
+                              className={`flex h-7 w-7 items-center justify-center rounded-md transition-colors ${
+                                msg.feedbackRating === "down"
+                                  ? "text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30"
+                                  : "text-muted-foreground hover:bg-accent hover:text-foreground"
+                              }`}
+                              title={msg.feedbackRating === "down" ? t("Remove rating") : t("Bad response")}
+                            >
+                              <ThumbsDown
+                                size={13}
+                                fill={msg.feedbackRating === "down" ? "currentColor" : "none"}
+                              />
+                            </button>
+                            <button
                               onClick={() => handleCopyMessage(msg.content, msg.id)}
                               className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
                               title={copiedMsgId === msg.id ? t("Copied!") : t("Copy")}
@@ -3690,34 +3896,38 @@ export default function AgentOrchestrator() {
                                 </div>
                               )}
                             </div>
-                            {/* Share / More options menu */}
-                            <div className="relative" data-share-menu>
-                              <button
-                                onClick={() => setShareMenuOpenId(shareMenuOpenId === msg.id ? null : msg.id)}
-                                className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
-                                title={t("More options")}
-                              >
-                                <MoreVertical size={13} />
-                              </button>
-                              {shareMenuOpenId === msg.id && (
-                                <div className="absolute left-0 top-full z-50 mt-1 min-w-[180px] rounded-lg border border-border bg-popover p-1 shadow-lg">
-                                  <button
-                                    onClick={() => handleShareTeams(msg.content)}
-                                    className="flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-left text-sm text-foreground hover:bg-accent"
-                                  >
-                                    <img src={shareTeamsIcon} alt="Teams" className="h-4 w-4 object-contain" />
-                                    <span>{t("Share on MsTeams")}</span>
-                                  </button>
-                                  <button
-                                    onClick={() => handleOutlookDraft(msg.content)}
-                                    className="flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-left text-sm text-foreground hover:bg-accent"
-                                  >
-                                    <img src={outlookIcon} alt="Outlook" className="h-4 w-4 object-contain" />
-                                    <span>{t("Draft in Outlook")}</span>
-                                  </button>
-                                </div>
-                              )}
-                            </div>
+                            {/* Share / More options menu — model replies only.
+                                Hidden on agent-deployment responses per product
+                                decision (Teams/Outlook share is a model feature). */}
+                            {!msg.isAgentResponse && (
+                              <div className="relative" data-share-menu>
+                                <button
+                                  onClick={() => setShareMenuOpenId(shareMenuOpenId === msg.id ? null : msg.id)}
+                                  className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
+                                  title={t("More options")}
+                                >
+                                  <MoreVertical size={13} />
+                                </button>
+                                {shareMenuOpenId === msg.id && (
+                                  <div className="absolute left-0 top-full z-50 mt-1 min-w-[180px] rounded-lg border border-border bg-popover p-1 shadow-lg">
+                                    <button
+                                      onClick={() => handleShareTeams(msg.content)}
+                                      className="flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-left text-sm text-foreground hover:bg-accent"
+                                    >
+                                      <img src={shareTeamsIcon} alt="Teams" className="h-4 w-4 object-contain" />
+                                      <span>{t("Share on MsTeams")}</span>
+                                    </button>
+                                    <button
+                                      onClick={() => handleOutlookDraft(msg.content)}
+                                      className="flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-left text-sm text-foreground hover:bg-accent"
+                                    >
+                                      <img src={outlookIcon} alt="Outlook" className="h-4 w-4 object-contain" />
+                                      <span>{t("Draft in Outlook")}</span>
+                                    </button>
+                                  </div>
+                                )}
+                              </div>
+                            )}
                           </div>
                         )}
                         {/* HITL action buttons */}
@@ -3942,7 +4152,13 @@ export default function AgentOrchestrator() {
                     <Image size={12} className="text-red-500" />
                     <span className="text-xs font-semibold text-red-500">{t("Image")}</span>
                     <button
-                      onClick={() => setImageMode(false)}
+                      onClick={() => {
+                        // Dismiss the Image chip and revert the dropdown from the
+                        // image-gen model (Nano Banana / DALL-E) back to MiBuddy AI.
+                        const mibuddy = aiModels.find((m) => /mibuddy[\s_-]?ai/i.test(m.name));
+                        if (mibuddy) setSelectedAiModel(mibuddy.id);
+                        setImageMode(false);
+                      }}
                       className="ml-0.5 rounded-full p-0.5 text-red-400 hover:bg-red-100 hover:text-red-600 dark:hover:bg-red-900/50"
                     >
                       <X size={10} />
@@ -3993,15 +4209,18 @@ export default function AgentOrchestrator() {
                   </button>
                 </div>
 
-                {/* Upload image button */}
-                <button
-                  onClick={() => fileInputRef.current?.click()}
-                  disabled={isSending || !canInteract || isSharedReadOnly || hasPendingHitl}
-                  className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors ${(isSending || !canInteract || isSharedReadOnly || hasPendingHitl) ? "cursor-not-allowed opacity-50" : "hover:bg-accent hover:text-foreground"}`}
-                  title={t("Upload image")}
-                >
-                  <ImagePlus size={18} />
-                </button>
+                {/* Upload image button — hidden when a model or agent is active;
+                    upload in those modes goes through the + menu instead. */}
+                {!((noAgentMode && selectedAiModel) || (!noAgentMode && selectedModelId)) && (
+                  <button
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={isSending || !canInteract || isSharedReadOnly || hasPendingHitl}
+                    className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors ${(isSending || !canInteract || isSharedReadOnly || hasPendingHitl) ? "cursor-not-allowed opacity-50" : "hover:bg-accent hover:text-foreground"}`}
+                    title={t("Upload image")}
+                  >
+                    <ImagePlus size={18} />
+                  </button>
+                )}
 
                 <textarea
                   ref={textareaRef}
@@ -4103,6 +4322,17 @@ export default function AgentOrchestrator() {
         </div>
       </div>
       )}
+      {/* ---- Thumbs up/down feedback popup (MiBuddy-parity) ---- */}
+      {feedbackPopup && (
+        <FeedbackPopup
+          mode={feedbackPopup.mode}
+          initialReasons={feedbackPopup.initialReasons}
+          initialComment={feedbackPopup.initialComment}
+          onSubmit={handleSubmitFeedback}
+          onClose={() => setFeedbackPopup(null)}
+        />
+      )}
+
       {/* ---- Addon: SharePoint File Picker (MSAL-based) ---- */}
       <SharePointFilePicker
         isOpen={spPickerOpen}

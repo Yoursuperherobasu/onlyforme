@@ -76,6 +76,19 @@ class OrchConversationTable(OrchConversationBase, table=True):  # type: ignore[c
         default=None,
         sa_column=Column(Text, nullable=True),
     )
+    # Per-message thumbs up/down feedback (MiBuddy-parity).
+    # One feedback per assistant message — clicking again clears these columns.
+    # Migration: add_message_feedback_to_orch_conversation.
+    feedback_rating: str | None = Field(default=None, nullable=True)  # "up" | "down" | None
+    feedback_reasons: list[str] | None = Field(
+        default=None,
+        sa_column=Column(JSON, nullable=True),
+    )
+    feedback_comment: str | None = Field(
+        default=None,
+        sa_column=Column(Text, nullable=True),
+    )
+    feedback_at: datetime | None = Field(default=None, nullable=True)
     is_archived: bool = Field(default=False)
     # User-chosen title for the session (MiBuddy-parity rename). Stored on
     # any row of the session — the sessions-list query picks the first
@@ -140,6 +153,10 @@ class OrchConversationRead(OrchConversationBase):
     deployment_id: UUID | None = None
     model_id: UUID | None = None
     reasoning_content: str | None = None
+    feedback_rating: str | None = None
+    feedback_reasons: list[str] | None = None
+    feedback_comment: str | None = None
+    feedback_at: datetime | None = None
 
 
 class OrchConversationCreate(OrchConversationBase):

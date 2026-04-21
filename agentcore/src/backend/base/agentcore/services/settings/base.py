@@ -427,6 +427,15 @@ class Settings(BaseSettings):
     doc_qa_top_k: int = 5
     """Number of chunks to retrieve per query."""
 
+    # Azure Document Intelligence — OCR fallback for scanned PDFs in doc Q&A.
+    # When a PDF page has < 50 chars of native text, we target ADI's
+    # `prebuilt-read` model at just those pages. Leave empty to disable OCR
+    # (scanned pages will appear empty; rest of the pipeline continues).
+    azure_document_intelligence_endpoint: str = ""
+    """Azure Document Intelligence endpoint, e.g. https://<res>.cognitiveservices.azure.com/."""
+    azure_document_intelligence_key: str = ""
+    """Azure Document Intelligence API key."""
+
     # Azure AI Search (direct SDK — no microservice needed)
     azure_ai_search_endpoint: str = ""
     """Azure AI Search service endpoint (e.g. https://mysearch.search.windows.net).

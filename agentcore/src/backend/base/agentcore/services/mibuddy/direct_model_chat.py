@@ -145,7 +145,9 @@ async def _build_messages_from_history(
             continue
         if sender == "user":
             messages.append(HumanMessage(content=text))
-        elif sender == "agent":
+        # Both "agent" (agent-deployment responses) and "model" (direct
+        # model-chat responses) are assistant turns in the LLM conversation.
+        elif sender in ("agent", "model"):
             messages.append(AIMessage(content=text))
 
     # Build current user message with optional file attachments

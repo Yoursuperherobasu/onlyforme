@@ -123,6 +123,10 @@ def resolve_backend_secrets_from_key_vault() -> None:
         # MiBuddy system LLM + Azure AI Project (company KB)
         "MIBUDDY_API_KEY": "AGENTCORE_KEY_VAULT_MIBUDDY_API_KEY_SECRET_NAME",
         "AZURE_AI_PROJECT_CLIENT_SECRET": "AGENTCORE_KEY_VAULT_AZURE_AI_PROJECT_CLIENT_SECRET_SECRET_NAME",
+        # Azure Document Intelligence (`prebuilt-read`) for scanned-PDF OCR.
+        # Endpoint stays as a plain env var (it's just a URL); only the key
+        # is a secret.
+        "AZURE_DOCUMENT_INTELLIGENCE_KEY": "AGENTCORE_KEY_VAULT_AZURE_DOCUMENT_INTELLIGENCE_KEY_SECRET_NAME",
     }
 
     for env_name, secret_name_env in optional_mappings.items():
