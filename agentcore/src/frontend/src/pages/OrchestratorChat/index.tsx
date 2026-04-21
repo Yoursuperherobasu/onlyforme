@@ -2567,11 +2567,11 @@ export default function AgentOrchestrator() {
 
   /* ---- group chat history by date ---- */
   const activeSessions = useMemo(
-    () => (apiSessions || []).filter((s) => !s.is_archived),
+    () => (apiSessions || []).filter((s) => !s.is_archived).slice(0, 20),
     [apiSessions],
   );
   const archivedSessions = useMemo(
-    () => (apiSessions || []).filter((s) => s.is_archived),
+    () => (apiSessions || []).filter((s) => s.is_archived).slice(0, 20),
     [apiSessions],
   );
 
@@ -2770,7 +2770,7 @@ export default function AgentOrchestrator() {
             {sidebarOpen && <ChevronRight size={14} className={`text-muted-foreground transition-transform ${showChatHistoryExpand ? "rotate-90" : ""}`} />}
           </button>
           {sidebarOpen && showChatHistoryExpand && (
-            <div className="ml-4 border-l border-border pl-1">
+            <div className="ml-4 max-h-[9rem] overflow-y-auto border-l border-border pl-1">
               {Object.entries(grouped).map(([date, chats]) => (
                 <div key={date} className="mb-2">
                   <div className="px-3 pb-1 pt-2 text-xxs font-semibold uppercase tracking-wide text-muted-foreground">
@@ -2859,7 +2859,7 @@ export default function AgentOrchestrator() {
             {sidebarOpen && <ChevronRight size={14} className={`text-muted-foreground transition-transform ${showArchiveChatExpand ? "rotate-90" : ""}`} />}
           </button>
           {sidebarOpen && showArchiveChatExpand && (
-            <div className="ml-4 border-l border-border pl-1">
+            <div className="ml-4 max-h-[9rem] overflow-y-auto border-l border-border pl-1">
               {archivedSessions.length === 0 ? (
                 <div className="px-3 py-4 text-center text-xs text-muted-foreground">
                   {t("No archived chats")}

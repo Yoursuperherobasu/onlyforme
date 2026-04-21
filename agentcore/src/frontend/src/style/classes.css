@@ -919,32 +919,6 @@ input[type="search"]::-webkit-search-cancel-button {
   align-items: center;
 }
 
-.canvas_icon_wrapper {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.canvas_icon_wrapper img {
-  width: 24px;
-  height: 24px;
-}
-
-.canvas_icon_loader {
-  position: absolute;
-  width: 16px;
-  height: 16px;
-  border: 2px solid rgba(255, 255, 255, 0.3);
-  border-top-color: #fff;
-  border-radius: 50%;
-  animation: canvas_spin 0.8s linear infinite;
-}
-
-@keyframes canvas_spin {
-  to { transform: rotate(360deg); }
-}
-
 .reading_level_wrapper {
   position: absolute;
   right: 0px;
@@ -952,6 +926,22 @@ input[type="search"]::-webkit-search-cancel-button {
   display: flex;
   align-items: center;
   bottom: 40px;
+}
+
+.reading_dot {
+  cursor: pointer;
+}
+
+.reading_dot:hover {
+  transform: scale(1.2);
+}
+
+.reading_book {
+  cursor: grab;
+}
+
+.reading_book:active {
+  cursor: grabbing;
 }
 
 .reading_level_label {
@@ -972,7 +962,54 @@ input[type="search"]::-webkit-search-cancel-button {
   background: #ededed;
 }
 
-.slider-wrapper.reading_track {
+.reading_dot {
+  width: 6px;
+  height: 6px;
+  margin: 8px auto;
+  border-radius: 50%;
+  background: #c7c7c7;
+  cursor: pointer;
+  position: relative;
+}
+
+.reading_dot.active {
+  background: #111;
+}
+
+.reading_book {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -60%);
+  background: white;
+  border-radius: 50%;
+  padding: 3px;
+  font-size: 18px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+  cursor: grab;
+}
+
+.emoji_lavel {
+  cursor: pointer;
+}
+
+.reading_level {
+  cursor: pointer;
+}
+
+.close_canvas_edit {
+  top: -9px;
+  position: absolute;
+  left: 7px;
+  background: #fff;
+  border-radius: 100%;
+  padding: 3px 6px;
+  border: 1px solid #eeeeee;
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.slider-wrapper {
   display: flex;
   align-items: center;
   gap: 20px;
@@ -988,23 +1025,15 @@ input[type="search"]::-webkit-search-cancel-button {
   justify-content: center;
 }
 
-.slider-fill {
+.vertical-slider {
+  writing-mode: bt-lr;
+  -webkit-appearance: slider-vertical;
+  appearance: slider-vertical;
+  width: 8px;
+  height: 250px;
   position: absolute;
-  bottom: 0;
-  width: 2px;
-  left: 50%;
-  transform: translateX(-50%);
-  background: #d92128;
-  transition: height 0.15s ease;
-}
-
-.slider-thumb {
-  position: absolute;
-  width: 0;
-  height: 0;
-  left: 50%;
-  transform: translateX(-50%);
-  transition: bottom 0.15s ease;
+  background: transparent;
+  z-index: 2;
 }
 
 .track-dot {
@@ -1025,6 +1054,7 @@ input[type="search"]::-webkit-search-cancel-button {
   display: flex;
   align-items: center;
   justify-content: center;
+  bottom: 77%;
 }
 
 .track-dot.active .reading_lavel_icon {
@@ -1040,6 +1070,7 @@ input[type="search"]::-webkit-search-cancel-button {
 }
 
 .track-dot.active::before {
+  /* content: "📖"; */
   font-size: 22px !important;
   position: absolute;
   inset: 0;
@@ -1057,10 +1088,38 @@ input[type="search"]::-webkit-search-cancel-button {
   opacity: 0;
 }
 
-.track-dot.disabled {
-  cursor: default;
-  opacity: 0.6;
+.price-text {
+  font-weight: bold;
+  font-size: 16px;
 }
+
+/* canvas ui end */
+
+/*loader on icon start*/
+.canvas_icon_wrapper {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.canvas_icon_loader {
+  position: absolute;
+  width: 16px;
+  height: 16px;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/*loader on icon end*/
 
 /* Dark mode for reading level */
 .dark .reading_track,
