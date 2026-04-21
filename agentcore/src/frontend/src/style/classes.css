@@ -852,16 +852,22 @@ input[type="search"]::-webkit-search-cancel-button {
 }
 
 .ac_canvas_actions {
+  padding: 0;
+}
+
+.ac_canvas_wrapper .ac_canvas_actions {
   display: flex;
   justify-content: flex-end;
-  gap: 16px;
-  padding: 6px 4px 2px 4px;
+  gap: 12px;
+  padding: 15px;
+  text-align: right;
+  width: 100%;
 }
 
 .ac_canvas_btn {
   color: #d92128;
-  font-size: 14px;
-  font-weight: 600;
+  font-size: 16px;
+  font-weight: 500;
   cursor: pointer;
   background: none;
   border: 0;
@@ -874,10 +880,10 @@ input[type="search"]::-webkit-search-cancel-button {
 .ac_canvas_draft_btn {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
   color: #d92128;
-  font-size: 14px;
-  font-weight: 600;
+  font-size: 16px;
+  font-weight: 500;
   cursor: pointer;
   background: none;
   border: 0;
@@ -956,7 +962,6 @@ input[type="search"]::-webkit-search-cancel-button {
   font-size: 12px;
   margin-right: 12px;
   white-space: nowrap;
-  text-transform: capitalize;
 }
 
 .reading_track {

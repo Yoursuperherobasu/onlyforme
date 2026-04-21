@@ -3622,7 +3622,7 @@ export default function AgentOrchestrator() {
                             messageId={msg.id}
                             content={msg.content}
                             sessionId={currentSessionId || undefined}
-                            showDraftButton={isOutlookOrchConnected}
+                            showDraftButton={false}
                             onContentChange={(updated) => {
                               setMessages((prev) =>
                                 prev.map((m) =>

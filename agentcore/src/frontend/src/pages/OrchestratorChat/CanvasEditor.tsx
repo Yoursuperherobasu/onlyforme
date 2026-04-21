@@ -10,7 +10,7 @@
  * Floating panel + reading-level slider matches MiBuddy exactly.
  */
 import { useEffect, useRef, useState } from "react";
-import { Pencil, Check, Mail, Loader2 } from "lucide-react";
+import { Pencil, Check, Mail } from "lucide-react";
 
 // MiBuddy SVG icons
 import emojiActWord from "@/assets/emojiAct_word.svg";
