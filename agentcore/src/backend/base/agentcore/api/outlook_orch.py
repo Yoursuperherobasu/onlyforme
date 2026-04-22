@@ -78,9 +78,6 @@ def _get_state_cipher():
     from cryptography.fernet import Fernet
     return Fernet(_get_or_generate_encryption_key())
 
-# session_id → user_id (for the outlook_session cookie)
-_outlook_cookie_sessions: Dict[str, str] = {}
-_session_lock = threading.Lock()
 
 _OUTLOOK_SCOPES = " ".join([
     "https://graph.microsoft.com/User.Read",
@@ -277,15 +274,15 @@ async def outlook_auth_callback(
 
     outlook_token_manager.store_token(user_id, access_token, expires_in)
 
-    session_id = str(uuid4())
-    with _session_lock:
-        _outlook_cookie_sessions[session_id] = user_id
+    # Encrypt user_id into the cookie so ANY pod can read it back
+    # (same approach as the encrypted PKCE state).
+    encrypted_uid = _get_state_cipher().encrypt(user_id.encode()).decode()
 
     is_secure = _is_request_secure(request)
     response = HTMLResponse(content=_AUTH_SUCCESS_HTML)
     response.set_cookie(
         key="outlook_session",
-        value=session_id,
+        value=encrypted_uid,
         httponly=True,
         secure=is_secure,
         samesite="lax",
@@ -299,16 +296,25 @@ async def outlook_auth_callback(
 #   STATUS / DISCONNECT
 # ══════════════════════════════════════════════════════════════════════
 
+def _decrypt_outlook_cookie(request: Request) -> Optional[str]:
+    """Decrypt the outlook_session cookie to get the user_id."""
+    cookie = request.cookies.get("outlook_session")
+    if not cookie:
+        return None
+    try:
+        return _get_state_cipher().decrypt(cookie.encode()).decode()
+    except Exception:
+        return None
+
+
 @router.get("/status")
 async def outlook_status(
     request: Request, current_user: CurrentActiveUser,
 ) -> JSONResponse:
     user_id = str(current_user.id)
-    session_id = request.cookies.get("outlook_session")
-    with _session_lock:
-        cookie_user = _outlook_cookie_sessions.get(session_id) if session_id else None
+    cookie_user = _decrypt_outlook_cookie(request)
     token_connected = outlook_token_manager.is_connected(user_id)
-    is_connected = bool(session_id and cookie_user == user_id and token_connected)
+    is_connected = bool(cookie_user == user_id and token_connected)
     return JSONResponse(content={"connected": is_connected}, status_code=200)
 
 
@@ -318,10 +324,6 @@ async def outlook_disconnect(
 ) -> JSONResponse:
     user_id = str(current_user.id)
     outlook_token_manager.delete_token(user_id)
-    session_id = request.cookies.get("outlook_session")
-    if session_id:
-        with _session_lock:
-            _outlook_cookie_sessions.pop(session_id, None)
     response = JSONResponse(
         content={"message": "Outlook disconnected successfully"}, status_code=200,
     )
