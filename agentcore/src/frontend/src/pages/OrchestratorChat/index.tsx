@@ -374,6 +374,11 @@ interface AiModelOption {
 
 // Resolve a model logo by matching id/name/provider against known patterns.
 function resolveModelIcon(model: { model_id?: string; model_name?: string; display_name?: string; provider?: string }): string {
+  // If display_name starts with "mibuddy", always show mibuddy icon regardless of model family.
+  // Only check display_name — model_id may contain "mibuddy" as a prefix for all models (e.g. "mibuddy-gpt-5.2-chat").
+  const displayName = (model.display_name || "").toLowerCase();
+  if (/^mibuddy/.test(displayName)) return micoreLogo;
+
   // Combine all name fields + provider so we can match the actual model family
   // even when it's deployed behind a provider like Azure.
   const hay = `${model.model_id || ""} ${model.model_name || ""} ${model.display_name || ""} ${model.provider || ""}`.toLowerCase();
