@@ -5,11 +5,21 @@ the same cached enriched trace list so data is always consistent across tabs.
 """
 
 import hashlib
+import re
 import time
 import concurrent.futures
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
+
+_UUID_RE = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+    re.IGNORECASE,
+)
+
+
+def _looks_like_uuid(value: Any) -> bool:
+    return bool(value and isinstance(value, str) and _UUID_RE.match(value))
 
 from .parsing import (
     get_attr,
@@ -263,16 +273,13 @@ def _fetch_scoped_traces(
 
     combined: list[Any] = []
     seen_trace_positions: dict[str, int] = {}
-    max_users = 200
-    scoped_user_ids = sorted(allowed_user_ids)[:max_users]
 
-    per_user_limit = max(100, min(limit, 500))
-    if fetch_all:
-        per_user_limit = 500
-
-    # For broad admin scopes, use per-client broad fetch
-    fanout_call_budget = len(clients) * len(scoped_user_ids)
-    use_broad_fetch = fanout_call_budget > 24
+    # Always broad-fetch and filter client-side. The per-user fan-out used to
+    # call Langfuse's fetch_traces(user_id=<UUID>), but traces now carry the
+    # human-readable username in Langfuse's trace.user_id field (the UUID is
+    # stored in metadata.user_uuid), so server-side UUID matching yields zero
+    # results. Client-side filtering via extract_trace_user_ids handles both
+    # old (UUID) and new (username + user_uuid metadata) trace shapes.
 
     def _fetch_client_traces_broad(client_obj: Any, broad_limit: int) -> list[Any]:
         page_size = min(100, max(1, broad_limit))
@@ -333,50 +340,22 @@ def _fetch_scoped_traces(
 
         return []
 
-    if use_broad_fetch:
-        broad_limit = 5000 if fetch_all else min(limit, 500)
-        for client_idx, client in enumerate(clients):
-            broad_traces = _fetch_client_traces_broad(client, broad_limit)
-            for trace in broad_traces:
-                extracted_uids = extract_trace_user_ids(trace)
-                if extracted_uids and not extracted_uids.intersection(allowed_user_ids):
-                    continue
-                trace_id = str(get_attr(trace, "id", "trace_id", "traceId", default="") or "")
-                if trace_id and trace_id in seen_trace_positions:
-                    existing_idx = seen_trace_positions[trace_id]
-                    if _trace_quality_score(trace) > _trace_quality_score(combined[existing_idx]):
-                        combined[existing_idx] = _attach_client_idx(trace, client_idx)
-                    continue
-                if trace_id:
-                    seen_trace_positions[trace_id] = len(combined)
-                combined.append(_attach_client_idx(trace, client_idx))
-
-        if combined:
-            _cache_raw_traces(cache_key, combined)
-            return combined
-
-    # Per-user fan-out fallback
+    broad_limit = 5000 if fetch_all else min(limit, 500)
     for client_idx, client in enumerate(clients):
-        for scoped_user_id in scoped_user_ids:
-            traces = fetch_traces_from_langfuse(
-                client, scoped_user_id,
-                limit=per_user_limit,
-                from_timestamp=from_timestamp,
-                to_timestamp=to_timestamp,
-                name=name,
-                fetch_all=fetch_all,
-                environment=environment,
-            )
-            for trace in traces:
-                trace_id = str(get_attr(trace, "id", "trace_id", "traceId", default="") or "")
-                if trace_id and trace_id in seen_trace_positions:
-                    existing_idx = seen_trace_positions[trace_id]
-                    if _trace_quality_score(trace) > _trace_quality_score(combined[existing_idx]):
-                        combined[existing_idx] = _attach_client_idx(trace, client_idx)
-                    continue
-                if trace_id:
-                    seen_trace_positions[trace_id] = len(combined)
-                combined.append(_attach_client_idx(trace, client_idx))
+        broad_traces = _fetch_client_traces_broad(client, broad_limit)
+        for trace in broad_traces:
+            extracted_uids = extract_trace_user_ids(trace)
+            if extracted_uids and not extracted_uids.intersection(allowed_user_ids):
+                continue
+            trace_id = str(get_attr(trace, "id", "trace_id", "traceId", default="") or "")
+            if trace_id and trace_id in seen_trace_positions:
+                existing_idx = seen_trace_positions[trace_id]
+                if _trace_quality_score(trace) > _trace_quality_score(combined[existing_idx]):
+                    combined[existing_idx] = _attach_client_idx(trace, client_idx)
+                continue
+            if trace_id:
+                seen_trace_positions[trace_id] = len(combined)
+            combined.append(_attach_client_idx(trace, client_idx))
 
     if combined:
         _cache_raw_traces(cache_key, combined)
@@ -402,18 +381,33 @@ def fetch_traces_from_langfuse(
 ) -> list[Any]:
     """Fetch traces for a single user id from one client.
 
+    Langfuse's trace `user_id` field now carries the human-readable username
+    (commit 1c7d634), so passing an app UUID to ``fetch_traces(user_id=...)``
+    on the server side returns no rows for new traces. Instead this does a
+    broad fetch for the window and filters client-side via
+    ``extract_trace_user_ids``, which checks the app UUID against direct
+    ``user_id`` fields, metadata (including ``user_uuid``) and tags.
+
     The `tags`, `session_id`, and `_date_fallback_depth` parameters are
-    accepted for backward compatibility but currently unused by the new
-    trace-store pipeline.
+    accepted for backward compatibility but unused.
     """
     effective_limit = 5000 if fetch_all else limit
     page_size = min(100, effective_limit)
+    max_pages = max(1, (effective_limit + page_size - 1) // page_size)
+    target_uid = str(user_id)
+
+    def _filter(raw: list[Any]) -> list[Any]:
+        out: list[Any] = []
+        for t in raw:
+            extracted = extract_trace_user_ids(t)
+            if not extracted or target_uid in extracted:
+                out.append(t)
+        return out
 
     if hasattr(client, "fetch_traces"):
         try:
             all_traces: list[Any] = []
-            max_pages = (effective_limit + page_size - 1) // page_size
-            filter_kwargs: dict[str, Any] = {"user_id": user_id, "limit": page_size}
+            filter_kwargs: dict[str, Any] = {"limit": page_size}
             if from_timestamp:
                 filter_kwargs["from_timestamp"] = from_timestamp
             if to_timestamp:
@@ -429,9 +423,11 @@ def fetch_traces_from_langfuse(
                 if not page_traces:
                     break
                 all_traces.extend(page_traces)
+                if len(all_traces) >= effective_limit:
+                    break
 
             if all_traces:
-                return all_traces
+                return _filter(all_traces[:effective_limit])
         except Exception:
             pass
 
@@ -442,9 +438,8 @@ def fetch_traces_from_langfuse(
         if trace_api and hasattr(trace_api, "list"):
             try:
                 all_traces = []
-                max_pages = (effective_limit + page_size - 1) // page_size
                 for page in range(1, max_pages + 1):
-                    kwargs: dict[str, Any] = {"user_id": user_id, "limit": page_size, "page": page}
+                    kwargs: dict[str, Any] = {"limit": page_size, "page": page}
                     if from_timestamp:
                         kwargs["from_timestamp"] = from_timestamp
                     if to_timestamp:
@@ -461,9 +456,10 @@ def fetch_traces_from_langfuse(
                     if not page_traces:
                         break
                     all_traces.extend(page_traces)
+                    if len(all_traces) >= effective_limit:
+                        break
                 if all_traces:
-                    filtered = [t for t in all_traces if str(user_id) in extract_trace_user_ids(t)]
-                    return filtered if filtered else all_traces
+                    return _filter(all_traces[:effective_limit])
             except Exception:
                 pass
 
@@ -741,7 +737,13 @@ def _build_enriched_traces(raw_traces: list[Any], clients: list[Any]) -> list[En
         )
 
         user_ids = extract_trace_user_ids(trace)
-        user_id = next(iter(user_ids), None)
+        # Prefer a UUID-shaped value (the app user id) over the username, so
+        # downstream lookups that expect UUIDs continue to work after the
+        # langfuse username-display change (trace.user_id is now a username).
+        user_id = next(
+            (uid for uid in user_ids if _looks_like_uuid(uid)),
+            next(iter(user_ids), None),
+        )
 
         idx = get_attr(trace, "_agentcore_client_idx", default=0)
         try:

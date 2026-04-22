@@ -3,7 +3,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
-import { FolderOpen, Search, ChevronRight } from "lucide-react";
+import { FolderOpen, ChevronRight } from "lucide-react";
 import { THEME } from "../theme";
 import { formatCost, formatTokens } from "../utils";
 import type { ProjectsResponse } from "../types";
@@ -47,9 +47,8 @@ export function ProjectsTab({ projectsData, projectsLoading, projectsFetching, f
                 </CardTitle>
                 <CardDescription className="text-muted-foreground">Your projects with aggregated metrics</CardDescription>
               </div>
-              <div className="relative">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                <Input placeholder="Search projects..." value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9 h-9 w-64 bg-muted/50 border-border" />
+              <div className="w-64">
+                <Input icon="Search" placeholder="Search projects..." value={search} onChange={(e) => setSearch(e.target.value)} inputClassName="h-9 bg-muted/50 border-border" />
               </div>
             </div>
           </CardHeader>

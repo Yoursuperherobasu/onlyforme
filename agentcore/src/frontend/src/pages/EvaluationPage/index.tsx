@@ -201,9 +201,6 @@ export default function EvaluationPage() {
   const [isJudgeDialogOpen, setIsJudgeDialogOpen] = useState(false);
   const [isScoreDialogOpen, setIsScoreDialogOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [runningEvaluatorId, setRunningEvaluatorId] = useState<string | null>(
-    null,
-  );
   const fetchSeqRef = useRef(0);
 
   const [agentList, setAgentList] = useState<any[]>([]);
@@ -356,24 +353,9 @@ export default function EvaluationPage() {
   }, []);
 
   const canEditEvaluator = useCallback((ev: any) => {
-    if (userRole === "root") {
-      return getEvaluatorOwnerId(ev) === userId && !ev?.org_id && !ev?.dept_id;
-    }
-    if (userRole === "super_admin") return true;
-    if (userRole === "department_admin") {
-      if (isMultiDeptScope(ev)) return false;
-      if (ev?.visibility === "public" && ev?.public_scope === "organization") return false;
-      if (ev?.visibility === "public" && ev?.public_scope === "department") {
-        return isDeptScopedForUser(ev);
-      }
-      if (ev?.visibility === "private") return isDeptScopedForUser(ev);
-      return false;
-    }
-    if (userRole === "developer" || userRole === "business_user") {
-      return ev?.visibility === "private" && getEvaluatorOwnerId(ev) === userId;
-    }
-    return false;
-  }, [getEvaluatorOwnerId, isDeptScopedForUser, isMultiDeptScope, userId, userRole]);
+    if (!userId) return false;
+    return getEvaluatorOwnerId(ev) === userId;
+  }, [getEvaluatorOwnerId, userId]);
 
   const canDeleteEvaluator = useCallback((ev: any) => {
     return canEditEvaluator(ev);
@@ -1009,75 +991,6 @@ export default function EvaluationPage() {
     }
   };
 
-  const handleSaveEvaluator = async () => {
-    if (!judgeForm.name || !judgeForm.criteria) {
-      setErrorData({ title: "Provide a name and criteria to save evaluator" });
-      return;
-    }
-    if (!judgeForm.model_registry_id) {
-      setErrorData({ title: "Select a judge model from the registry." });
-      return;
-    }
-    if (requiresGroundTruth && !groundTruth.trim()) {
-      setErrorData({
-        title: "Ground truth is required for the selected preset.",
-      });
-      return;
-    }
-    try {
-      const targets: string[] = [];
-      if (runOnExisting) targets.push("existing");
-      if (runOnNew) targets.push("new");
-      const payload: any = {
-        name: judgeForm.name,
-        criteria: judgeForm.criteria,
-        model_registry_id: judgeForm.model_registry_id,
-        visibility: judgeForm.visibility || "private",
-      };
-      if (judgeForm.visibility === "public" && judgeForm.public_scope) {
-        payload.public_scope = judgeForm.public_scope;
-      }
-      if (judgeForm.org_id) payload.org_id = judgeForm.org_id;
-      if (judgeForm.dept_id) payload.dept_id = judgeForm.dept_id;
-      if (judgeForm.public_dept_ids?.length)
-        payload.public_dept_ids = judgeForm.public_dept_ids;
-      if (targets.length === 1) payload.target = targets[0];
-      else if (targets.length > 1) payload.target = targets;
-      if (judgeForm.preset_id) payload.preset_id = judgeForm.preset_id;
-      if (groundTruth.trim()) payload.ground_truth = groundTruth.trim();
-      if (selectedAgentIds && selectedAgentIds.length)
-        payload.agent_ids = selectedAgentIds;
-      if (filterSessionId) payload.session_id = filterSessionId;
-      if (filterTraceId) payload.trace_id = filterTraceId;
-
-      if (editingEvaluator) {
-        const updated = await updateEvaluator(editingEvaluator, payload);
-        setSavedEvaluators((s) =>
-          s.map((it) => (it.id === updated.id ? updated : it)),
-        );
-        setSuccessData({ title: "Evaluator updated" });
-        setEditingEvaluator(null);
-      } else {
-        const created = await createEvaluator(payload, { environment: selectedEnvironment });
-        // Refresh saved evaluators from server to ensure list is consistent
-        try {
-          const items = await listEvaluators();
-          if (Array.isArray(items)) setSavedEvaluators(items as any);
-          else if (items && Array.isArray((items as any).items))
-            setSavedEvaluators((items as any).items);
-          else if (items && Array.isArray((items as any).data))
-            setSavedEvaluators((items as any).data);
-        } catch (e) {
-          // fallback to adding created item
-          setSavedEvaluators((s) => [created, ...s]);
-        }
-        setSuccessData({ title: "Evaluator saved" });
-      }
-    } catch (e) {
-      setErrorData({ title: "Failed to save evaluator" });
-    }
-  };
-
   const handleEditEvaluator = (id: string) => {
     const s = savedEvaluators.find((x) => x.id === id);
     if (!s) return;
@@ -1118,38 +1031,6 @@ export default function EvaluationPage() {
       setSuccessData({ title: "Evaluator deleted" });
     } catch (e) {
       setErrorData({ title: "Failed to delete evaluator" });
-    }
-  };
-
-  const handleRunSavedEvaluator = async (id: string) => {
-    if (!id || runningEvaluatorId === id) return;
-    setRunningEvaluatorId(id);
-    try {
-      const result = await runEvaluator(id, { environment: selectedEnvironment });
-      const enqueued = Number(result?.enqueued ?? 0);
-      if (result?.status === "noop") {
-        setNoticeData({
-          title:
-            result?.message ||
-            "Evaluator is configured for new traces only and will run automatically on new traces.",
-        });
-      } else if (enqueued > 0) {
-        setSuccessData({
-          title: `Evaluator queued for ${enqueued} existing trace${
-            enqueued === 1 ? "" : "s"
-          }.`,
-        });
-      } else {
-        setNoticeData({
-          title: "No matching existing traces found for this evaluator.",
-        });
-      }
-      await fetchData();
-    } catch (error) {
-      console.error("Failed to run saved evaluator", error);
-      setErrorData({ title: "Failed to run evaluator" });
-    } finally {
-      setRunningEvaluatorId((current) => (current === id ? null : current));
     }
   };
 
@@ -2520,18 +2401,6 @@ export default function EvaluationPage() {
                                             Edit
                                           </Button>
                                         )}
-                                        <Button
-                                          size="sm"
-                                          variant="outline"
-                                          onClick={() =>
-                                            handleRunSavedEvaluator(ev.id)
-                                          }
-                                          disabled={runningEvaluatorId === ev.id}
-                                        >
-                                          {runningEvaluatorId === ev.id
-                                            ? "Running..."
-                                            : "Run"}
-                                        </Button>
                                         {canDeleteEvaluator(ev) && (
                                           <Button
                                             size="sm"
@@ -2768,11 +2637,6 @@ export default function EvaluationPage() {
               </div>
             )}
 
-            <div className="flex gap-2">
-              <Button variant="outline" onClick={handleSaveEvaluator}>
-                {t("Save Evaluator")}
-              </Button>
-            </div>
           </div>
           <DialogFooter>
             <Button

@@ -178,7 +178,7 @@ def extract_trace_user_ids(trace_obj: Any) -> set[str]:
         user_ids.add(str(direct_user))
 
     metadata = normalize_metadata(get_attr(trace_obj, "metadata", "meta"))
-    for key in ("user_id", "userId", "app_user_id", "created_by_user_id", "owner_user_id"):
+    for key in ("user_id", "userId", "user_uuid", "app_user_id", "created_by_user_id", "owner_user_id"):
         value = metadata.get(key)
         if value:
             user_ids.add(str(value))
@@ -188,7 +188,7 @@ def extract_trace_user_ids(trace_obj: Any) -> set[str]:
         for tag in tags:
             if not isinstance(tag, str):
                 continue
-            for prefix in ("user_id:", "app_user_id:", "created_by_user_id:"):
+            for prefix in ("user_id:", "user_uuid:", "app_user_id:", "created_by_user_id:"):
                 if tag.startswith(prefix):
                     value = tag.split(":", 1)[1].strip()
                     if value:

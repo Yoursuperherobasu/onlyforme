@@ -256,19 +256,43 @@ async def get_trace_detail(
             _parsed_preview = [parse_observation(o) for o in _embedded_obs]
             _use_embedded = any(p.total_tokens > 0 or (p.total_cost or 0.0) > 0.0 or bool(p.model) or bool(p.name) for p in _parsed_preview)
 
+        def _fetch_scores_across_clients() -> list[Any]:
+            """Fetch scores for resolved_trace_id from trace_client first, then
+            fall back to other scoped clients. Needed because score writes and
+            trace writes can land in different Langfuse projects across roles
+            (e.g. super_admin writes to org_admin while a dept_admin's trace
+            lives in a dept project)."""
+            primary = fetch_scores_for_trace(trace_client, resolved_trace_id, trace_user_id, limit=100) or []
+            if primary:
+                return primary
+            merged: dict[str, Any] = {}
+            ordered: list[Any] = []
+            for alt in scoped_clients:
+                if alt is trace_client:
+                    continue
+                try:
+                    rows = fetch_scores_for_trace(alt, resolved_trace_id, trace_user_id, limit=100) or []
+                except Exception as e:
+                    logger.debug(f"fetch_scores fallback client failed: {e}")
+                    continue
+                for row in rows:
+                    key = str(getattr(row, "id", "") or "")
+                    if key and key in merged:
+                        continue
+                    if key:
+                        merged[key] = row
+                    ordered.append(row)
+            return ordered
+
         if _use_embedded:
             raw_observations = list(_embedded_obs)
             _cache_and_return_observations(resolved_trace_id, raw_observations, cache_key=observation_cache_key(trace_client, resolved_trace_id))
-            fetched_scores = await asyncio.to_thread(
-                lambda: fetch_scores_for_trace(trace_client, resolved_trace_id, trace_user_id, limit=100)
-            )
+            fetched_scores = await asyncio.to_thread(_fetch_scores_across_clients)
         else:
             obs_task = asyncio.create_task(asyncio.to_thread(
                 lambda: fetch_observations_for_trace(trace_client, resolved_trace_id)
             ))
-            scores_task = asyncio.create_task(asyncio.to_thread(
-                lambda: fetch_scores_for_trace(trace_client, resolved_trace_id, trace_user_id, limit=100)
-            ))
+            scores_task = asyncio.create_task(asyncio.to_thread(_fetch_scores_across_clients))
             raw_observations, fetched_scores = await asyncio.gather(obs_task, scores_task, return_exceptions=True)
             if isinstance(raw_observations, Exception):
                 raw_observations = []
