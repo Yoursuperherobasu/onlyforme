@@ -1552,6 +1552,18 @@ async def orch_chat(
             else:
                 settings_svc = get_settings_service().settings
                 sender_name = settings_svc.web_search_model_name or "Web Search"
+            # Snap dropdown back to the default chat model after this turn
+            # (same intent as the image_gen flow): the web_search handler
+            # doesn't consult resp_model_id, so overriding it here only
+            # affects the `routed_model_id` the frontend uses to sync the
+            # dropdown. Keeps follow-up general-chat turns on a provider
+            # that actually works for plain chat.
+            try:
+                _default_chat_id = get_settings_service().settings.default_chat_model_id
+                if _default_chat_id:
+                    resp_model_id = UUID(str(_default_chat_id))
+            except Exception:
+                pass
 
         elif mode == "image_gen":
             from agentcore.services.mibuddy.image_gen_handler import handle_image_generation
@@ -1775,18 +1787,19 @@ async def orch_chat_stream(
             else:
                 settings_svc = get_settings_service().settings
                 sender_name = settings_svc.web_search_model_name or "Web Search"
-                # Override resp_model_id to the WEB_SEARCH_MODEL_NAME registry entry
-                # so the frontend can auto-switch the dropdown to it.
-                try:
-                    from agentcore.services.model_service_client import fetch_registry_models_async
-                    ws_name = (settings_svc.web_search_model_name or "").strip().lower()
-                    if ws_name:
-                        _all = await fetch_registry_models_async(active_only=True) or []
-                        _match = next((m for m in _all if (m.get("display_name") or "").strip().lower() == ws_name), None)
-                        if _match and _match.get("id"):
-                            resp_model_id = UUID(str(_match["id"]))
-                except Exception:
-                    pass
+            # Mirror the image_gen auto-switch-back: the web_search handler
+            # doesn't use resp_model_id at all (WEB_SEARCH_MODEL_NAME is
+            # resolved internally), so point the dropdown at the default
+            # chat model instead. Prevents follow-up general-chat turns
+            # from being stranded on a web-search-only registry row whose
+            # provider may fail on plain chat (e.g. the google / Generative
+            # Language API 403 on Motherson's GCP project).
+            try:
+                _default_chat_id = get_settings_service().settings.default_chat_model_id
+                if _default_chat_id:
+                    resp_model_id = UUID(str(_default_chat_id))
+            except Exception:
+                pass
         elif mode == "image_gen":
             # Same pattern as web_search: honour the user's choice when the
             # selected model can generate images natively; only swap to the
