@@ -173,7 +173,7 @@ async def _test_image_model_connection(body: TestConnectionRequest, provider_con
     - Azure/OpenAI DALL-E: Official OpenAI Python SDK (matches MiBuddy behavior)
     - Others: generic httpx fallback
     """
-    if body.provider in ("google", "google_vertex"):
+    if body.provider in ("google", "google_vertex", "google_genai_vertex"):
         return await _test_vertex_image_connection(body, provider_config)
 
     # DALL-E specific: use the OpenAI Python SDK for reliability (matches MiBuddy)

@@ -1894,7 +1894,10 @@ export default function AgentOrchestrator() {
           body: JSON.stringify({
             edited_text: text,
             enable_reasoning: cotReasoning,
-            image_mode: imageMode,
+            // image_mode is intentionally NOT sent — backend forces
+            // image_mode=false on edits so intent classification drives the
+            // mode, regardless of the original message's routing.
+            model_id: (noAgentMode && selectedAiModel) ? selectedAiModel : undefined,
           }),
         },
       );
@@ -1917,6 +1920,16 @@ export default function AgentOrchestrator() {
           return m;
         }),
       );
+      // 4. Sync the top dropdown to whichever model actually answered the
+      // edit — backend may have re-routed to a specialist (Nano Banana for
+      // image, web search model for news, etc.). Updating selectedAiModel
+      // also causes the existing auto-toggle useEffect to flip imageMode
+      // off when the new model isn't an image-gen model, which clears the
+      // stale "Image" chip at the bottom of the input.
+      const newModelId: string | undefined = data?.agent_message?.model_id;
+      if (newModelId && noAgentMode && newModelId !== selectedAiModel) {
+        setSelectedAiModel(newModelId);
+      }
     } catch (err) {
       console.error("[EditSave] Failed:", err);
       setMessages((prev) =>

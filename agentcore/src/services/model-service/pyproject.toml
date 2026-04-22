@@ -18,6 +18,10 @@ dependencies = [
     "langchain-openai>=0.3.0,<2.0.0",
     "langchain-anthropic>=0.3.0,<2.0.0",
     "langchain-google-genai>=2.0.0,<5.0.0",
+    # google-genai SDK for the `google_genai_vertex` provider — MiBuddy-parity.
+    # Talks to Vertex AI (`aiplatform.googleapis.com`) via `genai.Client(vertexai=True, ...)`.
+    # Pulled in transitively by langchain-google-genai, but pinned explicitly for clarity.
+    "google-genai>=1.0.0,<2.0.0",
     "langchain-groq>=0.2.0,<2.0.0",
     "azure-identity>=1.20.0,<2.0.0",
     "azure-keyvault-secrets>=4.9.0,<5.0.0",

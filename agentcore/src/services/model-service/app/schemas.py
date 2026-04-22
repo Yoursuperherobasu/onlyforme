@@ -16,6 +16,9 @@ class ProviderEnum(str, Enum):
     ANTHROPIC = "anthropic"
     GOOGLE = "google"
     GOOGLE_VERTEX = "google_vertex"
+    # MiBuddy-parity Google provider — uses google-genai SDK with vertexai=True.
+    # Routes to aiplatform.googleapis.com (same endpoint web_search handler uses).
+    GOOGLE_GENAI_VERTEX = "google_genai_vertex"
     GROQ = "groq"
     OPENAI_COMPATIBLE = "openai_compatible"
 
