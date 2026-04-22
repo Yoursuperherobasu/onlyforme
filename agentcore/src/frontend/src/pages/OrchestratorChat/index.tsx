@@ -2450,6 +2450,7 @@ export default function AgentOrchestrator() {
     setNoAgentMode(true);
     setShowImageGallery(false);
     setIsSharedReadOnly(false);
+    setIsCanvasEnabled(false);
   };
 
   const handleSelectSession = (sessionId: string) => {
@@ -2853,7 +2854,7 @@ export default function AgentOrchestrator() {
               </div>
               <div className="flex flex-col gap-0.5">
                 <button
-                  onClick={() => window.open("https://translator.motherson.com", "_blank")}
+                  onClick={() => window.open("https://translator.ai.motherson.com", "_blank")}
                   className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm text-foreground hover:bg-accent"
                 >
                   <img src={translatorLogo} alt="" className="h-4 w-4 shrink-0 object-contain" />
