@@ -66,10 +66,17 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/outlook-orch", tags=["Outlook (Orchestrator)"])
 
-# ── OAuth state storage (in-process, same as MiBuddy) ─────────────────
+# ── OAuth PKCE state ──────────────────────────────────────────────────
+# MiBuddy uses an in-memory dict which works for single-instance deployments.
+# For multi-replica K8s, we encrypt the PKCE state (code_verifier + user_id)
+# into the `state` URL parameter itself using the same Fernet key as the
+# token manager. No in-memory storage needed — works across any number of pods.
 _PKCE_STATE_TTL = 600  # seconds
-_pkce_states: Dict[str, Dict[str, Any]] = {}
-_pkce_lock = threading.Lock()
+
+def _get_state_cipher():
+    from agentcore.services.outlook_orch.token_manager import _get_or_generate_encryption_key
+    from cryptography.fernet import Fernet
+    return Fernet(_get_or_generate_encryption_key())
 
 # session_id → user_id (for the outlook_session cookie)
 _outlook_cookie_sessions: Dict[str, str] = {}
@@ -151,15 +158,8 @@ async def outlook_auth_login(
     Opened via `window.open()`, so we resolve the user from the
     `access_token_ag` cookie (popups don't send Authorization headers).
     """
+    import json
     current_user = await _resolve_current_user_from_request(request, session)
-
-    # Purge stale PKCE states
-    cutoff = time.time() - _PKCE_STATE_TTL
-    with _pkce_lock:
-        stale = [k for k, v in _pkce_states.items() if v.get("created_at", 0) < cutoff]
-        for k in stale:
-            _pkce_states.pop(k, None)
-
     user_id = str(current_user.id)
 
     code_verifier = secrets.token_urlsafe(64)
@@ -167,18 +167,13 @@ async def outlook_auth_login(
         hashlib.sha256(code_verifier.encode("ascii")).digest(),
     ).rstrip(b"=").decode("ascii")
 
-    state = secrets.token_urlsafe(32)
-    with _pkce_lock:
-        _pkce_states[state] = {
-            "code_verifier": code_verifier,
-            "user_id": user_id,
-            "created_at": time.time(),
-        }
+    # Encrypt PKCE state into the `state` param so ANY pod can read it back.
+    state_payload = json.dumps({"cv": code_verifier, "uid": user_id, "ts": time.time()})
+    state = _get_state_cipher().encrypt(state_payload.encode()).decode()
 
     redirect_uri = _build_redirect_uri(request)
     logger.info(f"Outlook OAuth login: redirect_uri={redirect_uri}")
 
-    # Tenant comes from the same resolver the service uses
     from agentcore.services.outlook_orch.outlook_service import _get_credentials
     tenant, client_id, _ = _get_credentials()
 
@@ -218,21 +213,22 @@ async def outlook_auth_callback(
         logger.warning(f"Outlook OAuth error from Microsoft: {error} - {error_description}")
         return error_response(error)
 
+    import json
     if not code or not state:
         return error_response("missing_code_or_state")
 
-    with _pkce_lock:
-        state_data = _pkce_states.pop(state, None)
-
-    if not state_data:
-        logger.warning("Outlook OAuth callback: state not found in _pkce_states (possible multi-instance issue or replay)")
+    # Decrypt the PKCE state from the `state` URL param.
+    try:
+        state_data = json.loads(_get_state_cipher().decrypt(state.encode()))
+    except Exception:
+        logger.warning("Outlook OAuth callback: failed to decrypt state param")
         return error_response("invalid_state")
 
-    if time.time() - state_data.get("created_at", 0) > _PKCE_STATE_TTL:
+    if time.time() - state_data.get("ts", 0) > _PKCE_STATE_TTL:
         return error_response("state_expired")
 
-    code_verifier = state_data["code_verifier"]
-    user_id = state_data.get("user_id")
+    code_verifier = state_data["cv"]
+    user_id = state_data.get("uid")
 
     # Use the SAME deterministic redirect_uri that was used during /authorize
     redirect_uri = _build_redirect_uri(request)
