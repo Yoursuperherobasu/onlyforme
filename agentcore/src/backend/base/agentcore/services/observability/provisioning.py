@@ -5,6 +5,7 @@ import base64
 import hashlib
 import hmac
 import os
+import re
 import secrets
 import uuid
 from dataclasses import dataclass
@@ -30,6 +31,27 @@ from agentcore.services.auth.permissions import normalize_role
 
 class LangfuseProvisioningError(RuntimeError):
     """Raised when Langfuse provisioning fails."""
+
+
+# Hardening for the internal raw-SQL insert helpers
+# (_insert_row / _insert_row_returning_id). Identifiers (table + column
+# names) can't be bound by SQLAlchemy parameter binding — they must be
+# string-interpolated — so we enforce two invariants before interpolation:
+#   1. table_name must be in a fixed allowlist, and
+#   2. every column identifier must match a strict regex.
+# Values are always bound via :name parameters and never interpolated,
+# so they remain safe against SQL injection. Callers today pass only
+# hardcoded table literals and programmatic payloads, so this change is
+# purely defense-in-depth against future misuse.
+_ALLOWED_LANGFUSE_TABLES: frozenset[str] = frozenset({
+    "organizations",
+    "organization_memberships",
+    "projects",
+    "project_memberships",
+    "api_keys",
+})
+
+_SQL_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
 @dataclass
@@ -771,13 +793,57 @@ class LangfuseProvisioningService:
         return api_key_id
 
     @staticmethod
-    def _insert_row(conn: Connection, table_name: str, payload: dict[str, Any], table_columns: set[str]) -> None:
+    def _prepare_safe_insert(
+        conn: Connection,
+        table_name: str,
+        payload: dict[str, Any],
+        table_columns: set[str],
+    ) -> tuple[str, str, str, dict[str, Any]]:
+        """Validate identifiers and return quoted SQL fragments for an INSERT.
+
+        Returns ``(quoted_table, quoted_cols_csv, bind_placeholders_csv,
+        effective_payload)``. Raises ``LangfuseProvisioningError`` on any
+        untrusted table, invalid column identifier, or empty effective
+        payload.
+
+        Values go through SQLAlchemy bind parameters (``:name``) and are
+        never interpolated; only identifiers are interpolated, and only
+        after the allowlist + regex + dialect-level quoting below.
+        """
+        if table_name not in _ALLOWED_LANGFUSE_TABLES:
+            raise LangfuseProvisioningError(
+                f"Refusing to insert into untrusted table={table_name!r}"
+            )
+
         effective_payload = {k: v for k, v in payload.items() if k in table_columns}
         if not effective_payload:
-            raise LangfuseProvisioningError(f"No compatible columns found for table={table_name}")
-        col_names = ", ".join(effective_payload.keys())
-        bind_names = ", ".join([f":{k}" for k in effective_payload])
-        conn.execute(text(f"INSERT INTO {table_name} ({col_names}) VALUES ({bind_names})"), effective_payload)
+            raise LangfuseProvisioningError(
+                f"No compatible columns found for table={table_name}"
+            )
+
+        for col in effective_payload:
+            if not _SQL_IDENTIFIER_RE.match(col):
+                raise LangfuseProvisioningError(
+                    f"Invalid column identifier for table={table_name}: {col!r}"
+                )
+
+        preparer = conn.dialect.identifier_preparer
+        quoted_table = preparer.quote(table_name)
+        quoted_cols = ", ".join(preparer.quote(c) for c in effective_payload)
+        bind_names = ", ".join(f":{c}" for c in effective_payload)
+        return quoted_table, quoted_cols, bind_names, effective_payload
+
+    @staticmethod
+    def _insert_row(conn: Connection, table_name: str, payload: dict[str, Any], table_columns: set[str]) -> None:
+        quoted_table, quoted_cols, bind_names, effective_payload = (
+            LangfuseProvisioningService._prepare_safe_insert(
+                conn, table_name, payload, table_columns,
+            )
+        )
+        conn.execute(
+            text(f"INSERT INTO {quoted_table} ({quoted_cols}) VALUES ({bind_names})"),
+            effective_payload,
+        )
 
     def _insert_row_returning_id(
         self,
@@ -786,13 +852,13 @@ class LangfuseProvisioningService:
         payload: dict[str, Any],
         table_columns: set[str],
     ) -> str:
-        effective_payload = {k: v for k, v in payload.items() if k in table_columns}
-        if not effective_payload:
-            raise LangfuseProvisioningError(f"No compatible columns found for table={table_name}")
-        col_names = ", ".join(effective_payload.keys())
-        bind_names = ", ".join([f":{k}" for k in effective_payload])
+        quoted_table, quoted_cols, bind_names, effective_payload = self._prepare_safe_insert(
+            conn, table_name, payload, table_columns,
+        )
         row = conn.execute(
-            text(f"INSERT INTO {table_name} ({col_names}) VALUES ({bind_names}) RETURNING id"),
+            text(
+                f"INSERT INTO {quoted_table} ({quoted_cols}) VALUES ({bind_names}) RETURNING id"
+            ),
             effective_payload,
         ).fetchone()
         if not row:
