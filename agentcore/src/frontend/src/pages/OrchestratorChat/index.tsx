@@ -3638,6 +3638,8 @@ export default function AgentOrchestrator() {
 
               const isUser = msg.sender === "user";
               const isThinking = msg.sender === "agent" && msg.content === "" && isSending;
+              const isInlineEditingUserMessage =
+                isUser && editingMsgId === msg.id && noAgentMode;
 
               // Canvas: any agent message can be edited via canvas
               const isEditingThis = canvasEditingId === msg.id;
@@ -3698,7 +3700,15 @@ export default function AgentOrchestrator() {
                   )}
 
                   {/* Content */}
-                  <div className={isUser ? "max-w-[80%]" : "min-w-0 flex-1"}>
+                  <div
+                    className={
+                      isUser
+                        ? isInlineEditingUserMessage
+                          ? "w-full max-w-full"
+                          : "max-w-[80%]"
+                        : "min-w-0 flex-1"
+                    }
+                  >
                     {!isUser && (
                     <div className="mb-1 flex items-center gap-2 text-sm font-semibold text-foreground">
                       {msg.agentName}
@@ -3714,7 +3724,11 @@ export default function AgentOrchestrator() {
                       </div>
                     ) : isUser ? (
                       <>
-                      <div className="group/usermsg rounded-lg bg-[#edf5fd] px-4 py-2.5 text-[15px] leading-relaxed text-foreground/80 shadow-sm dark:bg-accent">
+                      <div
+                        className={`group/usermsg rounded-lg bg-[#edf5fd] px-4 py-2.5 text-[15px] leading-relaxed text-foreground/80 shadow-sm dark:bg-accent ${
+                          isInlineEditingUserMessage ? "w-full" : ""
+                        }`}
+                      >
                         {editingMsgId === msg.id && noAgentMode ? (
                           // Inline editor — matches MiBuddy's UX: textarea + Cancel/Send buttons
                           <div className="rounded-xl border border-border bg-muted/30 p-3">
@@ -3842,8 +3856,13 @@ export default function AgentOrchestrator() {
                             editedFlag={null}
                           />
                         )}
-                        {/* Action buttons row — hide when message contains a generated image */}
-                        {msg.content && !isSending && !/!\[.*?\]\(.*?\)/.test(msg.content) && (
+                        {/* Action buttons row — show on every assistant message,
+                            including image-generation replies. Thumbs/copy/share
+                            all operate on the accompanying text (captions like
+                            "Here is your generated image."); download + share
+                            naturally apply to the image itself because the image
+                            URL lives in the same markdown. */}
+                        {msg.content && !isSending && (
                           <div className="mt-1.5 flex items-center gap-1">
                             <button
                               onClick={() => handleThumbClick(msg, "up")}
