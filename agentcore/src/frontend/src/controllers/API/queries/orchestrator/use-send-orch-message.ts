@@ -15,6 +15,7 @@ export interface OrchMessageResponse {
   text: string;
   agent_id: string | null;
   deployment_id: string | null;
+  model_id?: string | null;
   category?: string;
   files?: string[];
   properties?: {
