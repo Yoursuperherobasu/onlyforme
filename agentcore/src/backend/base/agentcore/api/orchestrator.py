@@ -1697,10 +1697,14 @@ async def orch_chat(
             # `is_canvas_enabled` to True for compose/reply intents —
             # we bubble that back to the frontend as `auto_canvas`.
             from agentcore.services.mibuddy.outlook_agent import outlook_agent_node
+            from agentcore.api.outlook_orch import get_outlook_token_from_request
             state = {
                 "messages": [{"role": "user", "content": body.input_value}],
                 "user_id": str(current_user.id),
                 "is_canvas_enabled": bool(body.canvas_enabled),
+                # Pass the token from the cookie so any pod can serve the
+                # request, not just the pod that handled the OAuth callback.
+                "access_token": get_outlook_token_from_request(request),
             }
             state = await outlook_agent_node(state)
             response_text = state.get("final_response", "") or (
@@ -2079,10 +2083,12 @@ async def orch_chat_stream(
                     # chunk + an end event, matching other non-streaming
                     # modes like kb_search.
                     from agentcore.services.mibuddy.outlook_agent import outlook_agent_node
+                    from agentcore.api.outlook_orch import get_outlook_token_from_request
                     state = {
                         "messages": [{"role": "user", "content": _input_value}],
                         "user_id": str(_user_id),
                         "is_canvas_enabled": _canvas_enabled,
+                        "access_token": get_outlook_token_from_request(request),
                     }
                     state = await outlook_agent_node(state)
                     outlook_text = state.get("final_response", "") or (
@@ -2510,6 +2516,7 @@ async def get_orch_session_messages(
 )
 async def edit_orch_message(
     *,
+    request: Request,
     session: DbSession,
     current_user: CurrentActiveUser,
     message_id: str,
@@ -2719,10 +2726,12 @@ async def edit_orch_message(
 
         elif mode == "outlook_query":
             from agentcore.services.mibuddy.outlook_agent import outlook_agent_node
+            from agentcore.api.outlook_orch import get_outlook_token_from_request
             state = {
                 "messages": [{"role": "user", "content": body.edited_text}],
                 "user_id": str(current_user.id),
                 "is_canvas_enabled": False,
+                "access_token": get_outlook_token_from_request(request),
             }
             state = await outlook_agent_node(state)
             new_response_text = state.get("final_response", "") or (

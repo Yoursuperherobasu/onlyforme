@@ -274,15 +274,21 @@ async def outlook_auth_callback(
 
     outlook_token_manager.store_token(user_id, access_token, expires_in)
 
-    # Encrypt user_id into the cookie so ANY pod can read it back
-    # (same approach as the encrypted PKCE state).
-    encrypted_uid = _get_state_cipher().encrypt(user_id.encode()).decode()
+    # Encrypt user_id + access_token into the cookie so ANY pod can read
+    # them back — no in-memory token manager lookup needed.
+    import json
+    session_payload = json.dumps({
+        "uid": user_id,
+        "tok": access_token,
+        "exp": time.time() + expires_in,
+    })
+    encrypted_session = _get_state_cipher().encrypt(session_payload.encode()).decode()
 
     is_secure = _is_request_secure(request)
     response = HTMLResponse(content=_AUTH_SUCCESS_HTML)
     response.set_cookie(
         key="outlook_session",
-        value=encrypted_uid,
+        value=encrypted_session,
         httponly=True,
         secure=is_secure,
         samesite="lax",
@@ -297,14 +303,34 @@ async def outlook_auth_callback(
 # ══════════════════════════════════════════════════════════════════════
 
 def _decrypt_outlook_cookie(request: Request) -> Optional[str]:
-    """Decrypt the outlook_session cookie to get the user_id."""
+    """Decrypt the outlook_session cookie to get the user_id (legacy)."""
+    payload = _decrypt_outlook_session(request)
+    return payload.get("uid") if payload else None
+
+
+def _decrypt_outlook_session(request: Request) -> Optional[Dict[str, Any]]:
+    """Decrypt the outlook_session cookie to get {uid, tok, exp}."""
+    import json
     cookie = request.cookies.get("outlook_session")
     if not cookie:
         return None
     try:
-        return _get_state_cipher().decrypt(cookie.encode()).decode()
+        raw = _get_state_cipher().decrypt(cookie.encode()).decode()
+        data = json.loads(raw)
+        if data.get("exp", 0) < time.time():
+            return None
+        return data
     except Exception:
         return None
+
+
+def get_outlook_token_from_request(request: Request) -> Optional[str]:
+    """Return the Outlook access_token from the encrypted session cookie.
+
+    Any pod can call this — no dependency on in-memory token manager.
+    """
+    payload = _decrypt_outlook_session(request)
+    return payload.get("tok") if payload else None
 
 
 @router.get("/status")

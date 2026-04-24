@@ -229,7 +229,12 @@ async def outlook_agent_node(state: AgentState) -> AgentState:
         # ── Access token ───────────────────────────────────────────────────────
         from agentcore.services.outlook_orch.token_manager import outlook_token_manager
         user_id = state.get("user_id")
-        access_token = outlook_token_manager.get_token(user_id) if user_id else None
+        # Prefer the token passed through state (from the encrypted cookie)
+        # so multi-pod K8s deployments work. Fall back to the pod-local
+        # token manager for single-instance deployments.
+        access_token = state.get("access_token") or (
+            outlook_token_manager.get_token(user_id) if user_id else None
+        )
         if not access_token:
             if outlook_token_manager.was_token_expired(user_id):
                 state["final_response"] = (
