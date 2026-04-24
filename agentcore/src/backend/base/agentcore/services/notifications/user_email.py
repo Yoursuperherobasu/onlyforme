@@ -64,24 +64,18 @@ def _coalesce_int_setting(settings, *names: str, default: int) -> int:
 
 
 def _load_smtp_config(settings) -> SmtpConfig:
-    host = _coalesce_setting(settings, "smtp_host", "smtp_server", "mail_server")
-    port_raw = _coalesce_int_setting(settings, "smtp_port", "mail_port", default=0)
-    from_email = _coalesce_setting(
-        settings,
-        "smtp_from_email",
-        "smtp_from",
-        "mail_from",
-        "mail_from_email",
-    )
+    host = _coalesce_setting(settings, "smtp_host", "smtp_server")
+    port_raw = _coalesce_int_setting(settings, "smtp_port", default=0)
+    from_email = _coalesce_setting(settings, "smtp_from_email", "smtp_from")
 
     if not host or not port_raw or not from_email:
         raise ValueError("SMTP is not fully configured.")
 
-    username = _coalesce_setting(settings, "smtp_username", "smtp_user", "mail_username")
-    password = _coalesce_setting(settings, "smtp_password", "mail_password")
-    from_name = _coalesce_setting(settings, "smtp_from_name", "mail_from_name")
-    use_ssl = _coalesce_bool_setting(settings, "smtp_use_ssl", "mail_use_ssl", default=False)
-    use_tls = _coalesce_bool_setting(settings, "smtp_use_tls", "mail_use_tls", default=not use_ssl)
+    username = _coalesce_setting(settings, "smtp_username", "smtp_user")
+    password = _coalesce_setting(settings, "smtp_password")
+    from_name = _coalesce_setting(settings, "smtp_from_name")
+    use_ssl = _coalesce_bool_setting(settings, "smtp_use_ssl", default=False)
+    use_tls = _coalesce_bool_setting(settings, "smtp_use_tls", default=not use_ssl)
     timeout_seconds = _coalesce_int_setting(settings, "smtp_timeout_seconds", default=20)
 
     return SmtpConfig(

@@ -46,7 +46,7 @@ import cohereLogo from "@/assets/cohere_logo.svg";
 import perplexityLogo from "@/assets/perplexity_logo.svg";
 import nvidiaLogo from "@/assets/nvidia_logo.svg";
 import huggingfaceLogo from "@/assets/huggingface_logo.svg";
-import micoreLogo from "@/assets/micore.svg";
+import micoreLogo from "@/assets/mibuddy_logo.png";
 import grokLogo from "@/assets/grok_logo.png";
 import nanoBananaLogo from "@/assets/nano_banana_logo.png";
 import dalleLogo from "@/assets/dalle_logo.svg";
@@ -324,6 +324,55 @@ function mapApiMessages(apiMessages: OrchMessageResponse[]): Message[] {
   });
 }
 
+type SessionSelectionHint =
+  | { mode: "agent"; deploymentId?: string; agentId?: string }
+  | { mode: "model"; modelId: string }
+  | null;
+
+function inferSessionSelectionHint(messages: OrchMessageResponse[]): SessionSelectionHint {
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const msg = messages[i];
+    if (!msg || (msg.category && msg.category !== "message")) continue;
+
+    const deploymentId = msg.deployment_id || undefined;
+    const agentId = msg.agent_id || undefined;
+    if (deploymentId || agentId) {
+      return { mode: "agent", deploymentId, agentId };
+    }
+
+    const modelId = (msg as any).model_id || undefined;
+    if (modelId) {
+      return { mode: "model", modelId };
+    }
+  }
+  return null;
+}
+
+function findAgentFromSessionSummary(
+  sessionInfo: OrchSessionSummary | undefined,
+  agents: Agent[],
+): Agent | undefined {
+  if (!sessionInfo) return undefined;
+
+  if (sessionInfo.active_deployment_id) {
+    const byDeployment = agents.find(
+      (a) => a.id === sessionInfo.active_deployment_id || a.deploy_id === sessionInfo.active_deployment_id,
+    );
+    if (byDeployment) return byDeployment;
+  }
+
+  if (sessionInfo.active_agent_id) {
+    const byAgentId = agents.find((a) => a.agent_id === sessionInfo.active_agent_id);
+    if (byAgentId) return byAgentId;
+  }
+
+  if (sessionInfo.active_agent_name) {
+    return agents.find((a) => a.name === sessionInfo.active_agent_name);
+  }
+
+  return undefined;
+}
+
 function hitlStatusLabel(value: string): string {
   const normalized = (value || "").toLowerCase();
   if (normalized.includes("reject")) return "Rejected";
@@ -425,12 +474,14 @@ function ImageGalleryView({
   onClosePreview,
 }: {
   onBack: () => void;
-  selectedImage: { src: string; name: string } | null;
-  onSelectImage: (img: { src: string; name: string }) => void;
+  selectedImage: { src: string; name: string; shareSrc?: string } | null;
+  onSelectImage: (img: { src: string; name: string; shareSrc?: string }) => void;
   onClosePreview: () => void;
 }) {
   const { t } = useTranslation();
-  const [images, setGalleryImages] = useState<{ id: string; name: string; src: string; createdAt: string }[]>([]);
+  const [images, setGalleryImages] = useState<
+    { id: string; name: string; src: string; shareSrc: string; createdAt: string }[]
+  >([]);
   const [isLoading, setGalleryLoading] = useState(true);
 
   // Fetch AI-generated images from MiBuddy dedicated endpoint
@@ -446,7 +497,10 @@ function ImageGalleryView({
           (data || []).map((img: any, idx: number) => ({
             id: `gen-${idx}`,
             name: img.name || "AI Generated Image",
-            src: img.src,
+            src: img.src || "",
+            // Prefer app-proxied URL for sharing (verified working in current session).
+            // Fall back to direct blob URL when proxy URL is unavailable.
+            shareSrc: img.src || img.share_url || "",
             createdAt: "",
           })),
         );
@@ -498,13 +552,32 @@ function ImageGalleryView({
   // Windows/iOS/Android will open the OS-level share sheet (WhatsApp, Teams,
   // Outlook, Gmail, LinkedIn, etc.). Firefox / older browsers fall back to
   // copying the image URL to the clipboard.
+  const toAbsoluteUrl = (rawUrl: string) => {
+    try {
+      return new URL(rawUrl, window.location.origin).toString();
+    } catch {
+      return rawUrl;
+    }
+  };
+
   const handleShare = async (src: string, name: string) => {
     const title = name || "Generated Image";
+    const shareUrl = toAbsoluteUrl(src);
+
+    // 1) MiBuddy-parity URL share first
     try {
-      // Try sharing the actual image file (better UX — shared as a file attachment
-      // instead of just a link). Works on mobile & modern desktop browsers.
-      // Public blob URLs don't need auth; our /api/... proxied URLs do.
-      const isPublicBlob = /\.blob\.core\.windows\.net\//i.test(src);
+      if ((navigator as any).share) {
+        await (navigator as any).share({ title, url: shareUrl });
+        return;
+      }
+    } catch (err: any) {
+      if (err?.name === "AbortError") return;
+      console.warn("[handleShare] URL share failed, trying file share:", err);
+    }
+
+    // 2) Fallback to file share
+    try {
+      const isPublicBlob = /\.blob\.core\.windows\.net\//i.test(shareUrl);
       const headers: Record<string, string> = {};
       if (!isPublicBlob) {
         const tokenMatch = document.cookie.match(/(?:^|;\s*)access_token_lf=([^;]*)/);
@@ -512,32 +585,25 @@ function ImageGalleryView({
           headers["Authorization"] = `Bearer ${decodeURIComponent(tokenMatch[1])}`;
         }
       }
-      const res = await fetch(src, isPublicBlob ? {} : { headers, credentials: "include" });
+      const res = await fetch(shareUrl, isPublicBlob ? {} : { headers, credentials: "include" });
       if (res.ok) {
         const blob = await res.blob();
         const file = new File([blob], name || `image-${Date.now()}.png`, {
           type: blob.type || "image/png",
         });
-        if ((navigator as any).canShare?.({ files: [file] })) {
+        if ((navigator as any).share && (navigator as any).canShare?.({ files: [file] })) {
           await (navigator as any).share({ title, files: [file] });
           return;
         }
       }
-    } catch (err) {
-      console.warn("[handleShare] File share failed, falling back to URL:", err);
+    } catch (err: any) {
+      if (err?.name === "AbortError") return;
+      console.warn("[handleShare] File share failed, falling back to clipboard:", err);
     }
-    // Fallback 1: share the URL (still triggers OS share sheet on supported browsers)
+
+    // 3) Final fallback: copy share URL
     try {
-      if ((navigator as any).share) {
-        await (navigator as any).share({ title, url: src });
-        return;
-      }
-    } catch (err) {
-      console.warn("[handleShare] URL share failed, falling back to clipboard:", err);
-    }
-    // Fallback 2: copy URL to clipboard (browsers without Web Share API)
-    try {
-      await navigator.clipboard.writeText(src);
+      await navigator.clipboard.writeText(shareUrl);
       useAlertStore.getState().setSuccessData?.({ title: "Image link copied to clipboard" });
     } catch {
       useAlertStore.getState().setErrorData?.({
@@ -546,7 +612,6 @@ function ImageGalleryView({
       });
     }
   };
-
   return (
     <div className="relative flex flex-1 flex-col">
       {/* Header */}
@@ -582,7 +647,7 @@ function ImageGalleryView({
               <div
                 key={img.id}
                 className="group relative cursor-pointer overflow-hidden rounded-xl border border-border bg-muted/30 transition-shadow hover:shadow-lg hover:border-primary/50"
-                onClick={() => onSelectImage({ src: img.src, name: img.name })}
+                onClick={() => onSelectImage({ src: img.src, name: img.name, shareSrc: img.shareSrc })}
               >
                 <div className="aspect-square overflow-hidden">
                   <img
@@ -597,7 +662,7 @@ function ImageGalleryView({
                     <span className="max-w-[60%] truncate text-xs font-medium text-white">{img.name}</span>
                     <div className="flex items-center gap-1">
                       <button
-                        onClick={(e) => { e.stopPropagation(); handleShare(img.src, img.name); }}
+                        onClick={(e) => { e.stopPropagation(); handleShare(img.shareSrc, img.name); }}
                         className="rounded-full bg-white/20 p-1.5 text-white backdrop-blur-sm hover:bg-white/40"
                         title="Share"
                       >
@@ -634,7 +699,10 @@ function ImageGalleryView({
             <img src={selectedImage.src} alt={selectedImage.name} className="max-h-[80vh] max-w-[85vw] rounded-lg object-contain" />
             <div className="mt-4 flex items-center gap-4">
               <span className="max-w-xs truncate text-sm text-white/80">{selectedImage.name}</span>
-              <button onClick={() => handleShare(selectedImage.src, selectedImage.name)} className="flex items-center gap-2 rounded-lg bg-white/10 px-4 py-2 text-sm text-white backdrop-blur-sm hover:bg-white/20">
+              <button
+                onClick={() => handleShare(selectedImage.shareSrc || selectedImage.src, selectedImage.name)}
+                className="flex items-center gap-2 rounded-lg bg-white/10 px-4 py-2 text-sm text-white backdrop-blur-sm hover:bg-white/20"
+              >
                 <Share2 size={16} />
                 {t("Share")}
               </button>
@@ -700,6 +768,12 @@ export default function AgentOrchestrator() {
   const [showAiModelPicker, setShowAiModelPicker] = useState(false);
   const [showMoreModels, setShowMoreModels] = useState(false);
   const [selectedAiModel, setSelectedAiModel] = useState<string | null>(null);
+  // Header-only model label override (used for routed specialist turns like
+  // web search) without mutating selectedAiModel/request model.
+  const [headerModelOverride, setHeaderModelOverride] = useState<{
+    name: string;
+    icon?: string;
+  } | null>(null);
   const [aiModels, setAiModels] = useState<AiModelOption[]>(FALLBACK_AI_MODELS);
   const [noAgentMode, setNoAgentMode] = useState(false);
   // Addon: SharePoint file picker
@@ -710,7 +784,9 @@ export default function AgentOrchestrator() {
   const [showOutlookOrch, setShowOutlookOrch] = useState(false);
   const { isOutlookConnected: isOutlookOrchConnected, setIsOutlookConnected: setIsOutlookOrchConnected } =
     useOutlookOrchStatus();
-  const [selectedGalleryImage, setSelectedGalleryImage] = useState<{ src: string; name: string } | null>(null);
+  const [selectedGalleryImage, setSelectedGalleryImage] = useState<
+    { src: string; name: string; shareSrc?: string } | null
+  >(null);
   // Addon: Canvas mode
   const [isCanvasEnabled, setIsCanvasEnabled] = useState(false);
   // Addon: Image generation mode (sticky chip — stays until user clicks ×)
@@ -891,6 +967,7 @@ export default function AgentOrchestrator() {
   const modelPickerRef = useRef<HTMLDivElement>(null);
   const aiModelPickerRef = useRef<HTMLDivElement>(null);
   const hitlSessionRef = useRef<string | null>(null);
+  const sessionSelectionSyncRef = useRef<string | null>(null);
 
   /* ------------------ FILE UPLOAD ------------------ */
 
@@ -1108,6 +1185,12 @@ export default function AgentOrchestrator() {
     return null;
   }, [activeSessionId, currentSessionId, apiSessions]);
 
+  useEffect(() => {
+    if (!effectiveSessionId) {
+      sessionSelectionSyncRef.current = null;
+    }
+  }, [effectiveSessionId]);
+
   // Load messages when switching to an existing session
   const { data: apiSessionMessages, refetch: refetchMessages } = useGetOrchMessages(
     { session_id: effectiveSessionId || "" },
@@ -1176,16 +1259,62 @@ export default function AgentOrchestrator() {
         hitlSessionRef.current = effectiveSessionId;
       }
 
-      // Sync selected model with the session's active agent
-      const sessionInfo = apiSessions?.find((s) => s.session_id === effectiveSessionId);
-      if (sessionInfo?.active_agent_name) {
-        const activeAgent = agents.find((a) => a.name === sessionInfo.active_agent_name);
-        if (activeAgent) {
-          setSelectedModelId(activeAgent.id);
+      // Restore session-specific selection (agent vs model) only once per
+      // session switch so polling doesn't override user's in-progress choice.
+      if (sessionSelectionSyncRef.current !== effectiveSessionId) {
+        const sessionInfo = apiSessions?.find((s) => s.session_id === effectiveSessionId);
+        const hint = inferSessionSelectionHint(apiSessionMessages);
+
+        if (hint?.mode === "model") {
+          setSelectedModelId("");
+          setNoAgentMode(true);
+          setSelectedAiModel(hint.modelId);
+          setHeaderModelOverride(null);
+          sessionSelectionSyncRef.current = effectiveSessionId;
+          return;
         }
+
+        if (hint?.mode === "agent") {
+          let deploymentId = hint.deploymentId;
+          if (!deploymentId && hint.agentId) {
+            deploymentId = agents.find((a) => a.agent_id === hint.agentId)?.id;
+          }
+          if (deploymentId) {
+            setSelectedModelId(deploymentId);
+            setNoAgentMode(false);
+            setHeaderModelOverride(null);
+            sessionSelectionSyncRef.current = effectiveSessionId;
+            return;
+          }
+          // Wait for agents to load if we only got agent_id.
+          if (hint.agentId && agents.length === 0) {
+            return;
+          }
+        }
+
+        const fallbackAgent = findAgentFromSessionSummary(sessionInfo, agents);
+        if (fallbackAgent) {
+          setSelectedModelId(fallbackAgent.id);
+          setNoAgentMode(false);
+          setHeaderModelOverride(null);
+          sessionSelectionSyncRef.current = effectiveSessionId;
+          return;
+        }
+
+        const hasAgentInSummary =
+          !!sessionInfo?.active_agent_id
+          || !!sessionInfo?.active_deployment_id
+          || !!sessionInfo?.active_agent_name;
+
+        if (hasAgentInSummary && agents.length === 0) {
+          return;
+        }
+
+        // No restorable session mode found: keep current/default UI state.
+        sessionSelectionSyncRef.current = effectiveSessionId;
       }
     }
-  }, [apiSessionMessages, effectiveSessionId, apiSessions, agents]);
+  }, [apiSessionMessages, effectiveSessionId, apiSessions, agents, isSending, currentSessionId]);
 
   /* Resolve a pending share-link session once the user's own session
    * list has loaded. If the shared session belongs to the viewer, take
@@ -1287,6 +1416,9 @@ export default function AgentOrchestrator() {
   useEffect(() => {
     if (didDefaultSelectRef.current) return;
     if (aiModels.length === 0) return;
+    // If an existing session is open, restore that session's selection
+    // instead of forcing the page-level default model.
+    if (effectiveSessionId) return;
     didDefaultSelectRef.current = true;
     const mibuddy = aiModels.find((m) => /mibuddy[\s_-]?ai/i.test(m.name));
     const defaultModel = mibuddy || aiModels.find((m) => m.is_default) || aiModels[0];
@@ -1295,7 +1427,7 @@ export default function AgentOrchestrator() {
       setNoAgentMode(true);
       setSelectedModelId("");
     }
-  }, [aiModels]);
+  }, [aiModels, effectiveSessionId]);
 
   // Keep HITL status in sync when decisions happen on HITL Approvals page.
   // This lets orchestrator chat hide the pending banner and show final status
@@ -1963,6 +2095,8 @@ export default function AgentOrchestrator() {
     // React state flush timing is tricky). Falls back to the live `input` state.
     const effectiveInput = (typeof overrideText === "string" ? overrideText : input);
     if (!canInteract || (!effectiveInput.trim() && !hasFiles) || isSending || hasPendingHitl) return;
+    // New turn starts: clear prior routed label override.
+    setHeaderModelOverride(null);
     // Hide autocomplete suggestions the moment the user submits, AND cancel any
     // in-flight suggestion fetch so its delayed response can't re-show the dropdown.
     setSuggestions([]);
@@ -2202,6 +2336,19 @@ export default function AgentOrchestrator() {
           // without waiting for the full response.
           if (eventType === "routing") {
             console.warn("[Orch][routing event]", data);
+            const routedMode = String(data?.mode || "").toLowerCase();
+            if (noAgentMode && routedMode === "web_search" && data?.routed_model_name) {
+              const nameStr = String(data.routed_model_name);
+              const byName = aiModels.find(
+                (m) => m.name.toLowerCase() === nameStr.toLowerCase(),
+              );
+              setHeaderModelOverride({
+                name: byName?.name || nameStr,
+                icon: byName?.icon,
+              });
+            } else {
+              setHeaderModelOverride(null);
+            }
             let routedDisplayName: string | null = null;
             if (noAgentMode && data?.routed_model_id) {
               const routedId = String(data.routed_model_id);
@@ -2466,6 +2613,8 @@ export default function AgentOrchestrator() {
     setMessages([]);
     setSelectedModelId("");
     setNoAgentMode(true);
+    setHeaderModelOverride(null);
+    sessionSelectionSyncRef.current = null;
     setShowImageGallery(false);
     setIsSharedReadOnly(false);
     setIsCanvasEnabled(false);
@@ -2870,8 +3019,11 @@ export default function AgentOrchestrator() {
               <div className="px-3 pb-1 text-xxs font-semibold uppercase tracking-wide text-muted-foreground">
                 {t("Applications")}
               </div>
-              <div className="flex flex-col gap-0.5">
-                <button
+              <div
+                className="flex max-h-[11.25rem] flex-col gap-0.5 overflow-y-auto scroll-smooth"
+                style={{ scrollbarWidth: "thin" }}
+              >
+                {/* <button
                   onClick={() => window.open("https://translator.ai.motherson.com", "_blank")}
                   className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm text-foreground hover:bg-accent"
                 >
@@ -2894,6 +3046,78 @@ export default function AgentOrchestrator() {
                 >
                   <img src={notebookLMLogo} alt="" className="h-4 w-4 shrink-0 object-contain" />
                   <span>{t("NotebookLM")}</span>
+                </button> */}
+                <button
+                  onClick={() => window.open("https://mmnext.services.ailifebot.com/", "_blank")}
+                  className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm text-foreground hover:bg-accent"
+                  title={t("MMNext")}
+                >
+                  <img src={translatorLogo} alt="" className="h-4 w-4 shrink-0 object-contain" />
+                  <span>{t("MMNext")}</span>
+                </button>
+                <button
+                  onClick={() => window.open("https://talentai.motherson.com/", "_blank")}
+                  className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm text-foreground hover:bg-accent"
+                  title={t("Talent AI")}
+                >
+                  <img src={translatorLogo} alt="" className="h-4 w-4 shrink-0 object-contain" />
+                  <span>{t("Talent AI")}</span>
+                </button>
+                <button
+                  onClick={() => window.open("https://genai.motherson.com/do33", "_blank")}
+                  className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm text-foreground hover:bg-accent"
+                  title={t("DO33")}
+                >
+                  <img src={do33Logo} alt="" className="h-4 w-4 shrink-0 object-contain" />
+                  <span>{t("DO33")}</span>
+                </button>
+                <button
+                  onClick={() => window.open("https://translator.ai.motherson.com", "_blank")}
+                  className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm text-foreground hover:bg-accent"
+                  title={t("AI Motherson Translator")}
+                >
+                  <img src={translatorLogo} alt="" className="h-4 w-4 shrink-0 object-contain" />
+                  <span>{t("AI Motherson Translator")}</span>
+                </button>
+                <button
+                  onClick={() => window.open("https://genai.motherson.com/capex-forecasting", "_blank")}
+                  className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm text-foreground hover:bg-accent"
+                  title={t("Capex Forecasting")}
+                >
+                  <img src={translatorLogo} alt="" className="h-4 w-4 shrink-0 object-contain" />
+                  <span>{t("Capex Forecasting")}</span>
+                </button>
+                <button
+                  onClick={() => window.open("https://genai.motherson.com/yachiyo", "_blank")}
+                  className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm text-foreground hover:bg-accent"
+                  title={t("Yachio Bot")}
+                >
+                  <img src={translatorLogo} alt="" className="h-4 w-4 shrink-0 object-contain" />
+                  <span>{t("Yachio Bot")}</span>
+                </button>
+                <button
+                  onClick={() => window.open("https://genai.motherson.com/kip", "_blank")}
+                  className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm text-foreground hover:bg-accent"
+                  title={t("KIP Bot")}
+                >
+                  <img src={translatorLogo} alt="" className="h-4 w-4 shrink-0 object-contain" />
+                  <span>{t("KIP Bot")}</span>
+                </button>
+                <button
+                  onClick={() => window.open("https://spendanalytics-hmcqbkd4f6etbseu.centralindia-01.azurewebsites.net/", "_blank")}
+                  className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm text-foreground hover:bg-accent"
+                  title={t("Spend Analytics")}
+                >
+                  <img src={translatorLogo} alt="" className="h-4 w-4 shrink-0 object-contain" />
+                  <span>{t("Spend Analytics")}</span>
+                </button>
+                <button
+                  onClick={() => window.open("https://mibuddy.motherson.com/", "_blank")}
+                  className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm text-foreground hover:bg-accent"
+                  title={t("MiBuddy")}
+                >
+                  <img src={translatorLogo} alt="" className="h-4 w-4 shrink-0 object-contain" />
+                  <span>{t("MiBuddy")}</span>
                 </button>
               </div>
             </>
@@ -3034,7 +3258,7 @@ export default function AgentOrchestrator() {
           className="fixed z-[100] min-w-[200px] rounded-xl border border-border bg-popover p-1.5 shadow-lg"
           style={{ top: appsPopoverPos.top, left: appsPopoverPos.left }}
         >
-          <button
+          {/* <button
             onClick={() => { setShowAppsPopover(false); window.open("https://translator.motherson.com", "_blank"); }}
             className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm text-foreground hover:bg-accent"
           >
@@ -3054,7 +3278,72 @@ export default function AgentOrchestrator() {
           >
             <img src={notebookLMLogo} alt="" className="h-5 w-5 shrink-0 object-contain" />
             <span>{t("NotebookLM")}</span>
+          </button> */}
+
+          <button
+            onClick={() => { setShowAppsPopover(false); window.open("https://mmnext.services.ailifebot.com/", "_blank"); }}
+            className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm text-foreground hover:bg-accent"
+          >
+            <img src={translatorLogo} alt="" className="h-5 w-5 shrink-0 object-contain" />
+            <span>{t("MMNext")}</span>
           </button>
+          <button
+            onClick={() => { setShowAppsPopover(false); window.open("https://talentai.motherson.com/", "_blank"); }}
+            className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm text-foreground hover:bg-accent"
+          >
+            <img src={translatorLogo} alt="" className="h-5 w-5 shrink-0 object-contain" />
+            <span>{t("Talent AI")}</span>
+          </button>
+          <button
+            onClick={() => { setShowAppsPopover(false); window.open("https://genai.motherson.com/do33", "_blank"); }}
+            className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm text-foreground hover:bg-accent"
+          >
+            <img src={translatorLogo} alt="" className="h-5 w-5 shrink-0 object-contain" />
+            <span>{t("DO33")}</span>
+          </button>
+          <button
+            onClick={() => { setShowAppsPopover(false); window.open("https://translator.ai.motherson.com/", "_blank"); }}
+            className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm text-foreground hover:bg-accent"
+          >
+            <img src={translatorLogo} alt="" className="h-5 w-5 shrink-0 object-contain" />
+            <span>{t("AI Motherson Translator")}</span>
+          </button>
+          <button
+            onClick={() => { setShowAppsPopover(false); window.open("https://genai.motherson.com/capex-forecasting", "_blank"); }}
+            className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm text-foreground hover:bg-accent"
+          >
+            <img src={translatorLogo} alt="" className="h-5 w-5 shrink-0 object-contain" />
+            <span>{t("Capex Forecasting")}</span>
+          </button>
+          <button
+            onClick={() => { setShowAppsPopover(false); window.open("https://genai.motherson.com/yachiyo", "_blank"); }}
+            className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm text-foreground hover:bg-accent"
+          >
+            <img src={translatorLogo} alt="" className="h-5 w-5 shrink-0 object-contain" />
+            <span>{t("Yachio Bot")}</span>
+          </button>
+          <button
+            onClick={() => { setShowAppsPopover(false); window.open("https://genai.motherson.com/kip", "_blank"); }}
+            className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm text-foreground hover:bg-accent"
+          >
+            <img src={translatorLogo} alt="" className="h-5 w-5 shrink-0 object-contain" />
+            <span>{t("KIP Bot")}</span>
+          </button>
+          <button
+            onClick={() => { setShowAppsPopover(false); window.open("https://spendanalytics-hmcqbkd4f6etbseu.centralindia-01.azurewebsites.net/", "_blank"); }}
+            className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm text-foreground hover:bg-accent"
+          >
+            <img src={translatorLogo} alt="" className="h-5 w-5 shrink-0 object-contain" />
+            <span>{t("Spend Analytics")}</span>
+          </button>
+          <button
+            onClick={() => { setShowAppsPopover(false); window.open("https://mibuddy.motherson.com/", "_blank"); }}
+            className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm text-foreground hover:bg-accent"
+          >
+            <img src={translatorLogo} alt="" className="h-5 w-5 shrink-0 object-contain" />
+            <span>{t("MiBuddy")}</span>
+          </button>
+
         </div>
       )}
       {showAgentsPopover && (
@@ -3495,6 +3784,20 @@ export default function AgentOrchestrator() {
                input to switch to an agent — `handleSend` already detects
                that and swaps modes accordingly. */}
           <div ref={aiModelPickerRef} className="relative">
+            {(() => {
+              const selectedModelOption =
+                noAgentMode && selectedAiModel
+                  ? aiModels.find((m) => m.id === selectedAiModel)
+                  : null;
+              const headerDisplayName =
+                noAgentMode
+                  ? (headerModelOverride?.name || selectedModelOption?.name || t("Choose AI Model"))
+                  : t("Choose AI Model");
+              const headerDisplayIcon =
+                noAgentMode
+                  ? (headerModelOverride?.icon || selectedModelOption?.icon)
+                  : undefined;
+              return (
             <button
               disabled={!noAgentMode}
               onClick={() => {
@@ -3515,18 +3818,20 @@ export default function AgentOrchestrator() {
                     : "text-muted-foreground"
               }`}
             >
-              {noAgentMode && selectedAiModel && aiModels.find((m) => m.id === selectedAiModel)?.icon ? (
+              {headerDisplayIcon ? (
                 <img
-                  src={aiModels.find((m) => m.id === selectedAiModel)!.icon}
+                  src={headerDisplayIcon}
                   alt=""
                   className="h-4 w-4 shrink-0 object-contain"
                 />
               ) : (
                 <span className="h-3 w-3 shrink-0 rounded-full bg-muted-foreground/40" />
               )}
-              <span>{noAgentMode && selectedAiModel ? aiModels.find((m) => m.id === selectedAiModel)?.name || t("Choose AI Model") : t("Choose AI Model")}</span>
+              <span>{headerDisplayName}</span>
               <ChevronDown size={14} className="opacity-50" />
             </button>
+              );
+            })()}
 
             {showAiModelPicker && (
               <div className="absolute left-0 top-full z-50 mt-1 min-w-[220px] rounded-xl border border-border bg-popover p-1 shadow-lg">
@@ -3540,6 +3845,7 @@ export default function AgentOrchestrator() {
                     onClick={() => {
                       if (!noAgentMode) return;
                       setSelectedAiModel(model.id);
+                      setHeaderModelOverride(null);
                       setShowAiModelPicker(false);
                     }}
                     className={`flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm ${
@@ -3586,6 +3892,7 @@ export default function AgentOrchestrator() {
                           key={model.id}
                           onClick={() => {
                             setSelectedAiModel(model.id);
+                            setHeaderModelOverride(null);
                             setShowAiModelPicker(false);
                             setShowMoreModels(false);
                           }}
@@ -3638,6 +3945,8 @@ export default function AgentOrchestrator() {
 
               const isUser = msg.sender === "user";
               const isThinking = msg.sender === "agent" && msg.content === "" && isSending;
+              const isInlineEditingUserMessage =
+                isUser && editingMsgId === msg.id && noAgentMode;
 
               // Canvas: any agent message can be edited via canvas
               const isEditingThis = canvasEditingId === msg.id;
@@ -3698,7 +4007,15 @@ export default function AgentOrchestrator() {
                   )}
 
                   {/* Content */}
-                  <div className={isUser ? "max-w-[80%]" : "min-w-0 flex-1"}>
+                  <div
+                    className={
+                      isUser
+                        ? isInlineEditingUserMessage
+                          ? "w-full max-w-full"
+                          : "max-w-[80%]"
+                        : "min-w-0 flex-1"
+                    }
+                  >
                     {!isUser && (
                     <div className="mb-1 flex items-center gap-2 text-sm font-semibold text-foreground">
                       {msg.agentName}
@@ -3714,7 +4031,11 @@ export default function AgentOrchestrator() {
                       </div>
                     ) : isUser ? (
                       <>
-                      <div className="group/usermsg rounded-lg bg-[#edf5fd] px-4 py-2.5 text-[15px] leading-relaxed text-foreground/80 shadow-sm dark:bg-accent">
+                      <div
+                        className={`group/usermsg rounded-lg bg-[#edf5fd] px-4 py-2.5 text-[15px] leading-relaxed text-foreground/80 shadow-sm dark:bg-accent ${
+                          isInlineEditingUserMessage ? "w-full" : ""
+                        }`}
+                      >
                         {editingMsgId === msg.id && noAgentMode ? (
                           // Inline editor — matches MiBuddy's UX: textarea + Cancel/Send buttons
                           <div className="rounded-xl border border-border bg-muted/30 p-3">
@@ -3842,8 +4163,13 @@ export default function AgentOrchestrator() {
                             editedFlag={null}
                           />
                         )}
-                        {/* Action buttons row — hide when message contains a generated image */}
-                        {msg.content && !isSending && !/!\[.*?\]\(.*?\)/.test(msg.content) && (
+                        {/* Action buttons row — show on every assistant message,
+                            including image-generation replies. Thumbs/copy/share
+                            all operate on the accompanying text (captions like
+                            "Here is your generated image."); download + share
+                            naturally apply to the image itself because the image
+                            URL lives in the same markdown. */}
+                        {msg.content && !isSending && (
                           <div className="mt-1.5 flex items-center gap-1">
                             <button
                               onClick={() => handleThumbClick(msg, "up")}

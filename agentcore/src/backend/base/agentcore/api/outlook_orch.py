@@ -313,8 +313,10 @@ async def outlook_status(
 ) -> JSONResponse:
     user_id = str(current_user.id)
     cookie_user = _decrypt_outlook_cookie(request)
-    token_connected = outlook_token_manager.is_connected(user_id)
-    is_connected = bool(cookie_user == user_id and token_connected)
+    # Cookie proves the user completed OAuth — trust it for status display.
+    # The token manager is in-memory per pod, so checking it would give
+    # false negatives on pods that didn't handle the original callback.
+    is_connected = bool(cookie_user and cookie_user == user_id)
     return JSONResponse(content={"connected": is_connected}, status_code=200)
 
 
