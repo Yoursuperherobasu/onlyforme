@@ -345,6 +345,82 @@ def _pick_best_text(candidates: list[str]) -> str:
     return max(cleaned, key=_score)
 
 
+def _normalize_content_blocks(content_blocks: Any) -> list[dict]:
+    """Normalize content_blocks to a JSON-serializable list of dicts."""
+    if not isinstance(content_blocks, list):
+        return []
+
+    normalized: list[dict] = []
+    for block in content_blocks:
+        if hasattr(block, "model_dump"):
+            try:
+                block = block.model_dump()
+            except Exception:  # noqa: BLE001
+                continue
+        if isinstance(block, dict):
+            normalized.append(block)
+    return normalized
+
+
+def _dedupe_content_blocks(content_blocks: list[dict]) -> list[dict]:
+    """Deduplicate content blocks while preserving order."""
+    unique: list[dict] = []
+    seen: set[str] = set()
+
+    for block in content_blocks:
+        try:
+            signature = json.dumps(block, sort_keys=True, default=str)
+        except Exception:  # noqa: BLE001
+            signature = str(block)
+        if signature in seen:
+            continue
+        seen.add(signature)
+        unique.append(block)
+    return unique
+
+
+def _score_content_blocks(content_blocks: list[dict]) -> tuple[int, int]:
+    """Score block lists by total content items first, then block count."""
+    content_items = 0
+    for block in content_blocks:
+        contents = block.get("contents")
+        if isinstance(contents, list):
+            content_items += len(contents)
+    return content_items, len(content_blocks)
+
+
+def _pick_best_content_blocks(candidates: list[list[dict]]) -> list[dict]:
+    """Pick the richest content_blocks candidate from multiple sources."""
+    cleaned: list[list[dict]] = []
+    for candidate in candidates:
+        normalized = _dedupe_content_blocks(_normalize_content_blocks(candidate))
+        if normalized:
+            cleaned.append(normalized)
+    if not cleaned:
+        return []
+    return max(cleaned, key=_score_content_blocks)
+
+
+def _extract_content_blocks(payload: Any) -> list[dict]:
+    """Recursively extract all content_blocks lists from a run payload."""
+    collected: list[dict] = []
+
+    def _walk(node: Any) -> None:
+        if isinstance(node, dict):
+            if "content_blocks" in node:
+                collected.extend(_normalize_content_blocks(node.get("content_blocks")))
+            for value in node.values():
+                if isinstance(value, dict | list):
+                    _walk(value)
+        elif isinstance(node, list):
+            for item in node:
+                if isinstance(item, dict | list):
+                    _walk(item)
+
+    _walk(payload)
+    return _dedupe_content_blocks(collected)
+
+
 def _is_interrupted_payload(payload: Any) -> bool:
     """Return True when a /run payload indicates a HITL interrupt."""
     if not isinstance(payload, dict):
@@ -493,7 +569,7 @@ async def _orch_call_run_api(
 ) -> tuple[str, bool, list]:
     """Call POST /api/v1/run/{agent_id} internally with the AGENTCORE_INTERNAL_SECRET header.
 
-    Returns (response_text, was_interrupted, content_blocks=[]).
+    Returns (response_text, was_interrupted, content_blocks).
     For streaming, SSE token/add_message events are forwarded to event_manager;
     the function waits for the 'end' event to obtain the final text.
     """
@@ -534,9 +610,13 @@ async def _orch_call_run_api(
             resp.raise_for_status()
         payload = resp.json()
         text = _extract_text(payload)
+        content_blocks = _extract_content_blocks(payload)
         interrupted = _is_interrupted_payload(payload)
-        logger.info(f"[ORCH] run API completed | interrupted={interrupted} | response_length={len(text)}")
-        return text, interrupted, []
+        logger.info(
+            f"[ORCH] run API completed | interrupted={interrupted} | "
+            f"response_length={len(text)} | content_blocks={len(content_blocks)}"
+        )
+        return text, interrupted, content_blocks
 
     # --- Streaming: forward SSE events to event_manager, collect final text ---
     final_text = ""
@@ -544,6 +624,9 @@ async def _orch_call_run_api(
     latest_agent_add_message_text = ""
     message_text_by_id: dict[str, str] = {}
     active_message_id: str | None = None
+    message_content_blocks_by_id: dict[str, list[dict]] = {}
+    latest_agent_content_blocks: list[dict] = []
+    end_content_blocks: list[dict] = []
     saw_end_event = False
     pending_sse_event_type = ""
     was_interrupted = False
@@ -637,19 +720,33 @@ async def _orch_call_run_api(
                         if isinstance(edata, dict)
                         else ""
                     )
+                    msg_id = (
+                        str(edata.get("id") or edata.get("message_id") or "").strip()
+                        if isinstance(edata, dict)
+                        else ""
+                    )
                     if isinstance(msg_text, str) and msg_text.strip() and "user" not in sender:
                         latest_agent_add_message_text = msg_text
-                        msg_id = ""
-                        if isinstance(edata, dict):
-                            msg_id = str(edata.get("id") or edata.get("message_id") or "").strip()
                         target_id = msg_id or active_message_id or "__orch_agent_msg__"
                         message_text_by_id[target_id] = msg_text
+                        active_message_id = target_id
+                    msg_blocks = _extract_content_blocks(edata)
+                    if msg_blocks and "user" not in sender:
+                        target_id = msg_id or active_message_id or "__orch_agent_msg__"
+                        merged_blocks = _pick_best_content_blocks(
+                            [message_content_blocks_by_id.get(target_id, []), msg_blocks]
+                        )
+                        message_content_blocks_by_id[target_id] = merged_blocks
+                        latest_agent_content_blocks = merged_blocks
                         active_message_id = target_id
                     if event_manager:
                         event_manager.on_message(data=edata)
                 elif etype == "end":
                     saw_end_event = True
                     result = edata.get("result", edata) if isinstance(edata, dict) else edata
+                    end_content_blocks = _pick_best_content_blocks(
+                        [_extract_content_blocks(result), _extract_content_blocks(edata)]
+                    )
                     was_interrupted = _is_interrupted_payload(result)
                     if was_interrupted:
                         final_text = ""
@@ -666,7 +763,8 @@ async def _orch_call_run_api(
                         "[ORCH] stream ended | "
                         f"interrupted={was_interrupted} "
                         f"response_length={len(final_text)} "
-                        f"token_chars={len(''.join(token_chunks))}"
+                        f"token_chars={len(''.join(token_chunks))} "
+                        f"content_blocks={len(end_content_blocks)}"
                     )
                 elif etype == "error":
                     raise ValueError(edata.get("error", "Stream error from /run"))
@@ -684,7 +782,12 @@ async def _orch_call_run_api(
             f"final_chars={len(final_text)}"
         )
 
-    return final_text, was_interrupted, []
+    streamed_blocks = list(message_content_blocks_by_id.values())
+    final_content_blocks = _pick_best_content_blocks(
+        [end_content_blocks, latest_agent_content_blocks, *streamed_blocks]
+    )
+
+    return final_text, was_interrupted, final_content_blocks
 
 
 async def _lookup_agent_project(session: DbSession, agent_id: UUID) -> tuple[str | None, str | None]:
@@ -1017,6 +1120,38 @@ async def _get_model_display_name(session: DbSession, model_id: UUID) -> str:
     if row:
         return row.display_name
     return "Model"
+
+
+async def _model_has_capability(session: DbSession, model_id: UUID | None, cap: str) -> bool:
+    """Return True when a registry model has a given capability (e.g. `web_search`).
+
+    Used by the web_search / image_gen dispatch branches to decide whether to
+    swap the response model to the configured specialist. If the user already
+    selected a model that can handle the intent natively (e.g. Gemini 3 Pro
+    with `web_search=true`), keep their selection — otherwise the dropdown
+    would flip to a different model that may be registered with a provider
+    (like `google` using Generative Language API) that can't serve the
+    follow-up general-chat turn in the same session.
+    """
+    if not model_id:
+        return False
+    try:
+        from agentcore.services.database.models.model_registry.model import ModelRegistry
+        from agentcore.services.mibuddy.model_capabilities import detect_capabilities
+
+        row = await session.get(ModelRegistry, model_id)
+        if not row:
+            return False
+        caps = detect_capabilities(
+            row.provider,
+            row.model_name,
+            row.capabilities,
+            getattr(row, "provider_config", None),
+        )
+        return bool(caps.get(cap))
+    except Exception as exc:  # noqa: BLE001
+        logger.debug(f"[ORCH] Capability probe failed for {model_id} / {cap}: {exc}")
+        return False
 
 
 async def _collect_session_doc_filenames(
@@ -1511,24 +1646,43 @@ async def orch_chat(
             result = await handle_web_search(body.input_value, system_message=get_system_identity_prompt())
             response_text = result["response_text"]
             resp_model_name = result.get("model_name", "gemini")
-            # Use the actual model's display name (user-selected OR WEB_SEARCH_MODEL_NAME)
-            if routing.get("intent") == "web_search_explicit" and resp_model_id:
+            # Keep the user's selected model when it can handle web_search itself
+            # (prevents the dropdown from flipping to a different provider that
+            # may fail on follow-up general-chat turns in the same session).
+            user_model_can_web_search = await _model_has_capability(session, resp_model_id, "web_search")
+            if user_model_can_web_search or (routing.get("intent") == "web_search_explicit" and resp_model_id):
                 sender_name = await _get_model_display_name(session, resp_model_id)
             else:
                 settings_svc = get_settings_service().settings
                 sender_name = settings_svc.web_search_model_name or "Web Search"
+            # Snap dropdown back to the default chat model after this turn
+            # (same intent as the image_gen flow): the web_search handler
+            # doesn't consult resp_model_id, so overriding it here only
+            # affects the `routed_model_id` the frontend uses to sync the
+            # dropdown. Keeps follow-up general-chat turns on a provider
+            # that actually works for plain chat.
+            try:
+                _default_chat_id = get_settings_service().settings.default_chat_model_id
+                if _default_chat_id:
+                    resp_model_id = UUID(str(_default_chat_id))
+            except Exception:
+                pass
 
         elif mode == "image_gen":
             from agentcore.services.mibuddy.image_gen_handler import handle_image_generation
+            # Pass session_id so the handler can detect edit requests and
+            # use the last generated image in the session as a reference.
             result = await handle_image_generation(
                 body.input_value,
                 model_id=str(resp_model_id) if resp_model_id else None,
                 user_id=str(current_user.id),
+                session_id=body.session_id,
             )
             response_text = result["response_text"]
             resp_model_name = result.get("model_name", "image-generation")
-            # Use the actual image-gen model's display name (e.g. "Nano Banana")
-            if routing.get("intent") == "image_generation_explicit" and resp_model_id:
+            # Keep the user's selected model when it can generate images itself.
+            user_model_can_image_gen = await _model_has_capability(session, resp_model_id, "image_generation")
+            if user_model_can_image_gen or (routing.get("intent") == "image_generation_explicit" and resp_model_id):
                 sender_name = await _get_model_display_name(session, resp_model_id)
             else:
                 settings_svc = get_settings_service().settings
@@ -1725,30 +1879,36 @@ async def orch_chat_stream(
             settings_svc = get_settings_service()
             sender_name = settings_svc.settings.company_kb_name or "Knowledge Base"
         elif mode == "web_search":
-            # Use the actual model's display name (either the user-selected one, or
-            # the configured WEB_SEARCH_MODEL_NAME that the handler falls back to).
-            if intent == "web_search_explicit" and resp_model_id:
+            # If the user already picked a web-search-capable model (e.g. Gemini
+            # 3 Pro with web_search=true), keep it — don't flip the dropdown to
+            # the WEB_SEARCH_MODEL_NAME specialist. That flip otherwise strands
+            # follow-up general-chat turns on a different provider that may
+            # fail (e.g. google / Generative Language API).
+            user_model_can_web_search = await _model_has_capability(session, resp_model_id, "web_search")
+            if user_model_can_web_search or (intent == "web_search_explicit" and resp_model_id):
                 sender_name = await _get_model_display_name(session, resp_model_id)
             else:
                 settings_svc = get_settings_service().settings
                 sender_name = settings_svc.web_search_model_name or "Web Search"
-                # Override resp_model_id to the WEB_SEARCH_MODEL_NAME registry entry
-                # so the frontend can auto-switch the dropdown to it.
-                try:
-                    from agentcore.services.model_service_client import fetch_registry_models_async
-                    ws_name = (settings_svc.web_search_model_name or "").strip().lower()
-                    if ws_name:
-                        _all = await fetch_registry_models_async(active_only=True) or []
-                        _match = next((m for m in _all if (m.get("display_name") or "").strip().lower() == ws_name), None)
-                        if _match and _match.get("id"):
-                            resp_model_id = UUID(str(_match["id"]))
-                except Exception:
-                    pass
+            # Mirror the image_gen auto-switch-back: the web_search handler
+            # doesn't use resp_model_id at all (WEB_SEARCH_MODEL_NAME is
+            # resolved internally), so point the dropdown at the default
+            # chat model instead. Prevents follow-up general-chat turns
+            # from being stranded on a web-search-only registry row whose
+            # provider may fail on plain chat (e.g. the google / Generative
+            # Language API 403 on Motherson's GCP project).
+            try:
+                _default_chat_id = get_settings_service().settings.default_chat_model_id
+                if _default_chat_id:
+                    resp_model_id = UUID(str(_default_chat_id))
+            except Exception:
+                pass
         elif mode == "image_gen":
-            # Use the actual image-gen model's display name (e.g. "Nano Banana"),
-            # not generic "Image Generator". When intent routed here, show the
-            # configured IMAGE_GEN_MODEL_NAME.
-            if intent == "image_generation_explicit" and resp_model_id:
+            # Same pattern as web_search: honour the user's choice when the
+            # selected model can generate images natively; only swap to the
+            # IMAGE_GEN_MODEL_NAME specialist when it can't.
+            user_model_can_image_gen = await _model_has_capability(session, resp_model_id, "image_generation")
+            if user_model_can_image_gen or (intent == "image_generation_explicit" and resp_model_id):
                 sender_name = await _get_model_display_name(session, resp_model_id)
             else:
                 settings_svc = get_settings_service().settings
@@ -1904,11 +2064,14 @@ async def orch_chat_stream(
                     logger.warning(f"[ORCH-STREAM] RESPONSE preview: {_rt[:300]!r}")
                 elif _mode == "image_gen":
                     from agentcore.services.mibuddy.image_gen_handler import handle_image_generation_stream
+                    # session_id → enables the image-edit flow when the user
+                    # asks to modify a previously-generated image.
                     result = await handle_image_generation_stream(
                         _input_value,
                         model_id=str(_resp_model_id) if _resp_model_id else None,
                         user_id=str(_user_id),
                         event_manager=event_manager,
+                        session_id=_session_id,
                     )
                 elif _mode == "outlook_query":
                     # Port of MiBuddy's outlook_agent_node. Runs to completion
@@ -2549,6 +2712,7 @@ async def edit_orch_message(
                 body.edited_text,
                 model_id=str(resp_model_id),
                 user_id=str(current_user.id),
+                session_id=user_msg.session_id,
             )
             new_response_text = result.get("response_text", "")
             new_model_name = result.get("model_name", "image-generation")
