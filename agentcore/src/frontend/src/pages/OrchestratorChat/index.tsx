@@ -1709,11 +1709,12 @@ export default function AgentOrchestrator() {
 
   const handleInputChange = (value: string) => {
     setInput(value);
-    // Allow @-mentions in BOTH model mode and agent mode. If the user is in
-    // model mode and picks an agent, `handleSelectAgent` below will flip
-    // them into agent mode automatically.
+    // @-mentions only open the agent picker on a fresh chat. Once a model-mode
+    // conversation is in progress, typing "@" must NOT switch the user to an
+    // agent — they need to start a New Chat to change agent/model context.
+    const inActiveModelChat = noAgentMode && messages.length > 0;
     const match = value.match(/@([\w\s().-]*)$/);
-    if (match && agents.length > 0) {
+    if (match && agents.length > 0 && !inActiveModelChat) {
       const query = match[1].toLowerCase();
       setFilteredAgents(agents.filter((a) => a.name.toLowerCase().includes(query)));
       setShowMentions(true);
@@ -2618,6 +2619,14 @@ export default function AgentOrchestrator() {
     setShowImageGallery(false);
     setIsSharedReadOnly(false);
     setIsCanvasEnabled(false);
+    // Snap the model dropdown back to the default (MiBuddy AI). Otherwise a
+    // prior turn that auto-switched to an image model (e.g. Nano Banana) would
+    // leak into the new chat. Same priority order as the page-load default.
+    if (aiModels.length > 0) {
+      const mibuddy = aiModels.find((m) => /mibuddy[\s_-]?ai/i.test(m.name));
+      const defaultModel = mibuddy || aiModels.find((m) => m.is_default) || aiModels[0];
+      if (defaultModel) setSelectedAiModel(defaultModel.id);
+    }
   };
 
   const handleSelectSession = (sessionId: string) => {
