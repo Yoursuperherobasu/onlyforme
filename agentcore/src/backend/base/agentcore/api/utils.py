@@ -418,8 +418,7 @@ async def cascade_delete_agent(session: AsyncSession, agent_id: uuid.UUID) -> No
     except Exception as e:
         msg = (
             f"Unable to delete agent {agent_id}. "
-            "It has related records (deployments, runs, or usage). "
-            "Disable/undeploy in Control Panel, then delete."
+            "It is published in UAT or PROD and cannot be deleted."
         )
         raise RuntimeError(msg) from e
 

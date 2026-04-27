@@ -18,7 +18,7 @@ from fastapi.responses import StreamingResponse
 from fastapi_pagination import Page, Params
 from fastapi_pagination.ext.sqlmodel import apaginate
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy import or_
+from sqlalchemy import exists, or_
 from sqlmodel import and_, col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -173,31 +173,38 @@ async def _build_agent_visibility_statement(session: AsyncSession, current_user:
 
 
 async def _agent_has_deployed_versions(session: AsyncSession, agent_id: UUID) -> tuple[bool, list[str]]:
-    prod_enabled = (
-        await session.exec(
-            select(AgentDeploymentProd.id)
-            .where(AgentDeploymentProd.agent_id == agent_id)
-            .where(AgentDeploymentProd.is_enabled.is_(True))
-            .limit(1)
+    # Gate on publish status, not the is_enabled kill-switch. Disabling an
+    # agent from the control panel only flips is_enabled; status stays
+    # PUBLISHED until the deployment is explicitly unpublished. Deletion
+    # must be blocked while any UAT/PROD record is still PUBLISHED.
+    #
+    # Both checks are issued as a single round-trip — `SELECT EXISTS(...),
+    # EXISTS(...)` — instead of two sequential queries. On a slow DB link this
+    # halves the latency of the delete-blocked path.
+    prod_pub_q = (
+        select(AgentDeploymentProd.id)
+        .where(AgentDeploymentProd.agent_id == agent_id)
+        .where(AgentDeploymentProd.status == DeploymentPRODStatusEnum.PUBLISHED)
+    )
+    uat_pub_q = (
+        select(AgentDeploymentUAT.id)
+        .where(AgentDeploymentUAT.agent_id == agent_id)
+        .where(AgentDeploymentUAT.status == DeploymentUATStatusEnum.PUBLISHED)
+        .where(AgentDeploymentUAT.moved_to_prod.is_(False))
+    )
+    row = (
+        await session.execute(
+            select(exists(prod_pub_q), exists(uat_pub_q))
         )
-    ).first()
-    if prod_enabled:
-        return True, ["PROD"]
+    ).one()
+    prod_published, uat_published = bool(row[0]), bool(row[1])
 
-    uat_enabled = (
-        await session.exec(
-            select(AgentDeploymentUAT.id)
-            .where(AgentDeploymentUAT.agent_id == agent_id)
-            .where(AgentDeploymentUAT.is_enabled.is_(True))
-            .where(AgentDeploymentUAT.moved_to_prod.is_(False))
-            .limit(1)
-        )
-    ).first()
-
-    if uat_enabled:
-        return True, ["UAT"]
-
-    return False, []
+    envs: list[str] = []
+    if prod_published:
+        envs.append("PROD")
+    if uat_published:
+        envs.append("UAT")
+    return bool(envs), envs
 
 
 async def _can_access_agent(session: AsyncSession, current_user: CurrentActiveUser, agent: Agent) -> bool:
@@ -732,10 +739,7 @@ async def delete_agent(
         env_label = " and ".join(envs)
         raise HTTPException(
             status_code=409,
-            detail=(
-                f"This agent is deployed in {env_label}. "
-                "Disable/undeploy it first."
-            ),
+            detail=f"This agent is published in {env_label} and cannot be deleted.",
         )
     if agent.deleted_at is None:
         agent.deleted_at = datetime.now(timezone.utc)
@@ -850,7 +854,7 @@ async def delete_multiple_agent(
                 env_label = only_envs[0] if only_envs else "UAT"
                 raise HTTPException(
                     status_code=409,
-                    detail=f"This agent is deployed in {env_label}.",
+                    detail=f"This agent is published in {env_label} and cannot be deleted.",
                 )
             blocked_items = [
                 f"{agent_id}: {(envs[0] if envs else 'UAT')}" for agent_id, envs in blocked.items()
@@ -858,7 +862,7 @@ async def delete_multiple_agent(
             raise HTTPException(
                 status_code=409,
                 detail=(
-                    "Some agents are deployed and cannot be deleted. "
+                    "Some agents are published and cannot be deleted. "
                     f"Blocked: {', '.join(blocked_items)}"
                 ),
             )

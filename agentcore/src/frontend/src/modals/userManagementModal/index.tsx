@@ -33,6 +33,8 @@ export default function UserManagementModal({
   asChild,
 }: UserManagementType) {
   const [open, setOpen] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
   const [username, setUserName] = useState(data?.username ?? "");
   const [isActive, setIsActive] = useState(data?.is_active ?? false);
   const [selectedRole, setSelectedRole] = useState(
@@ -68,6 +70,7 @@ export default function UserManagementModal({
 
   useEffect(() => {
     if (open) {
+      setSubmitError(null);
       if (!data) {
         resetForm();
       } else {
@@ -422,7 +425,14 @@ export default function UserManagementModal({
   }
 
   return (
-    <BaseModal size="medium-h-full" open={open} setOpen={setOpen}>
+    <BaseModal
+      size="medium-h-full"
+      open={open}
+      setOpen={(next) => {
+        if (isSubmitting && !next) return;
+        setOpen(next);
+      }}
+    >
       <BaseModal.Trigger asChild={asChild}>{children}</BaseModal.Trigger>
       <BaseModal.Header description={titleHeader}>
         <span className="pr-2">{title}</span>
@@ -436,6 +446,7 @@ export default function UserManagementModal({
         <Form.Root
           onSubmit={async (event) => {
             event.preventDefault();
+            if (isSubmitting) return;
             if (!validateUsernameInput(username, enableBulkDepartmentAdd)) {
               return;
             }
@@ -460,9 +471,26 @@ export default function UserManagementModal({
             }
             const submitData = getSubmitData();
 
-            resetForm();
-            onConfirm(1, submitData);
-            setOpen(false);
+            // Keep the modal open while the request is in flight: the Save
+            // button shows a spinner and stays disabled, and any backend
+            // error (e.g. "department admin still has users under them")
+            // surfaces inline immediately instead of as a delayed toast that
+            // pops up seconds after the modal has already closed.
+            setIsSubmitting(true);
+            setSubmitError(null);
+            try {
+              await onConfirm(1, submitData);
+              resetForm();
+              setOpen(false);
+            } catch (err: any) {
+              setSubmitError(
+                err?.response?.data?.detail ||
+                  err?.message ||
+                  "Failed to save user. Please try again.",
+              );
+            } finally {
+              setIsSubmitting(false);
+            }
           }}
         >
           <div className="grid gap-5">
@@ -704,6 +732,12 @@ export default function UserManagementModal({
 
           </div>
 
+          {submitError ? (
+            <div className="mt-4 rounded-md border border-status-red/30 bg-error-background/40 px-3 py-2 text-sm text-error-foreground">
+              {submitError}
+            </div>
+          ) : null}
+
           <div className="float-right">
             <Button
               variant="outline"
@@ -711,12 +745,15 @@ export default function UserManagementModal({
                 setOpen(false);
               }}
               className="mr-3"
+              disabled={isSubmitting}
             >
               {cancelText}
             </Button>
 
             <Form.Submit asChild>
-              <Button className="mt-8">{confirmationText}</Button>
+              <Button className="mt-8" loading={isSubmitting}>
+                {confirmationText}
+              </Button>
             </Form.Submit>
           </div>
         </Form.Root>

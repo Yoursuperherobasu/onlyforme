@@ -3,7 +3,7 @@ import re
 import uuid
 import zipfile
 from collections.abc import AsyncGenerator, AsyncIterable
-from datetime import datetime
+from datetime import datetime, timezone
 from http import HTTPStatus
 from pathlib import Path
 from typing import Annotated
@@ -349,6 +349,11 @@ async def _get_or_create_knowledge_base(
     if existing:
         if not await _can_access_existing_kb(session, current_user, existing):
             raise HTTPException(status_code=403, detail="Not authorized to use this knowledge base")
+        # Adding files into an existing KB counts as a modification —
+        # surface "modified by" in the management UI.
+        existing.updated_by = current_user.id
+        existing.updated_at = datetime.now(timezone.utc)
+        session.add(existing)
         return existing
 
     kb = KnowledgeBase(
@@ -358,6 +363,7 @@ async def _get_or_create_knowledge_base(
         dept_id=dept_id,
         public_dept_ids=public_dept_ids,
         created_by=current_user.id,
+        updated_by=current_user.id,
     )
     session.add(kb)
     await session.flush()

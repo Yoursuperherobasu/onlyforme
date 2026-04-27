@@ -791,12 +791,18 @@ async def notify_root_approvers(session, *, entity_type, entity_id, title, link=
 2. DEPARTMENT_ADMIN (role=department_admin, dept_id=D1)
    └─ Has permission: "hitl_approve" ← checked by PermissionChecker
    └─ Query filter: can only see agents WHERE dept_id IN (their active depts)
-   └─ Views approval → _get_approval_for_view() → allowed (is request_to)
+   └─ Views approval → _get_approval_for_view() → al lowed (is request_to)
    └─ Approves → _get_approval_for_action() → allowed
 
 3. POST-APPROVAL
    └─ AgentDeploymentProd.status = APPROVED
-   └─ Guardrails promoted from UAT → PROD
+   └─ Guardrails promoted from UAT → 
+   
+
+
+
+
+   
    └─ Pinecone vectors copied: namespace → namespace_prod_v1
    └─ Developer notified via ApprovalNotification
 
@@ -809,703 +815,923 @@ async def notify_root_approvers(session, *, entity_type, entity_id, title, link=
 ---
 ---
 
-# SESSION 2: Authorization & Platform Pages
+# SESSION 2: Authentication (AgentCore Backend)
 
 ---
 
-## 1. Authentication Architecture — 3 Paths
+## 1. Authentication Architecture — 4 Token Sources
+
+The agentcore backend is a FastAPI service. Every protected request is gated by a single dependency, `get_current_user`, which resolves the caller's identity from one of four sources, in order:
 
 ```
-┌──────────────────────────────────────────────────────────┐
-│                    USER LOGIN                            │
-│                                                          │
-│  ┌─────────────┐  ┌──────────────┐  ┌────────────────┐  │
-│  │ Path 1:     │  │ Path 2:      │  │ Path 3:        │  │
-│  │ OKTA/MAS    │  │ Azure        │  │ Dev Fallback   │  │
-│  │ JWT Bearer  │  │ EasyAuth     │  │ sample_user    │  │
-│  │ (Priority 1)│  │ (Priority 2) │  │ (Priority 3)   │  │
-│  └─────────────┘  └──────────────┘  └────────────────┘  │
-└──────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────┐
+│                    INCOMING REQUEST                              │
+│                                                                  │
+│  ┌─────────────┐  ┌────────────┐  ┌─────────────┐  ┌──────────┐ │
+│  │ Source 1:   │  │ Source 2:  │  │ Source 3:   │  │ Source 4:│ │
+│  │ Cookie      │  │ Bearer     │  │ Service     │  │ (none)   │ │
+│  │ access_     │  │ header     │  │ API key     │  │ → 401    │ │
+│  │ token_ag    │  │ (Swagger)  │  │ x-api-key   │  │          │ │
+│  │ (Priority 1)│  │(Priority 2)│  │(Priority 3) │  │          │ │
+│  └─────────────┘  └────────────┘  └─────────────┘  └──────────┘ │
+└──────────────────────────────────────────────────────────────────┘
 ```
 
-| Path | Who | Trigger | Token Type |
-|------|-----|---------|------------|
-| OKTA/MAS JWT | MAS domain users | `Authorization: Bearer` header | HS256 JWT (8hr) |
-| Azure EasyAuth | Motherson web users on Azure | `x-ms-client-principal-*` headers | Azure headers |
-| Dev Fallback | Local development | Neither above present | Hardcoded sample |
+| Source | Who uses it | Trigger | Token type |
+|--------|-------------|---------|------------|
+| Cookie `access_token_ag` | Browser users (default) | Set after `/login` or `/azure/sso` | HS256 JWT (1 hr) |
+| `Authorization: Bearer …` | Swagger / external API consumers | Header pasted manually | HS256 JWT (1 hr) |
+| `x-api-key` header/query | Service-to-service (region gateway) | Static API key | Currently disabled, migrating to Azure Key Vault |
+| None | — | — | `401 Could not validate credentials` |
+
+There are **two login paths** that produce these tokens:
+1. **Username + password** → `POST /login` (form-based)
+2. **Azure SSO (Entra ID)** → `POST /azure/sso` (OIDC `idToken` from MSAL)
+
+There is **no self-signup endpoint** — users are created either by an admin via `POST /users` or auto-provisioned on first Azure SSO login.
 
 ---
 
-## 2. OKTA/MAS Login Flow (Complete)
+## 2. Username/Password Login Flow
 
-### 2.1 MAS Domain Whitelist
+### 2.1 Login Endpoint
 
-**Frontend — File:** `MiBuddy-Backend/frontend/src/ProtectedRoute.tsx` — Line 11
-
-```typescript
-// ProtectedRoute.tsx — Line 11
-const MAS_WIN_DOMAINS = ["adgroupe", "adi-kalfa", "exameca", "mbsctdom01", "mercure"];
-```
-
-**Backend — File:** `MiBuddy-Backend/app.py` — Line 526
+**File:** `src/backend/base/agentcore/api/login.py` — Lines 164-199
 
 ```python
-# app.py — Line 526
-MAS_ALLOWED_EMAIL_DOMAINS: set[str] = {"motherson-mas.com"}
+# login.py — Lines 164-199
+@router.post("/login", response_model=AzureSSOResponse)
+async def login_to_get_access_token(
+    response: Response,
+    form_data: Annotated[OAuth2PasswordRequestForm, Depends()],   # form-encoded
+    db: DbSession,
+):
+    auth_settings = get_settings_service().auth_settings
+    user = await authenticate_user(form_data.username,
+                                   form_data.password, db)        # Line 172
+    if user:
+        tokens = await create_user_tokens(
+            user_id=user.id, db=db, update_last_login=True,
+        )                                                          # Line 182
+        _apply_auth_cookies(response, tokens, auth_settings, user) # Line 183
+        current_role = normalize_role(getattr(user, "role", "developer"))
+        permissions = await get_permissions_for_role(current_role) # Line 185
+        return {**tokens, "role": current_role, "permissions": permissions}
+
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Incorrect username or password",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
 ```
 
-### 2.2 Step 1: Initiate OKTA Login
+### 2.2 authenticate_user() — Credential Verification
 
-**File:** `MiBuddy-Backend/app.py` — Lines 536-561
+**File:** `src/backend/base/agentcore/services/auth/utils.py` — Lines 502-532
 
 ```python
-# app.py — Lines 536-561
-@app.get("/auth/mas/start")
-async def mas_auth_start(request: Request):
-    """MAS users initiated from ProtectedRoute"""
-    state = secrets.token_urlsafe(32)                                  # Line 539 — CSRF token
-    redirect_uri = _get_okta_redirect_uri(request)                     # Line 540
+# utils.py — Lines 502-532
+async def authenticate_user(username: str, password: str,
+                            db: AsyncSession) -> User | None:
+    user = await get_user_by_username(db, username)
+    if not user:
+        return None
 
-    params = {
-        "client_id":     OKTA_CLIENT_ID,                               # Line 544
-        "response_type": "code",                                       # Line 545
-        "scope":         "openid profile email",                       # Line 546
-        "redirect_uri":  redirect_uri,                                 # Line 547
-        "state":         state,                                        # Line 548
+    # Auto-deactivate accounts past their expires_at timestamp
+    if user.expires_at is not None:
+        now = datetime.now(timezone.utc)
+        expires_at = user.expires_at
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+        if now >= expires_at:
+            user.is_active = False                           # ← side-effect
+            db.add(user)
+            await db.commit()
+            raise HTTPException(401, "User account has expired")
+
+    if not user.is_active:
+        if not user.last_login_at:
+            raise HTTPException(400, "Waiting for approval")
+        raise HTTPException(401, "Inactive user")
+
+    return user if verify_password(password, user.password) else None
+```
+
+Three failure modes besides "wrong password":
+- **Expired account** → 401 + auto-deactivate
+- **Inactive but never logged in** → 400 "Waiting for approval"
+- **Inactive after first login** → 401 "Inactive user"
+
+### 2.3 Cookie Application — `_apply_auth_cookies()`
+
+**File:** `src/backend/base/agentcore/api/login.py` — Lines 42-73
+
+```python
+# login.py — Lines 42-73
+def _apply_auth_cookies(response: Response, tokens: dict,
+                        auth_settings, user: User) -> None:
+    persistent_cookie = bool(tokens.get("persistent_cookie", True))
+    access_expires  = tokens.get("access_expires_in")  if persistent_cookie else None
+    refresh_expires = tokens.get("refresh_expires_in") if persistent_cookie else None
+
+    response.set_cookie("refresh_token_ag", tokens["refresh_token"],
+        httponly=auth_settings.REFRESH_HTTPONLY,    # True  — JS can't read
+        samesite=auth_settings.REFRESH_SAME_SITE,   # "lax"
+        secure=auth_settings.REFRESH_SECURE,
+        expires=refresh_expires,                    # 7 days default
+        domain=auth_settings.COOKIE_DOMAIN)
+    response.set_cookie("access_token_ag", tokens["access_token"],
+        httponly=auth_settings.ACCESS_HTTPONLY,     # False — JS can read
+        samesite=auth_settings.ACCESS_SAME_SITE,    # "lax"
+        secure=auth_settings.ACCESS_SECURE,
+        expires=access_expires,                     # 1 hour default
+        domain=auth_settings.COOKIE_DOMAIN)
+    response.set_cookie("apikey_tkn_ag", str(user.store_api_key),
+        httponly=auth_settings.ACCESS_HTTPONLY,
+        samesite=auth_settings.ACCESS_SAME_SITE,
+        secure=auth_settings.ACCESS_SECURE,
+        expires=None,                               # session cookie
+        domain=auth_settings.COOKIE_DOMAIN)
+```
+
+| Cookie | TTL | httpOnly | Purpose |
+|--------|-----|----------|---------|
+| `access_token_ag` | 1 hr (configurable) | **false** | JWT access token — readable by JS so the axios interceptor can re-attach it to outgoing requests |
+| `refresh_token_ag` | 7 days (configurable) | **true** | JWT refresh token — never exposed to JS, sent only to `/refresh` |
+| `apikey_tkn_ag` | session | true | Component store API key |
+
+---
+
+## 3. Azure SSO Login Flow (Entra ID)
+
+### 3.1 Endpoint
+
+**File:** `src/backend/base/agentcore/api/login.py` — Lines 202-343
+
+```python
+# login.py — Lines 202-343 (key excerpts)
+@router.post("/azure/sso", response_model=AzureSSOResponse)
+async def azure_sso_login(body: AzureSSORequest, response: Response, db: DbSession):
+    auth_settings = get_settings_service().auth_settings
+
+    # ── Verify the idToken against Microsoft's JWKS ──
+    payload = jwt.decode(
+        body.idToken,
+        jwks,                                                   # fetched from MS
+        algorithms=["RS256"],                                   # Line 221
+        audience=auth_settings.AZURE_CLIENT_ID,
+        issuer=f"https://login.microsoftonline.com/"
+               f"{auth_settings.AZURE_TENANT_ID}/v2.0",
+    )
+
+    email             = payload.get("preferred_username", "").lower()
+    entra_object_id   = payload.get("oid")
+    display_name      = payload.get("name")
+
+    # ── Resolve or auto-provision user ──
+    # Looks up by email or entra_object_id; if found, attaches entra_object_id;
+    # if not found, creates a new User with role="developer" (or "root" if email
+    # matches PLATFORM_ROOT_EMAIL).
+
+    tokens = await create_user_tokens(user_id=user.id, db=db, update_last_login=True)
+    _apply_auth_cookies(response, tokens, auth_settings, user)   # Line 336
+    return {**tokens, "role": ..., "permissions": ...}
+```
+
+### 3.2 What "verify against JWKS" means
+
+Azure publishes its public signing keys at:
+```
+https://login.microsoftonline.com/common/discovery/v2.0/keys
+```
+
+Backend:
+1. Fetches the JWK matching the `kid` header on the idToken
+2. Verifies the RS256 signature with that public key
+3. Verifies `aud == AZURE_CLIENT_ID` and `iss` matches the tenant
+4. Trusts the resulting claims
+
+If any check fails → 401, no token issued.
+
+### 3.3 Auto-provisioning rules
+
+- **First-ever SSO login from `PLATFORM_ROOT_EMAIL`** → user is created with `role="root"`
+- **Any other new email** → user is created with `role="developer"`, `is_active=True`
+- **Existing user matched by email** → `entra_object_id` is attached so future logins resolve by oid
+- **Existing user matched by entra_object_id** → that user is logged in (email is updated if changed)
+
+This makes the *first* SSO login of the platform owner the bootstrap step that unlocks the rest of the access-control UI.
+
+### 3.4 No other SSO providers
+
+There is **no Okta, no Keycloak, no generic SAML, and no social login** in this codebase. Azure Entra ID is the only OIDC provider.
+
+---
+
+## 4. JWT Token System
+
+### 4.1 Algorithm and Secret
+
+- **Algorithm:** HS256 (HMAC-SHA-256, symmetric)
+- **Secret source:** `auth_settings.SECRET_KEY` — comes from env var `AGENTCORE_SECRET_KEY` or, if unset, an auto-generated value persisted to `{CONFIG_DIR}/secret_key`
+
+**File:** `src/backend/base/agentcore/services/settings/auth.py` — Lines 55-85 (key generation/persistence logic)
+
+### 4.2 Token Creation — `create_token()`
+
+**File:** `src/backend/base/agentcore/services/auth/utils.py` — Lines 289-302
+
+```python
+# utils.py — Lines 289-302
+def create_token(data: dict, expires_delta: timedelta):
+    settings_service = get_settings_service()
+    to_encode = data.copy()
+    now = datetime.now(timezone.utc)
+    expire = now + expires_delta
+    to_encode["exp"] = expire
+    to_encode["iat"] = int(now.timestamp())
+    return jwt.encode(
+        to_encode,
+        settings_service.auth_settings.SECRET_KEY.get_secret_value(),
+        algorithm=settings_service.auth_settings.ALGORITHM,    # "HS256"
+    )
+```
+
+### 4.3 Token Pair Creation — `create_user_tokens()`
+
+**File:** `src/backend/base/agentcore/services/auth/utils.py` — Lines 426-452
+
+```python
+# utils.py — Lines 426-452
+async def create_user_tokens(user_id: UUID, db: AsyncSession, *,
+                             update_last_login: bool = False) -> dict:
+    access_seconds, refresh_seconds, persistent_cookie = (
+        await _resolve_runtime_token_config(db)             # ← reads timeout_settings table
+    )
+    access_token_expires  = timedelta(seconds=access_seconds)
+    access_token = create_token(
+        data={"sub": str(user_id), "type": "access"},
+        expires_delta=access_token_expires,
+    )
+    refresh_token_expires = timedelta(seconds=refresh_seconds)
+    refresh_token = create_token(
+        data={"sub": str(user_id), "type": "refresh"},
+        expires_delta=refresh_token_expires,
+    )
+    # ... update last_login_at if requested
+    return {
+        "access_token": access_token,
+        "refresh_token": refresh_token,
+        "access_expires_in":  access_seconds,
+        "refresh_expires_in": refresh_seconds,
+        "persistent_cookie": persistent_cookie,
+        "token_type": "bearer",
     }
-    okta_url = f"{OKTA_ISSUER}/oauth2/v1/authorize?" + urlencode(params)  # Line 550
-
-    response = RedirectResponse(url=okta_url, status_code=302)         # Line 552
-    response.set_cookie(
-        "okta_state",
-        state,
-        httponly=True,           # Not accessible via JavaScript         # Line 556
-        samesite="lax",
-        max_age=600,             # 10 minute TTL                        # Line 558
-        secure=is_https,
-    )
-    return response
 ```
 
-### 2.3 Step 2: OKTA Callback — Exchange Code for Token
-
-**File:** `MiBuddy-Backend/app.py` — Lines 569-670
-
-```python
-# app.py — Lines 569-670
-@app.get("/authorization-code/callback")
-async def okta_callback(request: Request, code: str, state: str):
-
-    # ── Validate CSRF state (Lines 585-588) ────────────────────
-    saved_state = request.cookies.get("okta_state", "")                # Line 585
-    if not saved_state or saved_state != state:                        # Line 586
-        logger.warning("OKTA state mismatch — possible CSRF")         # Line 587
-        raise HTTPException(status_code=400, detail="Invalid state")   # Line 588
-
-    # ── Exchange auth code for OKTA access token (Lines 598-609) ───
-    token_resp = requests.post(
-        f"{OKTA_ISSUER}/oauth2/v1/token",                              # Line 599
-        data={
-            "grant_type":    "authorization_code",                     # Line 601
-            "code":          code,                                     # Line 602
-            "redirect_uri":  redirect_uri,                             # Line 603
-            "client_id":     OKTA_CLIENT_ID,                           # Line 604
-            "client_secret": OKTA_CLIENT_SECRET,                       # Line 605
-        },
-        headers={"Accept": "application/json"},                        # Line 607
-        timeout=15,                                                    # Line 608
-    )
-    access_token = token_resp.json().get("access_token", "")           # Line 610
-
-    # ── Fetch user info from OKTA (Lines 622-627) ─────────────────
-    ui_resp = requests.get(
-        f"{OKTA_ISSUER}/oauth2/v1/userinfo",                           # Line 623
-        headers={"Authorization": f"Bearer {access_token}"},           # Line 624
-        timeout=10,                                                    # Line 625
-    )
-    okta_user = ui_resp.json()                                         # Line 627
-    email = okta_user.get("email", "").lower()                         # Line 628
-    email_domain = email.split("@")[1] if "@" in email else ""         # Line 629
-
-    # ── Validate email domain (Lines 638-643) ─────────────────────
-    if email_domain not in MAS_ALLOWED_EMAIL_DOMAINS:                  # Line 638
-        raise HTTPException(status_code=403,
-            detail=f"Your email domain '{email_domain}' is not allowed")
-
-    # ── Issue signed MiBuddy JWT (Lines 646-658) ──────────────────
-    mibuddy_jwt = pyjwt.encode(
-        {
-            "UserId":        okta_user.get("sub", ""),                 # Line 648
-            "email":         email,                                    # Line 649
-            "name":          okta_user.get("name", email.split("@")[0]),# Line 650
-            "Domain":        email_domain,                             # Line 651
-            "auth_provider": "okta",                                   # Line 652
-            "iat":           datetime.utcnow(),                        # Line 653
-            "exp":           datetime.utcnow() + timedelta(hours=8),   # Line 654
-        },
-        YOUR_SECRET_KEY,                                               # Line 656
-        algorithm="HS256",                                             # Line 657
-    )
-
-    # ── Redirect to frontend with JWT in URL (Lines 664-670) ──────
-    scheme = request.headers.get("x-forwarded-proto", request.url.scheme)
-    host = request.headers.get("x-forwarded-host", request.url.netloc)
-    app_url = f"{scheme}://{host}/?mas_token={mibuddy_jwt}"            # Line 666
-
-    response = RedirectResponse(url=app_url, status_code=302)          # Line 668
-    response.delete_cookie("okta_state")                               # Line 669
-    return response
-```
-
-### 2.4 JWT Token Structure
+### 4.4 JWT Payload Structure
 
 ```json
 {
-  "UserId":        "00u1abc2def3ghi4j",     // OKTA sub claim
-  "email":         "john.doe@motherson-mas.com",
-  "name":          "John Doe",
-  "Domain":        "motherson-mas.com",
-  "auth_provider": "okta",
-  "iat":           1713800000,              // Issued at
-  "exp":           1713828800               // Expires in 8 hours
+  "sub":  "550e8400-e29b-41d4-a716-446655440000",
+  "type": "access",
+  "iat":  1714000000,
+  "exp":  1714003600
 }
 // Algorithm: HS256
-// Secret: YOUR_SECRET_KEY
+// Secret:    auth_settings.SECRET_KEY
 ```
 
-### 2.5 OKTA Configuration
+There is **no email, role, or permission** baked into the JWT — the backend looks those up on every request from the DB / Redis cache. This means revoking a user's role takes effect immediately on the next request (no need to wait for token expiry).
 
-**File:** `MiBuddy-Backend/backend/utils/environ.py` — Lines 254-256
+### 4.5 Token TTL — Runtime Configurable
 
-```python
-# environ.py — Lines 254-256
-OKTA_ISSUER       = os.environ.get("OKTA_ISSUER",       "https://mothersongroup.okta.com")
-OKTA_CLIENT_ID    = os.environ.get("OKTA_CLIENT_ID",    "0oas3fslh2iN9AdRD697")
-OKTA_CLIENT_SECRET= os.environ.get("OKTA_CLIENT_SECRET", "K97vOBiA3z...")
-```
+**File:** `src/backend/base/agentcore/services/auth/utils.py` — Lines 391-423
 
-**JWT Secret Keys — Lines 186-187:**
+The default TTLs (1 hr access / 7 day refresh) come from `auth_settings`, but the `timeout_settings` table can override them at runtime:
 
-```python
-# environ.py — Lines 186-187
-YOUR_SECRET_KEY         = os.environ.get("YOUR_SECRET_KEY",         "56fb22c7...")
-YOUR_REFRESH_SECRET_KEY = os.environ.get("YOUR_REFRESH_SECRET_KEY", "149cd3ec...")
-```
+| `timeout_settings` field | Maps to |
+|---|---|
+| `session_timeout` | access token TTL |
+| `cookie_timeout` | refresh token TTL |
+| `persistent_cookie` | whether cookies have an `Expires` attribute or are session-only |
+
+Precedence: **DB row > env var > hardcoded default**. Admins can change session policy without redeploying.
 
 ---
 
-## 3. Standard Motherson Login (Azure EasyAuth)
+## 5. Token Validation — `get_current_user`
 
-### 3.1 /login Endpoint
+### 5.1 The Top-Level Dependency
 
-**File:** `MiBuddy-Backend/app.py` — Lines 494-520
-
-```python
-# app.py — Lines 494-520
-@app.post("/login")
-async def login(request: LoginRequest):
-    table_service_client = TableServiceClient.from_connection_string(   # Line 496
-        conn_str=conn_str
-    )
-    table_client = table_service_client.get_table_client(               # Line 497
-        table_name=TABLE_USER_AUTH       # "tblUserAuthorization"
-    )
-    user_data = table_client.list_entities()                            # Line 498
-
-    user = next(
-        (u for u in user_data
-         if u["WindowUserId"].lower() == request.UserName.lower()       # Line 501
-         and u["Domain"].lower() == request.Domain.lower()              # Line 502
-         and u["Active"] is True),                                      # Line 503
-        None,
-    )
-
-    # NOTE: Always returns True — Azure EasyAuth on App Service
-    # is the real security gate, not this endpoint
-    return {"Message": True}                                            # Line 507
-```
-
-### 3.2 Azure EasyAuth Headers
-
-When running on Azure App Service, these headers are automatically injected:
-
-| Header | Purpose |
-|--------|---------|
-| `x-ms-client-principal-id` | Azure AD user object ID |
-| `x-ms-client-principal-name` | User display name / email |
-| `x-ms-client-principal-idp` | Identity provider (e.g., "aad") |
-| `x-ms-token-aad-id-token` | Azure AD ID token |
-| `x-ms-client-principal` | Base64-encoded principal object |
-
-### 3.3 Azure AD / MSAL Config
-
-**File:** `MiBuddy-Backend/frontend/src/authConfig.ts`
-
-```typescript
-// authConfig.ts — Full file
-export const msalConfig = {
-    auth: {
-        clientId:  "1994098f-d8c0-4ebe-bde0-b2fcc5db5fcb",            // Line 3
-        authority: "https://login.microsoftonline.com/7a746742-...",    // Line 4
-        redirectUri: window.location.origin + "/auth.html",            // Line 5
-    },
-    cache: {
-        cacheLocation: "sessionStorage",                                // Line 8
-        storeAuthStateInCookie: false,                                  // Line 9
-    },
-};
-
-export const loginRequest = {
-    scopes: ["User.Read", "Files.Read.All", "Sites.Read.All"]          // Line 14
-};
-
-export const graphConfig = {
-    graphMeEndpoint: "https://graph.microsoft.com/v1.0/me",            // Line 18
-};
-```
-
-**Backend Azure AD Config — File:** `MiBuddy-Backend/backend/utils/environ.py` — Lines 233-236
+**File:** `src/backend/base/agentcore/services/auth/utils.py` — Lines 125-152
 
 ```python
-# environ.py — Lines 233-236
-AZURE_AD_CLIENT_ID     = os.environ.get("AZURE_AD_CLIENT_ID",     "1994098f-...")
-AZURE_AD_CLIENT_SECRET = os.environ.get("AZURE_AD_CLIENT_SECRET", "cCb8Q~GDU...")
-AZURE_AD_TENANT_ID     = os.environ.get("AZURE_AD_TENANT_ID",     "7a746742-...")
+# utils.py — Lines 125-152
+async def get_current_user(
+    token:        Annotated[str, Security(oauth2_login)],     # cookie or form
+    bearer:       Annotated[object | None, Security(http_bearer)],
+    query_param:  Annotated[str, Security(api_key_query)],
+    header_param: Annotated[str, Security(api_key_header)],
+    db:           Annotated[AsyncSession, Depends(get_session)],
+    request:      Request,
+) -> User:
+    # 1. Try OAuth2 password-flow token (cookie or Swagger form login)
+    if token:
+        return await get_current_user_by_jwt(token, db)
+    # 2. Try HTTPBearer token (paste in Swagger Authorize → Bearer)
+    if bearer and hasattr(bearer, "credentials") and bearer.credentials:
+        return await get_current_user_by_jwt(bearer.credentials, db)
+    # 3. Try service-to-service API key
+    raw_api_key = header_param or query_param
+    if raw_api_key:
+        service_user = _validate_service_api_key(raw_api_key)
+        if service_user:
+            return service_user
+    raise HTTPException(401, "Could not validate credentials",
+                        headers={"WWW-Authenticate": "Bearer"})
 ```
+
+### 5.2 JWT Decoding — `get_current_user_by_jwt()`
+
+**File:** `src/backend/base/agentcore/services/auth/utils.py` — Lines 155-236
+
+```python
+# utils.py — Lines 155-236
+async def get_current_user_by_jwt(token: str, db: AsyncSession) -> User:
+    settings_service = get_settings_service()
+    secret_key = settings_service.auth_settings.SECRET_KEY.get_secret_value()
+
+    payload = jwt.decode(
+        token, secret_key,
+        algorithms=[settings_service.auth_settings.ALGORITHM],   # HS256
+    )
+    user_id:    UUID      = payload.get("sub")
+    token_type: str       = payload.get("type")
+    token_iat:  int | None = payload.get("iat")
+
+    # ── 1. Expiry check ──
+    if expires := payload.get("exp"):
+        if datetime.now(timezone.utc) > datetime.fromtimestamp(expires, timezone.utc):
+            raise HTTPException(401, "Token has expired.")
+
+    # ── 2. Revocation check (Redis) ──
+    if await is_user_token_revoked(user_id, token_iat):          # Line 198
+        raise HTTPException(401, "Token has been revoked.")
+
+    # ── 3. DB lookup, active check ──
+    user = await get_user_by_id(db, user_id)
+    # ... validates user exists, is_active, not past expires_at
+
+    return user
+```
+
+**Three layers of validation per request:** signature, expiry, revocation. Only after all three pass does the User row come back from the DB.
+
+### 5.3 The Two Active-User Wrappers
+
+**File:** `src/backend/base/agentcore/services/auth/utils.py` — Lines 265-276
+
+```python
+# utils.py — Lines 265-276
+async def get_current_active_user(
+    current_user: Annotated[User, Depends(get_current_user)],
+):
+    if not current_user.is_active:
+        raise HTTPException(401, "Inactive user")
+    return current_user
+
+async def get_current_active_superuser(
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> User:
+    if not current_user.is_active or not current_user.is_superuser:
+        raise HTTPException(403, "Insufficient privileges")
+    return current_user
+```
+
+**Usage in API routes:**
+
+```python
+@router.get("/some-endpoint")
+async def my_endpoint(current_user: CurrentActiveUser):    # alias of Depends(get_current_active_user)
+    ...
+```
+
+These two dependencies are then composed with `PermissionChecker` (covered in Session 1, §1.3) to gate by both *identity* and *permissions*.
 
 ---
 
-## 4. Backend Token Validation (All 3 Paths)
+## 6. Token Revocation & Identity Blocklist
 
-**File:** `MiBuddy-Backend/backend/auth/auth_utils.py` — Full file (62 lines)
+Both are Redis-backed runtime mechanisms that take effect *without* waiting for token expiry. They are enabled via env var `AUTH_REDIS_SECURITY_KEYS_ENABLED=true`.
+
+### 6.1 Token Revocation
+
+**File:** `src/backend/base/agentcore/services/auth/token_revocation.py` — Lines 1-43
 
 ```python
-# auth_utils.py — Lines 7-62
-def get_authenticated_user_details(request_headers):
-    """
-    Priority order:
-      1. JWT Bearer token  →  MAS/OKTA users
-      2. Azure EasyAuth headers  →  Motherson web users
-      3. Dev sample_user  →  local development fallback
-    """
-    user_object = {}
+# token_revocation.py — Lines 23-37
+async def revoke_user_tokens(user_id: UUID) -> None:
+    if not _redis_auth_security_enabled(): return
+    settings_service = get_settings_service()
+    redis = get_redis_client(settings_service)
+    now_ts = int(datetime.now(timezone.utc).timestamp())
+    await redis.set(_revocation_key(user_id), str(now_ts))   # auth:revoked_after:user:{id}
 
-    # ── PATH 1: JWT Bearer Token (Lines 18-39) ────────────────────
-    auth_header = request_headers.get("authorization", "")             # Line 19
-    if auth_header.lower().startswith("bearer "):                      # Line 20
-        token = auth_header[7:].strip()                                # Line 21
-        if token:
-            try:
-                from backend.utils.environ import YOUR_SECRET_KEY       # Line 24
-                decoded = pyjwt.decode(                                 # Line 25
-                    token, YOUR_SECRET_KEY, algorithms=["HS256"]
-                )
-                return {
-                    "user_principal_id": decoded.get("UserId") or decoded.get("sub", ""),
-                    "user_name":         decoded.get("email", ""),       # Line 28
-                    "auth_provider":     decoded.get("auth_provider", "okta"),
-                    "auth_token":        token,                         # Line 30
-                    "client_principal_b64": "",
-                    "aad_id_token":      "",
-                    "domain":            decoded.get("Domain", ""),      # Line 33
-                    "auth_type":         "jwt",                         # Line 34
-                }
-            except pyjwt.ExpiredSignatureError:                         # Line 36
-                logger.warning("JWT rejected: token expired")
-            except pyjwt.InvalidTokenError as exc:                      # Line 38
-                logger.warning("JWT rejected: %s", exc)
-
-    # ── PATH 2: Azure EasyAuth Headers (Lines 41-60) ──────────────
-    principal_id = request_headers.get("x-ms-client-principal-id")     # Line 42
-
-    if not principal_id:
-        # ── PATH 3: Dev Fallback (Lines 44-53) ────────────────────
-        from . import sample_user                                       # Line 46
-        raw = sample_user.sample_user                                   # Line 47
-        user_object["user_principal_id"] = raw["x-ms-client-principal-id"]
-        user_object["user_name"]         = raw["x-ms-client-principal-name"]
-        user_object["auth_provider"]     = raw["x-ms-client-principal-idp"]
-        user_object["auth_token"]        = raw["x-ms-token-aad-id-token"]
-        user_object["client_principal_b64"] = raw["x-ms-client-principal"]
-        user_object["aad_id_token"]      = raw["x-ms-token-aad-id-token"]
-    else:
-        # Azure EasyAuth present
-        user_object["user_principal_id"] = principal_id                 # Line 55
-        user_object["user_name"]         = request_headers.get("x-ms-client-principal-name")
-        user_object["auth_provider"]     = request_headers.get("x-ms-client-principal-idp")
-        user_object["auth_token"]        = request_headers.get("x-ms-token-aad-id-token")
-        user_object["client_principal_b64"] = request_headers.get("x-ms-client-principal")
-        user_object["aad_id_token"]      = request_headers.get("x-ms-token-aad-id-token")
-
-    return user_object                                                  # Line 62
+async def is_user_token_revoked(user_id: UUID, token_iat: int | None) -> bool:
+    if not _redis_auth_security_enabled(): return False
+    revoked_after_ts = int(revoked_after)
+    token_iat_ts     = int(token_iat or 0)
+    return token_iat_ts <= revoked_after_ts
 ```
+
+**Mechanism:** every revocation stores a "revoked-after" timestamp in Redis under `auth:revoked_after:user:{user_id}`. On every JWT validation, the token's `iat` claim is compared against this timestamp — if the token was issued *before* revocation, it's rejected. This invalidates **all outstanding tokens** for that user in one Redis write.
+
+### 6.2 Identity Blocklist
+
+**File:** `src/backend/base/agentcore/services/auth/identity_blocklist.py` — Lines 25-48
+
+```python
+# identity_blocklist.py — Lines 25-48
+async def block_identity(*, email: str | None = None,
+                         entra_object_id: str | None = None) -> None:
+    if not _redis_auth_security_enabled(): return
+    redis = get_redis_client(get_settings_service())
+    if email:
+        await redis.set(_email_key(email), "1")              # auth:blocked:email:{email}
+    if entra_object_id:
+        await redis.set(_entra_key(entra_object_id), "1")    # auth:blocked:entra:{oid}
+
+async def is_identity_blocked(*, email=None, entra_object_id=None) -> bool: ...
+```
+
+**Mechanism:** when a user is deleted, their email + Entra object ID are written to Redis. On the next Azure SSO attempt, those identities are checked *before* user lookup — preventing a deleted user from being silently re-provisioned by signing in again with the same Microsoft account.
+
+### 6.3 Wired Together — `invalidate_user_auth()`
+
+**File:** `src/backend/base/agentcore/services/auth/invalidation.py` — Lines 11-22
+
+```python
+# invalidation.py — Lines 11-22
+async def invalidate_user_auth(user_id, *, email=None, entra_object_id=None):
+    await revoke_user_tokens(user_id)                              # Line 19
+    await block_identity(email=email, entra_object_id=entra_object_id)  # Line 20
+    await user_cache.delete_user(str(user_id))                     # Line 21
+```
+
+This is the single function called by both the soft-delete and hard-delete user pipelines — it's how a "delete user" admin action becomes effective everywhere within the next request cycle.
 
 ---
 
-## 5. Frontend — Token Storage & Injection
+## 7. User Lifecycle — Soft Delete, Hard Delete
 
-### 5.1 Token Storage
+### 7.1 Soft Delete
 
-**File:** `MiBuddy-Backend/frontend/src/ProtectedRoute.tsx`
+**File:** `src/backend/base/agentcore/services/auth/soft_delete.py` — Lines 89-186
 
-```typescript
-// ProtectedRoute.tsx — Lines 54-62  (after OKTA callback)
-if (masToken) {
-    sessionStorage.setItem("masAccessToken", masToken);                // Line 55
-    localStorage.setItem("authType", "mas");                           // Line 56
-    localStorage.setItem("userId",   UserId || "mas-user");            // Line 57
-    localStorage.setItem("domain",   Domain || "MAS");                 // Line 58
-    localStorage.removeItem("unauthorized");                           // Line 59
-    navigate("/", { replace: true });                                  // Line 60
-    return;
-}
+```python
+# soft_delete.py — Lines 89-186 (key actions)
+async def soft_delete_user_hierarchy(db, target_user_id, *, actor_user_id=None):
+    # 1. Cascade: also soft-delete users created by target, and members of
+    #    departments/orgs owned by target.
+    # 2. For EACH user in the cascade:
+    await invalidate_user_auth(                                # Line 121
+        user.id,
+        email=user.email or user.username,
+        entra_object_id=user.entra_object_id,
+    )
+    user.is_active = False                                     # Line 126
+    user.deleted_at = now                                      # Line 127
+    db.add(user)
+    # 3. Mark related memberships as "inactive"
+    # 4. Archive owned departments / suspend owned organizations
 ```
 
-| Storage Key | Location | Value |
-|-------------|----------|-------|
-| `masAccessToken` | sessionStorage | The signed JWT token |
-| `authType` | localStorage | `"mas"` |
-| `userId` | localStorage | OKTA sub or `"mas-user"` |
-| `domain` | localStorage | Email domain or `"MAS"` |
-| `accessToken` | localStorage | Legacy login token |
+Reversible. Rows stay; auth is invalidated; tenant memberships are marked inactive.
 
-### 5.2 getMASToken() — Retrieve Token
+### 7.2 Hard Delete
 
-**File:** `MiBuddy-Backend/frontend/src/ProtectedRoute.tsx` — Lines 17-19
+**File:** `src/backend/base/agentcore/services/auth/hard_delete.py` — Lines 34-89
 
-```typescript
-// ProtectedRoute.tsx — Lines 17-19
-export function getMASToken(): string | null {
-    return sessionStorage.getItem("masAccessToken");
-}
+```python
+# hard_delete.py — Lines 34-89 (key actions)
+async def hard_delete_user(db, user_id, *, delete_owned_organizations=True):
+    # GUARD: cannot hard-delete root users
+    # 1. invalidate_user_auth(...) — same triple-revocation as soft delete
+    # 2. Delete owned org/dept rows
+    # 3. Cascade-delete all rows referencing user.id across every table
+    # 4. Delete the User row itself
 ```
 
-### 5.3 getAuthHeaders() — Inject Token into API Calls
+Irreversible. Everything FK'd to that user goes too. Only callable by admins, and never on root.
 
-**File:** `MiBuddy-Backend/frontend/src/ProtectedRoute.tsx` — Lines 25-30
+---
 
-```typescript
-// ProtectedRoute.tsx — Lines 25-30
-export function getAuthHeaders(): Record<string, string> {
-    const headers: Record<string, string> = { "Content-Type": "application/json" };
-    const token = getMASToken();
-    if (token) headers["Authorization"] = `Bearer ${token}`;
-    return headers;
-}
+## 8. Auth Settings & Configuration
+
+**File:** `src/backend/base/agentcore/services/settings/auth.py` — Lines 15-86
+
+Pydantic `AuthSettings` model. Key fields and their env-var overrides:
+
+| Setting | Default | Env Var |
+|---|---|---|
+| `SECRET_KEY` | auto-generated, persisted to `{CONFIG_DIR}/secret_key` | `AGENTCORE_SECRET_KEY` |
+| `ALGORITHM` | `"HS256"` | — |
+| `ACCESS_TOKEN_EXPIRE_SECONDS` | `3600` (1 hr) | `AUTH_TOKEN_EXPIRE_SECONDS` |
+| `REFRESH_TOKEN_EXPIRE_SECONDS` | `604800` (7 days) | — |
+| `REFRESH_HTTPONLY` / `ACCESS_HTTPONLY` | `True` / `False` | … |
+| `REFRESH_SAME_SITE` / `ACCESS_SAME_SITE` | `"lax"` / `"lax"` | … |
+| `REFRESH_SECURE` / `ACCESS_SECURE` | `False` / `False` | … |
+| `COOKIE_DOMAIN` | `None` (browser infers) | … |
+| `AZURE_TENANT_ID` | — | `AZURE_TENANT_ID` |
+| `AZURE_CLIENT_ID` | — | `AZURE_CLIENT_ID` |
+| `PLATFORM_ROOT_EMAIL` | — | `PLATFORM_ROOT_EMAIL` |
+
+**Password hashing** — Line 50:
+
+```python
+# auth.py — Line 50
+pwd_context: CryptContext = CryptContext(schemes=["bcrypt"], deprecated="auto")
 ```
 
-**How this is used in API calls (POST, GET, PATCH):**
+Bcrypt only. Hash via `get_password_hash(password)`, verify via `verify_password(plain, hashed)` — both in `services/auth/utils.py` lines 279-286.
 
-```typescript
-// Example: Any API call in the app
-const response = await fetch("/api/some-endpoint", {
-    method: "POST",                          // or GET, PATCH, DELETE
-    headers: getAuthHeaders(),               // ← injects Bearer token
-    body: JSON.stringify(payload),
+---
+
+## 9. User Model
+
+**File:** `src/backend/base/agentcore/services/database/models/user/model.py` — Lines 24-63
+
+| Field | Type | Notes |
+|---|---|---|
+| `id` | UUID | PK |
+| `username` | str | unique, indexed |
+| `email` | str \| None | unique, indexed (nullable) |
+| `password` | str | bcrypt hash |
+| `display_name` | str \| None | |
+| `entra_object_id` | str \| None | Azure `oid`; unique, indexed |
+| `is_active` | bool | default `False` — admins flip this on |
+| `is_superuser` | bool | platform-level admin |
+| `role` | str | `"developer"` default; one of the 7 roles in Session 1 |
+| `last_login_at` | datetime \| None | bumped by `create_user_tokens(update_last_login=True)` |
+| `expires_at` | datetime \| None | optional sunset date — auto-deactivates on first auth attempt past this |
+| `deleted_at` | datetime \| None | soft-delete tombstone |
+| `store_api_key` | str \| None | issued for component-store access |
+
+Note: `role` lives **on the user row** and is the single source for `permissions = await get_permissions_for_role(user.role)`. There is no per-user permission override table — to differ a user's permissions, you create a new role.
+
+---
+
+## 10. Refresh & Logout
+
+### 10.1 Refresh Endpoint
+
+**File:** `src/backend/base/agentcore/api/login.py` — Lines 345-373
+
+```python
+# login.py — Lines 345-373
+@router.post("/refresh", response_model=AzureSSOResponse)
+async def refresh_token(request: Request, response: Response, db: DbSession):
+    auth_settings = get_settings_service().auth_settings
+    token = request.cookies.get("refresh_token_ag")              # Line 353
+    if token:
+        tokens = await create_refresh_token(token, db)           # Line 354
+        user_id = tokens.get("user_id")
+        user = await get_user_by_id(db, user_id)
+        _apply_auth_cookies(response, tokens, auth_settings, user)   # Line 363
+        # returns new {access_token, refresh_token, role, permissions}
+```
+
+`create_refresh_token()` (utils.py:455) decodes the refresh token, validates it's not revoked / expired, and issues a fresh access+refresh pair. The frontend interceptor calls this automatically on a 401 (see §11.4).
+
+### 10.2 Logout Endpoint
+
+**File:** `src/backend/base/agentcore/api/login.py` — Lines 376-381
+
+```python
+# login.py — Lines 376-381
+@router.post("/logout")
+async def logout(response: Response):
+    response.delete_cookie("refresh_token_ag")
+    response.delete_cookie("access_token_ag")
+    response.delete_cookie("apikey_tkn_ag")
+    return {"message": "Logout successful"}
+```
+
+Note: this is a *cookie clear*, not a token revoke. The JWT itself remains technically valid until its `exp`. To actually invalidate it (e.g. account compromise), an admin must delete or deactivate the user, which calls `invalidate_user_auth()` and writes the revocation timestamp to Redis (see §6).
+
+---
+
+## 11. Frontend Authentication
+
+### 11.1 Login Page
+
+**File:** `src/frontend/src/pages/LoginPage/index.tsx`
+
+Two paths in one form:
+
+```tsx
+// LoginPage — Azure SSO branch (~line 98)
+const response = await instance.loginPopup(loginRequest);   // MSAL popup
+const idToken  = response.idToken;
+const res = await fetch("/api/azure/sso", {
+    method: "POST",
+    credentials: "include",                                  // ← cookies in/out
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ idToken }),
 });
-
-// getAuthHeaders() returns:
-// {
-//   "Content-Type": "application/json",
-//   "Authorization": "Bearer eyJhbGciOiJIUzI1NiIs..."    ← only if MAS user
-// }
+const data = await res.json();
+login(data.access_token, data.role, data.permissions, data.refresh_token);
 ```
 
-### 5.4 ProtectedRoute — Full Auth Guard Flow
+Username/password branch posts the form to `/api/login` via the `useLoginUser` hook. Both branches end with `login(...)` updating the AuthContext.
 
-**File:** `MiBuddy-Backend/frontend/src/ProtectedRoute.tsx` — Lines 48-129
+There's also a separate admin-only login at **`src/frontend/src/pages/AdminPage/LoginPage/index.tsx`** which is form-only (no Azure SSO) — used for the platform's bootstrapping admin.
 
-```typescript
-// ProtectedRoute.tsx — Lines 48-129
-useEffect(() => {
-    const authenticate = async () => {
-        const params = new URLSearchParams(window.location.search);
-        const masToken = params.get("mas_token");
-        const UserId = params.get("userid") || localStorage.getItem("userId");
-        const Domain = params.get("domain") || localStorage.getItem("domain");
-        const isMASUser = MAS_WIN_DOMAINS.includes(Domain?.toLowerCase() || "");
+### 11.2 Token Storage
 
-        // ── CASE 1: Returning from OKTA with token (Lines 54-62) ──
-        if (masToken) {
-            sessionStorage.setItem("masAccessToken", masToken);
-            localStorage.setItem("authType", "mas");
-            localStorage.setItem("userId", UserId || "mas-user");
-            localStorage.setItem("domain", Domain || "MAS");
-            navigate("/", { replace: true });     // Strip token from URL
-            return;
-        }
+The backend sets all tokens as cookies. The frontend doesn't store the JWT in localStorage in the standard flow — `withCredentials: true` on axios sends cookies automatically. However, because `access_token_ag` is `httpOnly: false`, the request interceptor *can* read it and re-attach it as a Bearer header (some endpoints expect the header form).
 
-        // ── CASE 2: MAS user, check existing token (Lines 67-78) ──
-        if (isMASUser) {
-            const storedToken = getMASToken();
-            if (storedToken) {
-                setLoading(false);                // Token exists, allow access
-                return;
-            }
-            window.location.href = "/auth/mas/start";  // No token → OKTA login
-            return;
-        }
+**Cookie helpers — File:** `src/frontend/src/utils/utils.ts` — Lines 1013-1024
 
-        // ── CASE 3: Standard Motherson user (Lines 81-125) ────────
-        if (!UserId || !Domain) {
-            console.warn("Missing userid or domain");
-            setLoading(false);
-            return;
-        }
+```ts
+// utils.ts — Lines 1013-1024
+export const getAuthCookie = (cookies: Cookies, tokenName: string) =>
+    cookies.get(tokenName);
 
-        const response = await fetch("/login", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ UserName: UserId, Domain: Domain }),
-        });
-        // ... handle response
-    };
-    authenticate();
-}, []);
-```
-
----
-
-## 6. Legacy Login Page
-
-**File:** `MiBuddy-Backend/frontend/src/pages/login/Login.tsx`
-
-```typescript
-// Login.tsx — Lines 8-27  (loginUser function)
-async function loginUser(credentials: any) {
-    const userinfo = credentials.username;
-    const domain = userinfo.split("\\")[0];      // "DOMAIN\\username" format
-    const uname = userinfo.split("\\")[1];
-
-    return fetch("https://genie-uat.motherson.com/login", {           // Line 19
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-            username: uname,
-            password: credentials.password,
-            domain: domain,
-        }),
-    }).then((data) => data.json());
-}
-
-// Login.tsx — Lines 69-96  (handleSubmit)
-const handleSubmit = async (e: any) => {
-    loginUser({ username, password }).then((response) => {
-        if ("token" in response) {
-            localStorage.setItem("accessToken", response["token"]);    // Line 77
-            const decodedToken = parseJwt(response["token"]);          // Line 78
-            const userId = decodedToken?.sub;
-            const domain = decodedToken?.domain;
-
-            localStorage.setItem("userId", userId);                    // Line 82
-            localStorage.setItem("domain", domain);                    // Line 85
-
-            // Send token to backend                                   // Line 88
-            fetch("http://127.0.0.1:5000/receive_token", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    token: { UserId: userId, Domain: domain }
-                }),
-            });
-        }
+export const setAuthCookie = (cookies: Cookies, tokenName: string, value: string) => {
+    const isHttps = typeof window !== "undefined" && window.location.protocol === "https:";
+    cookies.set(tokenName, value, {
+        path: "/",
+        secure: isHttps,
+        sameSite: "lax",
     });
 };
 ```
 
-### 6.1 /receive_token Endpoint
+### 11.3 Axios Request Interceptor — Bearer Injection
 
-**File:** `MiBuddy-Backend/app.py` — Lines 442-450
+**File:** `src/frontend/src/controllers/API/api.tsx` — Lines 209-244
 
-```python
-# app.py — Lines 442-450
-@app.post("/receive_token")
-async def receive_token(request: Request):
-    global localStorage                                                # Line 444
-    data = await request.json()                                        # Line 445
-    token = data.get("token")                                          # Line 446
-    if not token:
-        return JSONResponse(content={"error": "Token missing"}, status_code=400)
-    localStorage = token                                               # Line 449
-    return "Token Received"
-```
-
----
-
-## 7. Platform Pages — Frontend Routes
-
-**File:** `MiBuddy-Backend/frontend/src/index.tsx` — Lines 74-99
-
-```typescript
-// index.tsx — Lines 74-99
-<BrowserRouter>
-  <Routes>
-    {/* Main chat — PROTECTED */}
-    <Route path="/" element={                                          // Line 77
-      <ProtectedRoute>
-        <Chat mode={mode} setMode={setMode} />
-      </ProtectedRoute>
-    } />
-
-    {/* Image generation — UNPROTECTED */}
-    <Route path="/image"      element={<Chat mode={mode} setMode={setMode} />} />  // Line 84
-
-    {/* Shared conversation — PUBLIC */}
-    <Route path="/share/:id"  element={<ChatShare />} />               // Line 85
-
-    {/* 404 page */}
-    <Route path="/404page"    element={<NoPage />} />                  // Line 86
-    <Route path="*"           element={<NoPage />} />                  // Line 87
-
-    {/* Voice interaction — UNPROTECTED */}
-    <Route path="/voice"      element={<Voice />} />                   // Line 88
-
-    {/* NotebookLM — PROTECTED */}
-    <Route path="/notebooklm" element={<NotebookLMPage />} />          // Line 89
-  </Routes>
-</BrowserRouter>
-```
-
-**MSAL Initialization — Lines 106-119:**
-
-```typescript
-// index.tsx — Lines 106-119
-msalInstance.initialize().then(() => {
-    msalInstance.handleRedirectPromise().then(() => {
-        ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
-            <React.StrictMode>
-                <MsalProvider instance={msalInstance}>
-                    <App />
-                </MsalProvider>
-            </React.StrictMode>
-        );
-    });
+```tsx
+// api.tsx — Lines 209-244
+const requestInterceptor = api.interceptors.request.use(async (config) => {
+    const accessToken = customGetAccessToken();
+    if (accessToken && !isAuthorizedURL(config?.url)) {
+        config.headers["Authorization"] = `Bearer ${accessToken}`;
+    }
+    return config;
 });
 ```
 
-### 7.1 Page Component Files
+A parallel `fetch()` interceptor (lines 144-160) does the same for non-axios calls. External URLs (GitHub API, MS Graph, Segment, etc., lines 103-142) are skipped so we don't leak tokens to third parties.
 
-| Page | File Path |
-|------|-----------|
-| Chat | `MiBuddy-Backend/frontend/src/pages/chat/Chat.tsx` |
-| Chat Status | `MiBuddy-Backend/frontend/src/pages/chat/ChatStatus.tsx` |
-| Layout | `MiBuddy-Backend/frontend/src/pages/layout/Layout.tsx` |
-| Login | `MiBuddy-Backend/frontend/src/pages/login/Login.tsx` |
-| 404 Page | `MiBuddy-Backend/frontend/src/pages/NoPage.tsx` |
-| Unauthorized | `MiBuddy-Backend/frontend/src/pages/Notauthorize.tsx` |
-| NotebookLM | `MiBuddy-Backend/frontend/src/pages/Notebook/Notebooklm.tsx` |
+### 11.4 Response Interceptor — Auto-Refresh on 401
+
+**File:** `src/frontend/src/controllers/API/api.tsx` — Lines 162-207, 272-301
+
+```tsx
+// api.tsx — Lines 167-175
+async (error: AxiosError) => {
+    const statusCode = error?.response?.status;
+    const isAuthenticationError = statusCode === 401;
+    const shouldRetryRefresh = isAuthenticationError &&
+                               !isAuthEndpoint(error?.config?.url);
+    if (shouldRetryRefresh) {
+        const retriedResponse = await tryToRenewAccessToken(error);
+        if (retriedResponse) return retriedResponse;
+    }
+    // ...
+}
+```
+
+`tryToRenewAccessToken()` (api.tsx:272-301):
+1. Calls `POST /api/refresh` (deduplicated — multiple 401s race-share one refresh promise)
+2. If successful → re-issues the original failed request with the fresh token
+3. If failed → triggers logout and redirects to `/login`
+4. After 3 consecutive failures, force-logs-out
+
+### 11.5 AuthContext
+
+**File:** `src/frontend/src/contexts/authContext.tsx` — Lines 1-268
+
+Shape:
+```ts
+{
+  accessToken: string | null,
+  role:        string | null,
+  permissions: string[],
+  userData:    Users | null,
+  login(accessToken, role, permissions, refreshToken?): void,
+  getUser(): Promise<void>,    // calls /api/users/whoami to hydrate userData
+}
+```
+
+`login(...)` updates context state and immediately calls `getUser()` to fetch the live `User` record (so `userData.is_superuser`, `userData.entra_object_id`, etc. are available beyond just the token claims).
+
+### 11.6 Zustand Auth Store
+
+**File:** `src/frontend/src/stores/authStore.ts` — Lines 1-70
+
+Persistent global state mirror of AuthContext (so non-React code can read auth state):
+
+```ts
+// authStore.ts — Lines 48-56
+logout: async () => {
+    removeAuthCookie(cookies, AGENTCORE_ACCESS_TOKEN);
+    removeAuthCookie(cookies, AGENTCORE_REFRESH_TOKEN);
+    removeAuthCookie(cookies, AGENTCORE_API_TOKEN);
+    removeLocalStorage(AGENTCORE_ACCESS_TOKEN);
+    removeLocalStorage(AGENTCORE_REFRESH_TOKEN);
+    set({ isAuthenticated: false, accessToken: null, /* ... */ });
+}
+```
+
+Tracks `authenticationErrorCount` — after 3 consecutive 401s, the store force-logs-out.
+
+### 11.7 Protected Route Guard
+
+**File:** `src/frontend/src/components/authorization/authGuard/index.tsx` — Lines 27-151
+
+Behavior:
+1. Reads `isAuthenticated` from the Zustand store. If false → `<Navigate to="/login?redirect=…" replace />`.
+2. **Proactive refresh** — parses the JWT's `exp` claim and schedules a refresh **15 seconds before expiry**, so a session never bounces a real user request.
+3. Also refreshes on `window` focus and `document` visibilitychange (catches users coming back from a long inactive tab).
+4. After 3 failed refresh attempts, force-logs-out.
+
+```ts
+// authGuard/index.tsx — Lines 11-22 (exp parsing)
+const getAccessTokenExpEpoch = (token: string | undefined): number | null => {
+    if (!token) return null;
+    try {
+        const payloadPart = token.split(".")[1];
+        const normalized = payloadPart.replace(/-/g, "+").replace(/_/g, "/");
+        const padded = normalized + "=".repeat((4 - (normalized.length % 4)) % 4);
+        const payload = JSON.parse(atob(padded));
+        return typeof payload?.exp === "number" ? payload.exp : null;
+    } catch { return null; }
+};
+```
+
+### 11.8 Logout Flow
+
+**File:** `src/frontend/src/controllers/API/queries/auth/use-post-logout.ts` — Lines 11-51
+
+```ts
+// use-post-logout.ts — Lines 31-44
+async function logoutUser(): Promise<any> {
+    const res = await api.post(`${getURL("LOGOUT")}`);
+    return res.data;
+}
+const mutation = mutate(["useLogout"], logoutUser, {
+    onSuccess: () => clearClientAuthState(),    // wipe stores
+    onError:   () => clearClientAuthState(),    // wipe stores even on failure
+});
+```
+
+Crucially, `clearClientAuthState()` runs on both success and error — so a network failure to `/logout` doesn't trap the user in a "half-logged-in" UI.
 
 ---
 
-## 8. Backend API Endpoints
+## 12. Complete Authentication Flow Diagram
 
-**File:** `MiBuddy-Backend/app.py`
+```
+┌───────────────────────────────────────────────────────────────────────┐
+│                          LOGIN — TWO PATHS                             │
+├───────────────────────────────────────────────────────────────────────┤
+│                                                                        │
+│  PATH A: Username/Password           PATH B: Azure SSO                 │
+│  ───────────────────────────         ───────────────────────────       │
+│                                                                        │
+│  LoginPage form submit               LoginPage Azure button            │
+│         │                                    │                         │
+│         ▼                                    ▼                         │
+│  POST /login                         instance.loginPopup() (MSAL)      │
+│  (form: username, password)                  │                         │
+│         │                                    ▼                         │
+│         ▼                            POST /azure/sso { idToken }       │
+│  authenticate_user()                         │                         │
+│  utils.py:502                                ▼                         │
+│  • get_user_by_username                  jwt.decode(idToken,           │
+│  • check expires_at                          jwks, RS256, …)           │
+│  • check is_active                       login.py:218                  │
+│  • verify_password (bcrypt)              • verify aud, iss             │
+│         │                                • resolve / auto-provision    │
+│         └────────────────┬───────────────┘                             │
+│                          ▼                                             │
+│            create_user_tokens()                                        │
+│            utils.py:426                                                │
+│            • access JWT  (1 hr,  HS256)                                │
+│            • refresh JWT (7 day, HS256)                                │
+│                          │                                             │
+│                          ▼                                             │
+│            _apply_auth_cookies()                                       │
+│            login.py:42                                                 │
+│            Set-Cookie: access_token_ag                                 │
+│            Set-Cookie: refresh_token_ag (httpOnly)                     │
+│            Set-Cookie: apikey_tkn_ag                                   │
+│                          │                                             │
+│                          ▼                                             │
+│         Response { access_token, refresh_token,                        │
+│                    role, permissions }                                 │
+│                          │                                             │
+│                          ▼                                             │
+│         Frontend AuthContext.login(...)                                │
+│         + Zustand store.setAuthContext({role, permissions})            │
+│         + getUser() → /api/users/whoami                                │
+│                          │                                             │
+│                          ▼                                             │
+│         Navigate to /agents (or ?redirect target)                      │
+└───────────────────────────────────────────────────────────────────────┘
 
-| Endpoint | Method | Purpose | Auth Required |
-|----------|--------|---------|---------------|
-| `/` | GET | Serve React app | Yes |
-| `/login` | POST | Validate user (Azure Table) | No |
-| `/auth/mas/start` | GET | Initiate OKTA login | No |
-| `/authorization-code/callback` | GET | OKTA callback handler | CSRF state |
-| `/receive_token` | POST | Store token from frontend | No |
-| `/.auth/me` | GET | Get current user info | Yes |
-| `/conversation` | POST | Chat API | Yes |
-| `/conversation/cot` | POST | Chain-of-thought reasoning | Yes |
-| `/history/list` | GET | List chat history | Yes |
-| `/history/read` | POST | Read conversation | Yes |
-| `/history/generate` | POST | Generate AI response | Yes |
-| `/history/update` | POST | Update messages | Yes |
-| `/history/delete` | DELETE | Delete conversation | Yes |
-| `/history/archive` | POST | Archive conversation | Yes |
-| `/sharepoint/validate_token` | POST | Validate SharePoint token | Yes |
-| `/outlook/validate_token` | POST | Validate Outlook token | Yes |
-| `/user/model` | POST/GET | User model preference | Yes |
-| `/feedback` | POST | Submit feedback | Yes |
-| `/notebooklm` | GET | NotebookLM page | Yes |
+┌───────────────────────────────────────────────────────────────────────┐
+│                          PROTECTED REQUEST                             │
+├───────────────────────────────────────────────────────────────────────┤
+│                                                                        │
+│  React component fires API call                                        │
+│            │                                                           │
+│            ▼                                                           │
+│  Axios request interceptor (api.tsx:209)                               │
+│  Authorization: Bearer <access_token_ag>                               │
+│            │                                                           │
+│            ▼ (cookies also auto-attached via withCredentials)          │
+│  ┌────────────────────────────────────────────────────────────┐        │
+│  │  Backend FastAPI dependency chain                          │        │
+│  │                                                            │        │
+│  │  Depends(get_current_active_user)                          │        │
+│  │       └─ Depends(get_current_user)  utils.py:125           │        │
+│  │             ├─ try cookie / OAuth2 form                    │        │
+│  │             ├─ try HTTPBearer                              │        │
+│  │             └─ try x-api-key                               │        │
+│  │                  │                                         │        │
+│  │                  ▼                                         │        │
+│  │       get_current_user_by_jwt()  utils.py:155              │        │
+│  │       1. jwt.decode(secret_key, HS256)                     │        │
+│  │       2. exp not in past?                                  │        │
+│  │       3. Redis: token not revoked?                         │        │
+│  │       4. DB: user exists, is_active, not expired?          │        │
+│  │                  │                                         │        │
+│  │                  ▼                                         │        │
+│  │       Return User object                                   │        │
+│  │                  │                                         │        │
+│  │  PermissionChecker(["..."])  decorators.py:9               │        │
+│  │  ✓ user has the required permission?                       │        │
+│  └────────────────────────────────────────────────────────────┘        │
+│            │                                                           │
+│            ▼                                                           │
+│  Endpoint handler runs                                                 │
+│            │                                                           │
+│            ▼                                                           │
+│  IF response.status == 401:                                            │
+│       Frontend response interceptor (api.tsx:167)                      │
+│       → tryToRenewAccessToken() → POST /api/refresh                    │
+│       → retry original request                                         │
+│       → after 3 failures: logout + redirect /login                     │
+└───────────────────────────────────────────────────────────────────────┘
 
----
-
-## 9. CORS Configuration
-
-**File:** `MiBuddy-Backend/app.py` — Lines 218-225
-
-```python
-# app.py — Lines 218-225
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],            # Line 220 — WARNING: accepts all origins
-    allow_credentials=True,         # Line 221
-    allow_methods=["*"],            # Line 222
-    allow_headers=["*"],            # Line 223
-)
+┌───────────────────────────────────────────────────────────────────────┐
+│                       ADMIN DEACTIVATES A USER                         │
+├───────────────────────────────────────────────────────────────────────┤
+│                                                                        │
+│  POST /users/{id}/soft-delete                                          │
+│            │                                                           │
+│            ▼                                                           │
+│  soft_delete_user_hierarchy()  soft_delete.py:89                       │
+│            │                                                           │
+│            ▼                                                           │
+│  invalidate_user_auth()  invalidation.py:11                            │
+│       1. revoke_user_tokens(user.id)                                   │
+│          → Redis: auth:revoked_after:user:{id} = now()                 │
+│       2. block_identity(email, entra_object_id)                        │
+│          → Redis: auth:blocked:email:{email} = "1"                     │
+│          → Redis: auth:blocked:entra:{oid}   = "1"                     │
+│       3. user_cache.delete_user(id)                                    │
+│            │                                                           │
+│            ▼                                                           │
+│  user.is_active = False, deleted_at = now                              │
+│            │                                                           │
+│            ▼                                                           │
+│  EFFECT: next request from that user → JWT iat < revoked_after_ts      │
+│          → 401 "Token has been revoked"                                │
+│          → frontend interceptor → /api/refresh → also rejected         │
+│          → logout + /login                                             │
+└───────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## 10. Complete Auth Flow Diagram
+## 13. Backend API — Auth Endpoint Map
 
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                     COMPLETE AUTH FLOW                               │
-├─────────────────────────────────────────────────────────────────────┤
-│                                                                     │
-│  STEP 1: Frontend Detects User Type                                 │
-│  ProtectedRoute.tsx (Line 52)                                       │
-│  ┌──────────────────────────────────────────────────┐               │
-│  │ const isMASUser = MAS_WIN_DOMAINS.includes(Domain)│               │
-│  └────────────────────┬─────────────────────────────┘               │
-│                       │                                              │
-│          ┌────────────┴────────────┐                                 │
-│          ▼                         ▼                                 │
-│  ┌───────────────┐        ┌────────────────┐                        │
-│  │  MAS User     │        │ Standard User  │                        │
-│  │  (OKTA Flow)  │        │ (EasyAuth Flow)│                        │
-│  └───────┬───────┘        └────────┬───────┘                        │
-│          │                         │                                 │
-│  STEP 2A: OKTA                STEP 2B: EasyAuth                     │
-│          │                         │                                 │
-│  GET /auth/mas/start          POST /login                           │
-│  app.py:536                   app.py:494                            │
-│          │                         │                                 │
-│  → Redirect to OKTA           → Check Azure Table                   │
-│  → User authenticates          → Return {Message: true}             │
-│          │                         │                                 │
-│  GET /authorization-code/      → Store userId, domain               │
-│       callback                     in localStorage                  │
-│  app.py:569                        │                                │
-│          │                         │                                 │
-│  → Exchange code for token    ┌────┴──────────────────┐             │
-│  → Fetch OKTA user info       │ Azure App Service     │             │
-│  → Validate email domain      │ injects EasyAuth      │             │
-│  → Sign MiBuddy JWT (8hr)     │ headers automatically │             │
-│  → Redirect: /?mas_token=JWT  └───────────────────────┘             │
-│          │                                                          │
-│  Frontend stores JWT                                                │
-│  sessionStorage["masAccessToken"]                                   │
-│  ProtectedRoute.tsx:55                                              │
-│                                                                     │
-│  STEP 3: API Calls (Both Flows)                                     │
-│  ┌──────────────────────────────────────────────┐                   │
-│  │  getAuthHeaders()  — ProtectedRoute.tsx:25   │                   │
-│  │                                              │                   │
-│  │  if (MAS user):                              │                   │
-│  │    headers["Authorization"] = "Bearer <JWT>" │                   │
-│  │  else:                                       │                   │
-│  │    Azure EasyAuth headers auto-injected      │                   │
-│  └──────────────────────┬───────────────────────┘                   │
-│                         │                                            │
-│  STEP 4: Backend Validates                                          │
-│  ┌──────────────────────┴───────────────────────┐                   │
-│  │  auth_utils.py:7                             │                   │
-│  │  get_authenticated_user_details()            │                   │
-│  │                                              │                   │
-│  │  Priority 1: Decode JWT Bearer token         │                   │
-│  │  Priority 2: Read Azure EasyAuth headers     │                   │
-│  │  Priority 3: Use dev sample_user             │                   │
-│  └──────────────────────────────────────────────┘                   │
-│                                                                     │
-└─────────────────────────────────────────────────────────────────────┘
-```
+**File:** `src/backend/base/agentcore/api/login.py`
+
+| Endpoint | Method | Line | Purpose | Auth Required |
+|----------|--------|------|---------|---------------|
+| `/login` | POST | 164 | Username/password login | No |
+| `/azure/sso` | POST | 202 | Azure Entra ID SSO login | No (verifies idToken instead) |
+| `/refresh` | POST | 345 | Issue new access/refresh pair | Refresh-token cookie required |
+| `/logout` | POST | 376 | Clear auth cookies | No |
+
+User-management endpoints (`POST /users`, `GET /users/whoami`, etc.) live in `api/users.py` and require `Depends(get_current_active_user)` plus appropriate permissions.
 
 ---
 
@@ -1529,14 +1755,32 @@ app.add_middleware(
 | approvals.py | `src/backend/base/agentcore/api/approvals.py` | Approval API: access control (L761-845), approve handler (L1396-1599) |
 | approval_notifications.py | `src/backend/base/agentcore/services/approval_notifications.py` | Notification upsert (L13-51), root notify (L54-84) |
 
-### Session 2 — Auth & Platform Files
+### Session 2 — Authentication Files
+
+#### Backend
 
 | File | Path | Key Content |
 |------|------|-------------|
-| app.py | `MiBuddy-Backend/app.py` | /login (L494), /auth/mas/start (L536), OKTA callback (L569), CORS (L218) |
-| auth_utils.py | `MiBuddy-Backend/backend/auth/auth_utils.py` | Token validation 3-path priority (L7-62) |
-| environ.py | `MiBuddy-Backend/backend/utils/environ.py` | JWT secrets (L186-187), OKTA config (L254-256), Azure AD (L233-236) |
-| ProtectedRoute.tsx | `MiBuddy-Backend/frontend/src/ProtectedRoute.tsx` | getMASToken (L17), getAuthHeaders (L25), Auth guard (L48-129) |
-| Login.tsx | `MiBuddy-Backend/frontend/src/pages/login/Login.tsx` | Legacy login form (L69-96), loginUser (L8-27) |
-| index.tsx | `MiBuddy-Backend/frontend/src/index.tsx` | Routes (L74-99), MSAL init (L106-119) |
-| authConfig.ts | `MiBuddy-Backend/frontend/src/authConfig.ts` | Azure AD MSAL config |
+| login.py | `src/backend/base/agentcore/api/login.py` | `_apply_auth_cookies` (L42-73), `/login` (L164-199), `/azure/sso` (L202-343), `/refresh` (L345-373), `/logout` (L376-381) |
+| utils.py | `src/backend/base/agentcore/services/auth/utils.py` | `get_current_user` (L125-152), `get_current_user_by_jwt` (L155-236), `get_current_active_user` (L265-276), `create_token` (L289-302), `create_user_tokens` (L426-452), `create_refresh_token` (L455), `authenticate_user` (L502-532) |
+| token_revocation.py | `src/backend/base/agentcore/services/auth/token_revocation.py` | `revoke_user_tokens` (L23), `is_user_token_revoked` (L32) |
+| identity_blocklist.py | `src/backend/base/agentcore/services/auth/identity_blocklist.py` | `block_identity` (L25), `is_identity_blocked` |
+| invalidation.py | `src/backend/base/agentcore/services/auth/invalidation.py` | `invalidate_user_auth` (L11-22) — orchestrates all three revocations |
+| soft_delete.py | `src/backend/base/agentcore/services/auth/soft_delete.py` | `soft_delete_user_hierarchy` (L89-186) |
+| hard_delete.py | `src/backend/base/agentcore/services/auth/hard_delete.py` | `hard_delete_user` (L34-89) |
+| service.py | `src/backend/base/agentcore/services/auth/service.py` | `AuthService` DI wrapper (L11) |
+| auth.py (settings) | `src/backend/base/agentcore/services/settings/auth.py` | `AuthSettings`, secret-key persistence (L55-85), `pwd_context` bcrypt (L50) |
+| user/model.py | `src/backend/base/agentcore/services/database/models/user/model.py` | `User` SQLModel (L24-63) |
+
+#### Frontend
+
+| File | Path | Key Content |
+|------|------|-------------|
+| LoginPage/index.tsx | `src/frontend/src/pages/LoginPage/index.tsx` | Username/password + Azure SSO form (L37+, MSAL popup ~L98) |
+| AdminPage/LoginPage/index.tsx | `src/frontend/src/pages/AdminPage/LoginPage/index.tsx` | Admin-only username/password login (L18-84) |
+| api.tsx | `src/frontend/src/controllers/API/api.tsx` | fetch interceptor (L144-160), response interceptor + 401 retry (L162-207), request interceptor (L209-244), `tryToRenewAccessToken` (L272-301) |
+| authContext.tsx | `src/frontend/src/contexts/authContext.tsx` | `login`, `getUser`, `userData`, `accessToken`, `role`, `permissions` (L1-268) |
+| authStore.ts | `src/frontend/src/stores/authStore.ts` | Zustand auth store, `logout` (L48-56) |
+| authGuard/index.tsx | `src/frontend/src/components/authorization/authGuard/index.tsx` | Protected route, exp parsing (L11-22), proactive refresh (L27-151) |
+| use-post-logout.ts | `src/frontend/src/controllers/API/queries/auth/use-post-logout.ts` | `useLogout` hook (L11-51) |
+| utils.ts | `src/frontend/src/utils/utils.ts` | `getAuthCookie` / `setAuthCookie` (L1013-1024) |

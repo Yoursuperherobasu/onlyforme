@@ -700,7 +700,7 @@ export default function ModelCatalogue(): JSX.Element {
                             {canEditModel(model) || canDeleteModel(model) ? (
                               <DropdownMenu>
                                 <DropdownMenuTrigger asChild>
-                                  <button className="opacity-0 group-hover:opacity-100 transition-opacity">
+                                  <button className="rounded p-1 hover:bg-muted">
                                     <MoreVertical className="h-4 w-4" />
                                   </button>
                                 </DropdownMenuTrigger>

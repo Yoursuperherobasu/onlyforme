@@ -412,7 +412,7 @@ export type UserManagementType = {
   data?: any;
   index?: number;
   asChild?: boolean;
-  onConfirm: (index, data) => void;
+  onConfirm: (index, data) => void | Promise<void>;
 };
 
 export type loginInputStateType = {

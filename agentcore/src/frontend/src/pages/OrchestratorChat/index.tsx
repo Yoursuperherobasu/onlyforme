@@ -516,7 +516,7 @@ function ImageGalleryView({
       const isPublicBlob = /\.blob\.core\.windows\.net\//i.test(src);
       const headers: Record<string, string> = {};
       if (!isPublicBlob) {
-        const tokenMatch = document.cookie.match(/(?:^|;\s*)access_token_lf=([^;]*)/);
+        const tokenMatch = document.cookie.match(/(?:^|;\s*)access_token_ag=([^;]*)/);
         if (tokenMatch?.[1]) {
           headers["Authorization"] = `Bearer ${decodeURIComponent(tokenMatch[1])}`;
         }
@@ -580,7 +580,7 @@ function ImageGalleryView({
       const isPublicBlob = /\.blob\.core\.windows\.net\//i.test(shareUrl);
       const headers: Record<string, string> = {};
       if (!isPublicBlob) {
-        const tokenMatch = document.cookie.match(/(?:^|;\s*)access_token_lf=([^;]*)/);
+        const tokenMatch = document.cookie.match(/(?:^|;\s*)access_token_ag=([^;]*)/);
         if (tokenMatch?.[1]) {
           headers["Authorization"] = `Bearer ${decodeURIComponent(tokenMatch[1])}`;
         }
@@ -2024,7 +2024,7 @@ export default function AgentOrchestrator() {
     try {
       setIsSending(true);
       const headers: Record<string, string> = { "Content-Type": "application/json" };
-      const tokenMatch = document.cookie.match(/(?:^|;\s*)access_token_lf=([^;]*)/);
+      const tokenMatch = document.cookie.match(/(?:^|;\s*)access_token_ag=([^;]*)/);
       if (tokenMatch?.[1]) headers["Authorization"] = `Bearer ${decodeURIComponent(tokenMatch[1])}`;
       const res = await fetch(
         `${getURL("ORCHESTRATOR")}/messages/${msgIdBeingEdited}/edit`,
@@ -2154,11 +2154,12 @@ export default function AgentOrchestrator() {
       }
     }
 
-    // Collect uploaded file paths and clear previews
+    // Collect uploaded file paths (pure read — clearing the state is deferred
+    // until we're sure we're actually sending, so the user doesn't lose their
+    // attachments if the message turns out to be empty after sanitisation).
     const filePaths = uploadFiles
       .filter((f) => f.path && !f.loading && !f.error)
       .map((f) => f.path!);
-    setUploadFiles([]);
 
     const fallbackAgent = selectedAgent || agents[0];
 
@@ -2172,6 +2173,16 @@ export default function AgentOrchestrator() {
     const cleanedInput = explicitAgent
       ? effectiveInput.replace(new RegExp(`@${escapedName}\\s*`, "g"), "").trim()
       : effectiveInput.trim();
+
+    // After stripping the @mention and trimming, the actual question may be
+    // empty (e.g. user typed just "@agent_name " with no real prompt). Don't
+    // ship a blank message to the backend — bail and let the user finish.
+    if (!cleanedInput && filePaths.length === 0) {
+      return;
+    }
+
+    // From here we're committed to sending — clear the upload previews now.
+    setUploadFiles([]);
 
     // Agent message placeholder — created upfront so "Thinking..." shows inside the bubble
     const agentMsgId = crypto.randomUUID();

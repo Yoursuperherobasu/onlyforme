@@ -548,6 +548,25 @@ async def _is_target_visible_to_admin(
     return False
 
 
+async def _target_belongs_to_department(session: DbSession, target_user: User) -> bool:
+    """True if the user already has an active membership in any department.
+
+    Used to block promoting an existing department member to department_admin —
+    they were created under another admin, and promotion would leave them with
+    the role but no department to admin (control panel etc. show nothing).
+    """
+    return bool(
+        (
+            await session.exec(
+                select(exists().where(
+                    UserDepartmentMembership.user_id == target_user.id,
+                    UserDepartmentMembership.status == ACTIVE_DEPT_STATUS,
+                ))
+            )
+        ).one()
+    )
+
+
 async def _target_has_managed_users(session: DbSession, target_user: User) -> bool:
     role = normalize_role(target_user.role)
 
@@ -2138,18 +2157,64 @@ async def patch_user(
             "country": user_db.country,
             "organization_name": _strip_or_none(user_update.organization_name),
         }
-        requested_department_id = user_update.department_id
-        current_department_id = (
-            await session.exec(
-                select(UserDepartmentMembership.department_id).where(
-                    UserDepartmentMembership.user_id == user_db.id,
-                    UserDepartmentMembership.status == ACTIVE_DEPT_STATUS,
+
+        # Don't allow demoting a department admin while their department still
+        # has active users under them — otherwise the department is left with
+        # no admin. Reassign / remove the users first, or promote a new admin.
+        if user_update.role is not None:
+            requested_role = normalize_role(user_update.role)
+            current_role = normalize_role(user_db.role)
+            if (
+                current_role == "department_admin"
+                and requested_role != "department_admin"
+                and await _target_has_managed_users(session, user_db)
+            ):
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        "This department admin still has users under them. "
+                        "Reassign or remove those users (or assign a new "
+                        "department admin) before changing this user's role."
+                    ),
                 )
+
+            # Don't allow promoting a user who's already a member of someone
+            # else's department to department_admin. They were created under
+            # another admin, and promotion leaves them with the role but no
+            # department to admin (control panel and dept-scoped views show
+            # nothing). Create a fresh dept admin user instead.
+            if (
+                requested_role == "department_admin"
+                and current_role != "department_admin"
+                and await _target_belongs_to_department(session, user_db)
+            ):
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        "This user already belongs to a department under another "
+                        "department admin and cannot be promoted to department "
+                        "admin. Create a new user for this role instead."
+                    ),
+                )
+
+        requested_department_id = user_update.department_id
+        # Only look up the user's current department if a target dept was
+        # requested — otherwise the lookup is unused and just adds a DB
+        # roundtrip to every non-department edit.
+        if requested_department_id:
+            current_department_id = (
+                await session.exec(
+                    select(UserDepartmentMembership.department_id).where(
+                        UserDepartmentMembership.user_id == user_db.id,
+                        UserDepartmentMembership.status == ACTIVE_DEPT_STATUS,
+                    )
+                )
+            ).first()
+            department_change_requested = (
+                requested_department_id != current_department_id
             )
-        ).first()
-        department_change_requested = bool(
-            requested_department_id and requested_department_id != current_department_id
-        )
+        else:
+            department_change_requested = False
         if department_change_requested and normalize_role(user.role) in {"root", "super_admin"}:
             published_uat_count, published_prod_count = await _published_deployment_counts_for_user(
                 session,
