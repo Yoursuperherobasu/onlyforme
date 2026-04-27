@@ -529,9 +529,10 @@ async def list_knowledge_bases(
         department_name = dept_name_map.get(row.dept_id) if row.dept_id else None
         organization_name = org_name_map.get(row.org_id) if row.org_id else None
 
+        # created_by_email / updated_by_email are returned for every role so
+        # the UI can show the email on hover. Department / organization
+        # scope names remain gated by role below.
         if role in {"developer", "business_user"}:
-            created_by_email = None
-            updated_by_email = None
             department_name = None
             organization_name = None
         elif role == "department_admin":
