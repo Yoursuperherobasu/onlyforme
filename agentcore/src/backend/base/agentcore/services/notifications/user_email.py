@@ -76,7 +76,11 @@ def _load_smtp_config(settings) -> SmtpConfig:
     from_name = _coalesce_setting(settings, "smtp_from_name")
     use_ssl = _coalesce_bool_setting(settings, "smtp_use_ssl", default=False)
     use_tls = _coalesce_bool_setting(settings, "smtp_use_tls", default=not use_ssl)
-    timeout_seconds = _coalesce_int_setting(settings, "smtp_timeout_seconds", default=20)
+    # Cap the worst-case SMTP wait at 7s. Healthy SMTP completes well under a
+    # second; the previous 20s default meant a misconfigured/slow mail server
+    # blocked every user-edit request for up to 20 seconds. Override via the
+    # smtp_timeout_seconds setting if a longer wait is genuinely required.
+    timeout_seconds = _coalesce_int_setting(settings, "smtp_timeout_seconds", default=7)
 
     return SmtpConfig(
         host=host,

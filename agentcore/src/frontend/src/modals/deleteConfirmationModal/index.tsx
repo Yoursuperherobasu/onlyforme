@@ -20,6 +20,7 @@ export default function DeleteConfirmationModal({
   note = "",
   errorMessage,
   closeOnConfirm = true,
+  loading = false,
 }: {
   children?: JSX.Element;
   onConfirm: (e: React.MouseEvent<HTMLButtonElement, MouseEvent>) => void;
@@ -30,9 +31,17 @@ export default function DeleteConfirmationModal({
   note?: string;
   errorMessage?: string;
   closeOnConfirm?: boolean;
+  loading?: boolean;
 }) {
+  // While a delete is in flight, ignore Esc / overlay-click / X-button close
+  // attempts so the user can't dismiss (and re-trigger) the action mid-request.
+  const handleOpenChange = (nextOpen: boolean) => {
+    if (loading && !nextOpen) return;
+    setOpen?.(nextOpen);
+  };
+
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
+    <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogTrigger asChild={asChild ?? true} tabIndex={-1}>
         {children ?? <></>}
       </DialogTrigger>
@@ -65,12 +74,13 @@ export default function DeleteConfirmationModal({
               onClick={(e) => e.stopPropagation()}
               className="mr-1"
               variant="outline"
+              disabled={loading}
               data-testid="btn_cancel_delete_confirmation_modal"
             >
               Cancel
             </Button>
           </DialogClose>
-          {closeOnConfirm ? (
+          {closeOnConfirm && !loading ? (
             <DialogClose asChild>
               <Button
                 type="submit"
@@ -87,6 +97,7 @@ export default function DeleteConfirmationModal({
             <Button
               type="submit"
               variant="destructive"
+              loading={loading}
               onClick={(e) => {
                 onConfirm(e);
               }}

@@ -67,12 +67,25 @@ export default function AgentBuilderPage({ view }: { view?: boolean }): JSX.Elem
   const isReadOnlyMode = requestedReadOnlyMode || forceReadOnlyByOwnership;
 
   useEffect(() => {
-    if (!isReadOnlyMode) return;
-    if (searchParams.get("readonly") === "1") return;
-    const next = new URLSearchParams(searchParams);
-    next.set("readonly", "1");
-    setSearchParams(next, { replace: true });
-  }, [isReadOnlyMode, searchParams, setSearchParams]);
+    // Wait until the loaded agent actually matches the URL id. Otherwise we
+    // would react to stale ownership data from the previously-viewed agent
+    // (e.g. right after copying someone else's agent into our own project,
+    // currentAgent is briefly the source agent and we'd pin ?readonly=1
+    // onto the new agent's URL by mistake — leaving the new agent locked
+    // in read-only with the Copy button still showing).
+    if (!currentAgent || String(currentAgent.id) !== String(id)) return;
+    const shouldBeReadOnly = forceReadOnlyByOwnership || Boolean(view);
+    const hasParam = searchParams.get("readonly") === "1";
+    if (shouldBeReadOnly && !hasParam) {
+      const next = new URLSearchParams(searchParams);
+      next.set("readonly", "1");
+      setSearchParams(next, { replace: true });
+    } else if (!shouldBeReadOnly && hasParam) {
+      const next = new URLSearchParams(searchParams);
+      next.delete("readonly");
+      setSearchParams(next, { replace: true });
+    }
+  }, [currentAgent, id, forceReadOnlyByOwnership, view, searchParams, setSearchParams]);
 
   const changesNotSaved =
     !isReadOnlyMode &&

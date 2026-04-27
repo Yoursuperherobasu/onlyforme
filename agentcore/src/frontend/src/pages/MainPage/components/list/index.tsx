@@ -47,7 +47,7 @@ const ListComponent = ({
   const navigate = useCustomNavigate();
   const [openDelete, setOpenDelete] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
-  const { deleteAgent } = useDeleteAgent();
+  const { deleteAgent, isDeleting } = useDeleteAgent();
   const setSuccessData = useAlertStore((state) => state.setSuccessData);
   const setErrorData = useAlertStore((state) => state.setErrorData);
   const { folderId } = useParams();
@@ -412,6 +412,7 @@ const ListComponent = ({
           note={!agentData.is_component ? "and its message history" : ""}
           errorMessage={deleteError ?? undefined}
           closeOnConfirm={false}
+          loading={isDeleting}
         />
       )}
       <ExportModal

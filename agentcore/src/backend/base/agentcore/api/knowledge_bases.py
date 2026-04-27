@@ -424,6 +424,7 @@ async def list_knowledge_bases(
             KnowledgeBase.dept_id,
             KnowledgeBase.public_dept_ids,
             KnowledgeBase.created_by,
+            KnowledgeBase.updated_by,
             KnowledgeBase.updated_at.label("kb_updated_at"),
             func.max(UserFile.updated_at).label("last_file_updated_at"),
             func.coalesce(func.sum(UserFile.size), 0).label("size"),
@@ -440,6 +441,7 @@ async def list_knowledge_bases(
             KnowledgeBase.dept_id,
             KnowledgeBase.public_dept_ids,
             KnowledgeBase.created_by,
+            KnowledgeBase.updated_by,
             KnowledgeBase.updated_at,
         )
         .order_by(KnowledgeBase.name.asc())
@@ -448,16 +450,23 @@ async def list_knowledge_bases(
 
     payload: list[dict] = []
     role = normalize_role(getattr(current_user, "role", None) or "")
-    creator_ids = {row.created_by for row in rows if row.created_by}
+    # Build a single user-id -> {display, email} map covering both the
+    # creator and the most-recent modifier. One DB roundtrip for both.
+    user_lookup_ids: set[UUID] = set()
+    for row in rows:
+        if row.created_by:
+            user_lookup_ids.add(row.created_by)
+        if row.updated_by:
+            user_lookup_ids.add(row.updated_by)
     creator_display_map: dict[UUID, str] = {}
     creator_email_map: dict[UUID, str] = {}
     dept_name_map: dict[UUID, str] = {}
     org_name_map: dict[UUID, str] = {}
 
-    if creator_ids:
+    if user_lookup_ids:
         creator_rows = (
             await session.exec(
-                select(User.id, User.display_name, User.email, User.username).where(User.id.in_(list(creator_ids)))
+                select(User.id, User.display_name, User.email, User.username).where(User.id.in_(list(user_lookup_ids)))
             )
         ).all()
         creator_display_map = {
@@ -511,11 +520,18 @@ async def list_knowledge_bases(
         is_own = row.created_by == current_user.id
         created_by_display = creator_display_map.get(row.created_by, str(row.created_by))
         created_by_email = creator_email_map.get(row.created_by)
+        updated_by_display = (
+            creator_display_map.get(row.updated_by) if row.updated_by else None
+        )
+        updated_by_email = (
+            creator_email_map.get(row.updated_by) if row.updated_by else None
+        )
         department_name = dept_name_map.get(row.dept_id) if row.dept_id else None
         organization_name = org_name_map.get(row.org_id) if row.org_id else None
 
         if role in {"developer", "business_user"}:
             created_by_email = None
+            updated_by_email = None
             department_name = None
             organization_name = None
         elif role == "department_admin":
@@ -551,6 +567,8 @@ async def list_knowledge_bases(
                 "created_by_email": created_by_email,
                 "department_name": department_name,
                 "organization_name": organization_name,
+                "updated_by": updated_by_display,
+                "updated_by_email": updated_by_email,
             }
         )
 
@@ -671,6 +689,7 @@ async def update_knowledge_base(
     kb.public_dept_ids = public_dept_ids
     if visibility == KBVisibilityEnum.PRIVATE:
         kb.created_by = current_user.id
+    kb.updated_by = current_user.id
     kb.updated_at = datetime.now(timezone.utc)
 
     session.add(kb)

@@ -304,22 +304,26 @@ export default function AdminPage() {
   }
 
   function handleEditUser(userId, user) {
-    mutateUpdateUser(
-      { user_id: userId, user: user },
-      {
-        onSuccess: (result) => {
-          resetFilter();
-          setSuccessData({
-            title: result?.emailSent
-              ? `User ${user.username} edited and email sent.`
-              : `User ${user.username} edited, email not sent.`,
-          });
+    return new Promise<void>((resolve, reject) => {
+      mutateUpdateUser(
+        { user_id: userId, user: user },
+        {
+          onSuccess: (result) => {
+            resetFilter();
+            setSuccessData({
+              title: result?.emailSent
+                ? `User ${user.username} edited and email sent.`
+                : `User ${user.username} edited, email not sent.`,
+            });
+            resolve();
+          },
+          onError: (error) => {
+            showUserMutationError(error, USER_EDIT_ERROR_ALERT);
+            reject(error);
+          },
         },
-        onError: (error) => {
-          showUserMutationError(error, USER_EDIT_ERROR_ALERT);
-        },
-      },
-    );
+      );
+    });
   }
 
   function handleDisableUser(check, userId, user) {
@@ -615,9 +619,7 @@ export default function AdminPage() {
                 cancelText={t("Cancel")}
                 confirmationText={t("Save")}
                 icon={"UserPlus2"}
-                onConfirm={(index, user) => {
-                  handleNewUser(user);
-                }}
+                onConfirm={(index, user) => handleNewUser(user)}
                 asChild
               >
                 <Button variant="primary">{t("New User")}</Button>
@@ -984,9 +986,9 @@ export default function AdminPage() {
                                 icon={"UserPlus2"}
                                 data={user}
                                 index={index}
-                                onConfirm={(index, editUser) => {
-                                  handleEditUser(user.id, editUser);
-                                }}
+                                onConfirm={(index, editUser) =>
+                                  handleEditUser(user.id, editUser)
+                                }
                               >
                                 <ShadTooltip content={t("Edit")} side="top">
                                   <IconComponent

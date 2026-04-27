@@ -7,6 +7,8 @@ import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
@@ -104,6 +106,14 @@ export default function WorkflowsView({
   const [pendingToggles, setPendingToggles] = useState<{
     [key: string]: { status: boolean; enabled: boolean };
   }>({});
+  // Pending confirmation for Start/Stop or Enable/Disable. Set when the user
+  // clicks a toggle; the actual mutation only fires after they confirm.
+  const [toggleConfirm, setToggleConfirm] = useState<{
+    workflowId: string;
+    kind: "status" | "enabled";
+    nextValue: boolean;
+    agentName: string;
+  } | null>(null);
   const [selectedSharingAgentId, setSelectedSharingAgentId] =
     useState<string>("");
   const [selectedSharingAgentName, setSelectedSharingAgentName] =
@@ -1640,10 +1650,18 @@ export default function WorkflowsView({
                                     ? "bg-blue-600"
                                     : "bg-muted"
                               }`}
-                              onClick={async (e) => {
+                              onClick={(e) => {
                                 e.stopPropagation();
                                 if (pendingToggles[workflow.id]?.status) return;
-                                await handleStatusToggle(workflow.id);
+                                const currentStatus =
+                                  workflowStates[workflow.id]?.status ??
+                                  workflow.status;
+                                setToggleConfirm({
+                                  workflowId: workflow.id,
+                                  kind: "status",
+                                  nextValue: !currentStatus,
+                                  agentName: workflow.name ?? "",
+                                });
                               }}
                             >
                               <span
@@ -1670,10 +1688,18 @@ export default function WorkflowsView({
                               ? "bg-green-500"
                               : "bg-muted"
                           }`}
-                          onClick={async (e) => {
+                          onClick={(e) => {
                             e.stopPropagation();
                             if (pendingToggles[workflow.id]?.enabled) return;
-                            await handleEnabledToggle(workflow.id);
+                            const currentEnabled =
+                              workflowStates[workflow.id]?.enabled ??
+                              workflow.enabled;
+                            setToggleConfirm({
+                              workflowId: workflow.id,
+                              kind: "enabled",
+                              nextValue: !currentEnabled,
+                              agentName: workflow.name ?? "",
+                            });
                           }}
                         >
                           <span
@@ -1745,6 +1771,74 @@ export default function WorkflowsView({
           deployId={exportApiAgent.deployId}
         />
       )}
+      <Dialog
+        open={!!toggleConfirm}
+        onOpenChange={(next) => {
+          if (!next) setToggleConfirm(null);
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>
+              {toggleConfirm
+                ? toggleConfirm.kind === "status"
+                  ? toggleConfirm.nextValue
+                    ? t("Start agent?")
+                    : t("Stop agent?")
+                  : toggleConfirm.nextValue
+                    ? t("Enable agent?")
+                    : t("Disable agent?")
+                : ""}
+            </DialogTitle>
+            <DialogDescription>
+              {toggleConfirm
+                ? toggleConfirm.kind === "status"
+                  ? toggleConfirm.nextValue
+                    ? t(
+                        'Are you sure you want to start "{{name}}"?',
+                        { name: toggleConfirm.agentName },
+                      )
+                    : t(
+                        'Are you sure you want to stop "{{name}}"?',
+                        { name: toggleConfirm.agentName },
+                      )
+                  : toggleConfirm.nextValue
+                    ? t(
+                        'Are you sure you want to enable "{{name}}"?',
+                        { name: toggleConfirm.agentName },
+                      )
+                    : t(
+                        'Are you sure you want to disable "{{name}}"?',
+                        { name: toggleConfirm.agentName },
+                      )
+                : ""}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setToggleConfirm(null)}
+            >
+              {t("Cancel")}
+            </Button>
+            <Button
+              onClick={async () => {
+                const pending = toggleConfirm;
+                if (!pending) return;
+                setToggleConfirm(null);
+                if (pending.kind === "status") {
+                  await handleStatusToggle(pending.workflowId);
+                } else {
+                  await handleEnabledToggle(pending.workflowId);
+                }
+              }}
+            >
+              {t("Yes, continue")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={promoteDialogOpen} onOpenChange={setPromoteDialogOpen}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>

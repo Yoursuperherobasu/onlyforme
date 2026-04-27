@@ -885,7 +885,7 @@ export default function FolderCardsView({
                         <DropdownMenuTrigger asChild>
                           <button
                             onClick={(e) => e.stopPropagation()}
-                            className="flex h-6 w-6 items-center justify-center rounded-md opacity-0 transition-opacity hover:bg-accent group-hover:opacity-100"
+                            className="flex h-6 w-6 items-center justify-center rounded-md transition-opacity hover:bg-accent"
                           >
                             <MoreVertical className="h-3.5 w-3.5" />
                           </button>
@@ -1251,7 +1251,7 @@ export default function FolderCardsView({
                             <DropdownMenuTrigger asChild>
                               <button
                                 onClick={(e) => e.stopPropagation()}
-                                className="flex h-8 w-8 items-center justify-center rounded-md opacity-0 transition-opacity hover:bg-accent group-hover:opacity-100"
+                                className="flex h-8 w-8 items-center justify-center rounded-md transition-opacity hover:bg-accent"
                               >
                                 <MoreVertical className="h-4 w-4" />
                               </button>

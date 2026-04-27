@@ -624,7 +624,7 @@ export default function MCPServersPage() {
                               <DropdownMenu>
                                 <DropdownMenuTrigger asChild>
                                   <button
-                                    className="flex h-8 w-8 items-center justify-center rounded-md opacity-0 transition-colors hover:bg-accent group-hover:opacity-100 disabled:cursor-not-allowed"
+                                    className="flex h-8 w-8 items-center justify-center rounded-md transition-colors hover:bg-accent disabled:cursor-not-allowed"
                                     data-testid={`mcp-server-menu-button-${server.server_name}`}
                                     disabled={controlsDisabled}
                                   >

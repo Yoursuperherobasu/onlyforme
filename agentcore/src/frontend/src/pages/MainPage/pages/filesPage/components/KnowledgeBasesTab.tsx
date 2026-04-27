@@ -65,6 +65,9 @@ type DisplayRow = {
   visibility?: string;
   created_by?: string;
   created_by_email?: string | null;
+  is_own_kb?: boolean;
+  updated_by?: string | null;
+  updated_by_email?: string | null;
   department_name?: string | null;
   organization_name?: string | null;
   size?: number;
@@ -107,7 +110,11 @@ const KnowledgeBasesTab = ({
     .toLowerCase()
     .replace(/\s+/g, "_");
   const canAddKnowledge = permissions?.includes("add_new_knowledge") ?? false;
-  const showCreatedBy = normalizedRole === "department_admin";
+  // Match the Projects page: admins see who created each row.
+  const showCreatedBy =
+    normalizedRole === "department_admin" ||
+    normalizedRole === "super_admin" ||
+    normalizedRole === "root";
   const showDepartment = normalizedRole === "super_admin";
   const canMultiDept = normalizedRole === "super_admin" || normalizedRole === "root";
   const userDeptId = userData?.department_id ?? null;
@@ -211,6 +218,9 @@ const KnowledgeBasesTab = ({
     return `${names.slice(0, 2).join(", ")} +${names.length - 2}`;
   }, [canMultiDept, deptNameMap, selectedDeptId, selectedDeptIds, t]);
   const [pendingUploadFiles, setPendingUploadFiles] = useState<File[]>([]);
+  // Tracks an in-flight upload so we can show a spinner on the Upload button
+  // and block double-submits / modal dismissal while the request is running.
+  const [isUploading, setIsUploading] = useState(false);
   const { validateFileSize } = useFileSizeValidator();
   const uploadFile = useUploadFile({ multiple: true });
 
@@ -591,6 +601,9 @@ const KnowledgeBasesTab = ({
         visibility: kb.visibility,
         created_by: kb.created_by,
         created_by_email: kb.created_by_email,
+        is_own_kb: (kb as any).is_own_kb,
+        updated_by: (kb as any).updated_by,
+        updated_by_email: (kb as any).updated_by_email,
         department_name: kb.department_name,
         organization_name: kb.organization_name,
         org_id: kb.org_id,
@@ -819,17 +832,60 @@ const KnowledgeBasesTab = ({
                 if (params.data?.rowType !== "kb") return "";
                 const emailValue = params.data?.created_by_email || "";
                 const rawCreatedBy = params.data?.created_by || "";
+                const isOwnKb = !!params.data?.is_own_kb;
                 const looksLikeUuid =
                   typeof rawCreatedBy === "string" &&
                   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(rawCreatedBy);
-                const displayValue =
-                  (!looksLikeUuid && rawCreatedBy) ||
-                  (typeof emailValue === "string" && emailValue.includes("@")
-                    ? emailValue.split("@")[0]
-                    : emailValue) ||
-                  "-";
+                const displayValue = isOwnKb
+                  ? t("You")
+                  : (!looksLikeUuid && rawCreatedBy) ||
+                    (typeof emailValue === "string" && emailValue.includes("@")
+                      ? emailValue.split("@")[0]
+                      : emailValue) ||
+                    "-";
                 return (
                   <div className="max-w-[170px] truncate" title={emailValue || displayValue}>
+                    {displayValue}
+                  </div>
+                );
+              },
+            } as ColDef,
+            {
+              headerName: t("Modified By"),
+              field: "updated_by",
+              flex: 1.2,
+              sortable: false,
+              editable: false,
+              cellClass: baseCellClass,
+              cellRenderer: (params: any) => {
+                if (params.data?.rowType !== "kb") return "";
+                const rawUpdatedBy = params.data?.updated_by || "";
+                const updatedEmail = params.data?.updated_by_email || "";
+                if (!rawUpdatedBy && !updatedEmail) {
+                  return <div className="text-muted-foreground">-</div>;
+                }
+                const isSelf =
+                  !!userData?.id &&
+                  ((typeof rawUpdatedBy === "string" &&
+                    rawUpdatedBy === userData.id) ||
+                    (typeof updatedEmail === "string" &&
+                      updatedEmail.toLowerCase() ===
+                        String(userData.email || "").toLowerCase()));
+                const looksLikeUuid =
+                  typeof rawUpdatedBy === "string" &&
+                  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(rawUpdatedBy);
+                const displayValue = isSelf
+                  ? t("You")
+                  : (!looksLikeUuid && rawUpdatedBy) ||
+                    (typeof updatedEmail === "string" && updatedEmail.includes("@")
+                      ? updatedEmail.split("@")[0]
+                      : updatedEmail) ||
+                    "-";
+                return (
+                  <div
+                    className="max-w-[170px] truncate"
+                    title={updatedEmail || displayValue}
+                  >
                     {displayValue}
                   </div>
                 );
@@ -921,7 +977,12 @@ const KnowledgeBasesTab = ({
     <BaseModal
       size="small-h-full"
       open={isUploadModalOpen}
-      setOpen={setIsUploadModalOpen}
+      setOpen={(next) => {
+        // Don't let the user dismiss the modal mid-upload — the underlying
+        // request is still in flight and another click would re-trigger it.
+        if (isUploading && !next) return;
+        setIsUploadModalOpen(next);
+      }}
     >
       <BaseModal.Header
         description={
@@ -1176,7 +1237,9 @@ const KnowledgeBasesTab = ({
         submit={{
           label: isExistingKB ? t("Upload Files") : t("Upload Knowledge Base"),
           dataTestId: "upload-files-with-kb-button",
+          loading: isUploading,
           disabled:
+            isUploading ||
             !canAddKnowledge ||
             pendingUploadFiles.length === 0 ||
             !knowledgeBaseName.trim() ||
@@ -1185,6 +1248,7 @@ const KnowledgeBasesTab = ({
               ((canMultiDept && selectedDeptIds.length === 0) ||
                 (!canMultiDept && !selectedDeptId))),
           onClick: async () => {
+            if (isUploading) return;
             const kbName = knowledgeBaseName.trim();
             if (!kbName) {
               setErrorData({
@@ -1204,8 +1268,18 @@ const KnowledgeBasesTab = ({
                 : visibilityScope === "department"
                   ? { org_id: selectedOrgId, dept_id: deptId, public_dept_ids: deptIds }
                   : undefined;
-            await handleUpload(pendingUploadFiles, kbName, selectedVisibility, uploadScope);
-            setIsUploadModalOpen(false);
+            setIsUploading(true);
+            try {
+              await handleUpload(
+                pendingUploadFiles,
+                kbName,
+                selectedVisibility,
+                uploadScope,
+              );
+              setIsUploadModalOpen(false);
+            } finally {
+              setIsUploading(false);
+            }
           },
         }}
       >

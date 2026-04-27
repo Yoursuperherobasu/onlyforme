@@ -109,7 +109,7 @@ export const SidebarDraggableComponent = forwardRef(
     }
 
     const handleKeyDown = (e) => {
-      if (readOnly) return;
+      if (readOnly || disabled) return;
       if (e.key === "Enter" || e.key === " ") {
         e.preventDefault();
         e.stopPropagation();
@@ -132,6 +132,7 @@ export const SidebarDraggableComponent = forwardRef(
             onPointerDown={handlePointerDown}
             onContextMenuCapture={(e) => {
               e.preventDefault();
+              if (disabled) return;
               setOpen(true);
             }}
             key={itemName}
@@ -145,11 +146,13 @@ export const SidebarDraggableComponent = forwardRef(
               data-testid={sectionName + display_name}
               id={sectionName + display_name}
               className={cn(
-                "group/draggable flex items-center gap-2 rounded-md bg-muted p-1 px-2 hover:bg-secondary-hover/75",
+                "group/draggable flex items-center gap-2 rounded-md bg-muted p-1 px-2",
                 error && "cursor-not-allowed select-none",
-                readOnly ? "cursor-default" : "cursor-grab",
+                readOnly || disabled
+                  ? "cursor-not-allowed"
+                  : "cursor-grab hover:bg-secondary-hover/75",
                 disabled
-                  ? "pointer-events-none bg-accent text-placeholder-foreground h-8"
+                  ? "bg-accent text-placeholder-foreground h-8"
                   : "bg-muted text-foreground",
               )}
               draggable={!error && !readOnly && !disabled}
