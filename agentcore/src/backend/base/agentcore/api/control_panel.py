@@ -1354,6 +1354,16 @@ async def promote_uat_to_prod(
         await session.commit()
         await session.refresh(new_record)
 
+        # Keep manifest in sync with control panel semantics:
+        # promoting UAT -> PROD stops the UAT deployment, so remove its YAML entry.
+        from agentcore.services.manifest import remove_manifest_entry
+
+        remove_manifest_entry(deployment_id=str(uat_dep.id))
+        logger.info(
+            f"[MANIFEST] Removed UAT deployment from manifest after promote: "
+            f"uat_deploy_id={uat_dep.id} prod_deploy_id={new_record.id} agent_id={uat_dep.agent_id}",
+        )
+
         # ─── Auto-generate API key for admin direct PROD promotion ──
         plaintext_key = None
         if is_admin:
