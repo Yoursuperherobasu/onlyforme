@@ -595,6 +595,11 @@ async def update_project(
         await session.commit()
         await session.refresh(existing_project)
 
+        if "tags" in project_data and project.tags is not None:
+            org_id = await _get_user_org_id(session, current_user.id)
+            await sync_project_tags(session, existing_project.id, project.tags, org_id, current_user.id)
+            await session.commit()
+
         if "components" not in project_data and "agents" not in project_data:
             return existing_project
 
