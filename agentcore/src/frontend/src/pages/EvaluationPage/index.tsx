@@ -2393,13 +2393,26 @@ export default function EvaluationPage() {
                             <thead className="text-xs text-foreground uppercase bg-muted">
                               <tr>
                                 <th className="px-4 py-2">{t("Name")}</th>
+                                <th className="px-4 py-2">{t("Preset")}</th>
                                 <th className="px-4 py-2">{t("Model")}</th>
-                                <th className="px-4 py-2">{t("Criteria")}</th>
+                                <th className="px-4 py-2">{t("Agents")}</th>
                                 <th className="px-4 py-2">{t("Action")}</th>
                               </tr>
                             </thead>
                             <tbody>
-                              {savedEvaluators.map((ev) => (
+                              {savedEvaluators.map((ev) => {
+                                const presetName = !ev.preset_id || ev.preset_id === "__custom__" 
+                                  ? t("Custom") 
+                                  : (presets.find(p => p.id === ev.preset_id)?.name || ev.preset_id);
+                                
+                                const agentIds = Array.isArray(ev.agent_ids) ? ev.agent_ids : [];
+                                const agentLabels = agentIds.length > 0 ? agentIds.map(id => {
+                                  const f = agentList.find((a: any) => (a.metadata?.agent_id || a.id || a.metadata?.endpoint_name || "") === id);
+                                  if (f) return f.metadata?.display_name || f.name || f.metadata?.endpoint_name || f.id || id;
+                                  return id;
+                                }).join(", ") : "—";
+
+                                return (
                                 <tr
                                   key={ev.id}
                                   className="border-b dark:border-border hover:bg-muted/50"
@@ -2407,12 +2420,10 @@ export default function EvaluationPage() {
                                   <td className="px-4 py-3 font-medium">
                                     {ev.name}
                                   </td>
+                                  <td className="px-4 py-3">{presetName}</td>
                                   <td className="px-4 py-3">{ev.model}</td>
-                                  <td
-                                    className="px-4 py-3 truncate max-w-xl"
-                                    title={ev.criteria}
-                                  >
-                                    {ev.criteria}
+                                  <td className="px-4 py-3 truncate max-w-[200px]" title={agentLabels}>
+                                    {agentLabels}
                                   </td>
                                     <td className="px-4 py-3">
                                       <div className="flex items-center gap-2">
@@ -2442,7 +2453,8 @@ export default function EvaluationPage() {
                                       </div>
                                     </td>
                                   </tr>
-                                ))}
+                                );
+                              })}
                             </tbody>
                           </table>
                         )}
@@ -2625,18 +2637,16 @@ export default function EvaluationPage() {
               </p>
             </div>
 
-            {judgeForm.preset_id === "__custom__" && (
-              <div className="space-y-2">
-                <label className="text-sm font-medium">{t("Evaluator Name")}</label>
-                <Input
-                  placeholder={t("e.g. My Custom Evaluator")}
-                  value={judgeForm.name}
-                  onChange={(e) =>
-                    setJudgeForm({ ...judgeForm, name: e.target.value })
-                  }
-                />
-              </div>
-            )}
+            <div className="space-y-2">
+              <label className="text-sm font-medium">{t("Evaluator Name")}</label>
+              <Input
+                placeholder={t("e.g. My Custom Evaluator")}
+                value={judgeForm.name}
+                onChange={(e) =>
+                  setJudgeForm({ ...judgeForm, name: e.target.value })
+                }
+              />
+            </div>
 
             <div className="space-y-2">
               <label className="text-sm font-medium">{t("Evaluation Criteria")}</label>
@@ -2650,9 +2660,12 @@ export default function EvaluationPage() {
               />
             </div>
 
-            {requiresGroundTruth && (
+            {(requiresGroundTruth || judgeForm.preset_id === "__custom__") && (
               <div className="space-y-2">
-                <label className="text-sm font-medium">{t("Ground Truth")}</label>
+                <label className="text-sm font-medium">
+                  {t("Ground Truth")}
+                  {!requiresGroundTruth && <span className="text-muted-foreground font-normal ml-1">({t("Optional")})</span>}
+                </label>
                 <textarea
                   className="flex min-h-[80px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
                   placeholder={t("Provide expected answer/output used as reference for evaluation.")}
