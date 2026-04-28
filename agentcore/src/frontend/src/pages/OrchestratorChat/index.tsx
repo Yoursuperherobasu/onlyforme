@@ -4637,7 +4637,9 @@ export default function AgentOrchestrator() {
                           ? t("Waiting for human review — approve or reject to continue")
                           : isSending
                             ? t("Waiting for response...")
-                            : t("Start typing with @ to chat with an agent")
+                            : noAgentMode && messages.length > 0
+                              ? t("Continue chatting with the selected model")
+                              : t("Start typing with @ to chat with an agent")
                   }
                   rows={1}
                   style={{ maxHeight: TEXTAREA_MAX_HEIGHT }}
