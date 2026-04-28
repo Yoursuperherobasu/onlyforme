@@ -2050,8 +2050,12 @@ async def _move_user_to_department(
         raise HTTPException(status_code=400, detail="Invalid target department.")
 
     target_role = normalize_role(target_user.role)
-    if target_role in {"root", "super_admin", "department_admin"}:
-        raise HTTPException(status_code=400, detail="Department change is not supported for admin users.")
+    # Root and super-admin are org-/system-scoped, not department-scoped, so a
+    # plain department-change makes no sense for them. department_admin can
+    # move — but only when they have no users under them and no published
+    # agents (the caller in patch_user enforces those preconditions).
+    if target_role in {"root", "super_admin"}:
+        raise HTTPException(status_code=400, detail="Department change is not supported for root or super admin users.")
 
     target_role_entity = await _get_role_entity(session, target_role)
 
@@ -2216,6 +2220,19 @@ async def patch_user(
         else:
             department_change_requested = False
         if department_change_requested and normalize_role(user.role) in {"root", "super_admin"}:
+            # Block the move if the user being moved is a dept admin who
+            # still has subordinates — otherwise the old department is left
+            # without an admin and the moved admin becomes "rootless" in the
+            # new dept while still owning users in the old one.
+            if await _target_has_managed_users(session, user_db):
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        "This user still has users under them and cannot be "
+                        "moved to a different department. Reassign or remove "
+                        "those users first."
+                    ),
+                )
             published_uat_count, published_prod_count = await _published_deployment_counts_for_user(
                 session,
                 user_id=user_db.id,

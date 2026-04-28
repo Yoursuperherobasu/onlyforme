@@ -110,11 +110,10 @@ const KnowledgeBasesTab = ({
     .toLowerCase()
     .replace(/\s+/g, "_");
   const canAddKnowledge = permissions?.includes("add_new_knowledge") ?? false;
-  // Match the Projects page: admins see who created each row.
-  const showCreatedBy =
-    normalizedRole === "department_admin" ||
-    normalizedRole === "super_admin" ||
-    normalizedRole === "root";
+  // Show creator / modifier on every KB row regardless of role. Email is
+  // still gated by role on the backend (devs / business users only see the
+  // display name in the cell, and the email tooltip is empty for them).
+  const showCreatedBy = true;
   const showDepartment = normalizedRole === "super_admin";
   const canMultiDept = normalizedRole === "super_admin" || normalizedRole === "root";
   const userDeptId = userData?.department_id ?? null;
