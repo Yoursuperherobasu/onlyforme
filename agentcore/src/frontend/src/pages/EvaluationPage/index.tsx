@@ -251,6 +251,31 @@ export default function EvaluationPage() {
     saved_evaluator_id: "",
     model_registry_id: "",
   });
+
+  const filteredModels = useMemo(() => {
+    if (!Array.isArray(registryModels)) return [];
+    return registryModels.filter((model) => {
+      if (!model) return false;
+      if (
+        model.id === judgeForm.model_registry_id ||
+        model.id === datasetExperimentForm.generation_model_registry_id ||
+        model.id === datasetExperimentForm.judge_model_registry_id
+      ) {
+        return true;
+      }
+      const showIn = (model as any).show_in;
+      if (!showIn) return true;
+      if (Array.isArray(showIn)) return showIn.includes("agent");
+      if (typeof showIn === "string") return showIn.includes("agent");
+      return true;
+    });
+  }, [
+    registryModels,
+    judgeForm.model_registry_id,
+    datasetExperimentForm.generation_model_registry_id,
+    datasetExperimentForm.judge_model_registry_id,
+  ]);
+
   const toVisibilityScope = useCallback(
     (visibility?: "private" | "public", publicScope?: string) => {
       if (visibility !== "public") return "private" as const;
@@ -1912,7 +1937,7 @@ export default function EvaluationPage() {
                 <Select
                   value={datasetExperimentForm.generation_model_registry_id || ""}
                   onValueChange={(val) => {
-                    const selected = registryModels.find((m) => m.id === val);
+                    const selected = filteredModels.find((m) => m.id === val);
                     setDatasetExperimentForm({
                       ...datasetExperimentForm,
                       generation_model_registry_id: val,
@@ -1924,14 +1949,14 @@ export default function EvaluationPage() {
                     <SelectValue placeholder={t("Select from registry")} />
                   </SelectTrigger>
                   <SelectContent>
-                    {registryModels.map((m) => (
+                    {filteredModels.map((m) => (
                       <SelectItem key={m.id} value={m.id}>
                         {m.display_name} ({m.provider}/{m.model_name})
                       </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
-                {registryModels.length === 0 && (
+                {filteredModels.length === 0 && (
                   <p className="text-xs text-amber-600">
                     {t("No models available. Add models in the Model Registry first.")}
                   </p>
@@ -2038,7 +2063,7 @@ export default function EvaluationPage() {
               <Select
                 value={datasetExperimentForm.judge_model_registry_id || ""}
                 onValueChange={(val) => {
-                  const selected = registryModels.find((m) => m.id === val);
+                  const selected = filteredModels.find((m) => m.id === val);
                   setDatasetExperimentForm({
                     ...datasetExperimentForm,
                     judge_model_registry_id: val,
@@ -2050,7 +2075,7 @@ export default function EvaluationPage() {
                   <SelectValue placeholder={t("Select from registry")} />
                 </SelectTrigger>
                 <SelectContent>
-                  {registryModels.map((m) => (
+                  {filteredModels.map((m) => (
                     <SelectItem key={m.id} value={m.id}>
                       {m.display_name} ({m.provider}/{m.model_name})
                     </SelectItem>
@@ -2571,7 +2596,7 @@ export default function EvaluationPage() {
               <Select
                 value={judgeForm.model_registry_id || ""}
                 onValueChange={(val) => {
-                  const selected = registryModels.find((m) => m.id === val);
+                  const selected = filteredModels.find((m) => m.id === val);
                   setJudgeForm({
                     ...judgeForm,
                     model_registry_id: val,
@@ -2583,14 +2608,14 @@ export default function EvaluationPage() {
                   <SelectValue placeholder={t("Select a model from registry")} />
                 </SelectTrigger>
                 <SelectContent>
-                  {registryModels.map((m) => (
+                  {filteredModels.map((m) => (
                     <SelectItem key={m.id} value={m.id}>
                       {m.display_name} ({m.provider}/{m.model_name})
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
-              {registryModels.length === 0 && (
+              {filteredModels.length === 0 && (
                 <p className="text-xs text-amber-600">
                   {t("No models available. Add models in the Model Registry first.")}
                 </p>

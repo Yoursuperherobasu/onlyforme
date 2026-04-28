@@ -109,6 +109,19 @@ export default function EditGuardrailModal({
       active_only: false,
     });
 
+  const filteredModels = useMemo(() => {
+    if (!Array.isArray(registryModels)) return [];
+    return registryModels.filter((model) => {
+      if (!model) return false;
+      if (guardrail?.modelRegistryId && model.id === guardrail.modelRegistryId) return true;
+      const showIn = (model as any).show_in;
+      if (!showIn) return true;
+      if (Array.isArray(showIn)) return showIn.includes("agent");
+      if (typeof showIn === "string") return showIn.includes("agent");
+      return true;
+    });
+  }, [registryModels, guardrail?.modelRegistryId]);
+
   const setSuccessData = useAlertStore((state) => state.setSuccessData);
   const setErrorData = useAlertStore((state) => state.setErrorData);
 
@@ -202,9 +215,9 @@ export default function EditGuardrailModal({
   );
 
   const defaultModelId = useMemo(() => {
-    const activeModel = registryModels.find((model) => model.is_active);
-    return (activeModel ?? registryModels[0])?.id ?? "";
-  }, [registryModels]);
+    const activeModel = filteredModels.find((model) => model.is_active);
+    return (activeModel ?? filteredModels[0])?.id ?? "";
+  }, [filteredModels]);
 
   useEffect(() => {
     if (!open) return;
@@ -251,7 +264,7 @@ export default function EditGuardrailModal({
     }
 
     // For new guardrails, default to first active model
-    if (registryModels.length > 0) {
+    if (filteredModels.length > 0) {
       setName("");
       setDescription("");
       setModelRegistryId(defaultModelId);
@@ -264,7 +277,7 @@ export default function EditGuardrailModal({
       setPreservedFiles(undefined);
       setSelectedTemplateId("");
     }
-  }, [guardrail, open, registryModels, defaultModelId]);
+  }, [guardrail, open, filteredModels, defaultModelId]);
 
   useEffect(() => {
     if (!open) return;
@@ -571,10 +584,10 @@ export default function EditGuardrailModal({
                 required
                 value={modelRegistryId}
                 onChange={(event) => setModelRegistryId(event.target.value)}
-                disabled={readOnly || isModelsLoading || registryModels.length === 0}
+                disabled={readOnly || isModelsLoading || filteredModels.length === 0}
                 className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
               >
-                {registryModels.length === 0 ? (
+                {filteredModels.length === 0 ? (
                   <option value="">
                     {isModelsLoading
                       ? t("Loading models...")
@@ -585,7 +598,7 @@ export default function EditGuardrailModal({
                     <option value="" disabled>
                       {t("Select a model")}
                     </option>
-                    {registryModels.map((option) => (
+                    {filteredModels.map((option) => (
                       <option key={option.id} value={option.id}>
                         {option.display_name} ({option.provider}/
                         {option.model_name}){option.is_active ? "" : " [inactive]"}
