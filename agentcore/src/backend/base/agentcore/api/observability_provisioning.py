@@ -6,6 +6,7 @@ from typing import Annotated
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException
+from loguru import logger
 from pydantic import BaseModel
 from sqlmodel import select
 
@@ -90,7 +91,7 @@ class ScopeOptionsResponse(BaseModel):
 
 
 class BindingReconciliationItem(BaseModel):
-    binding_id: UUID
+    binding_id: UUID | None = None
     org_id: UUID
     dept_id: UUID | None = None
     scope_type: str
@@ -423,6 +424,7 @@ async def reconcile_observability_bindings(
     session: DbSession,
     current_user: Annotated[User, Depends(get_current_active_user)],
     org_id: UUID | None = None,
+    heal: bool = False,
 ) -> ReconciliationResponse:
     role = _require_provisioning_admin(current_user)
     stmt = select(LangfuseBinding).where(LangfuseBinding.is_active.is_(True))
@@ -437,41 +439,173 @@ async def reconcile_observability_bindings(
         stmt = stmt.where(LangfuseBinding.org_id.in_(list(org_ids)))
 
     bindings = list((await session.exec(stmt.order_by(LangfuseBinding.created_at.asc()))).all())
-    if not bindings:
-        return ReconciliationResponse(total=0, healthy=0, drifted=0, failed=0, items=[])
-
     service = get_langfuse_provisioning_service()
-    try:
-        raw_results = await asyncio.to_thread(service.reconcile_bindings, bindings)
-    except LangfuseProvisioningError as exc:
-        raise HTTPException(status_code=500, detail=f"Reconciliation failed: {exc}") from exc
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Reconciliation failed: {exc}") from exc
 
-    binding_by_id = {str(binding.id): binding for binding in bindings}
     items: list[BindingReconciliationItem] = []
     healthy = 0
     drifted = 0
     failed = 0
 
-    for result in raw_results:
-        binding = binding_by_id.get(result.binding_id)
-        if not binding:
-            continue
-        if result.status == "healthy":
-            healthy += 1
-        elif result.status == "drift":
-            drifted += 1
+    if bindings:
+        try:
+            raw_results = await asyncio.to_thread(service.reconcile_bindings, bindings)
+        except LangfuseProvisioningError as exc:
+            raise HTTPException(status_code=500, detail=f"Reconciliation failed: {exc}") from exc
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"Reconciliation failed: {exc}") from exc
+
+        binding_by_id = {str(binding.id): binding for binding in bindings}
+        for result in raw_results:
+            binding = binding_by_id.get(result.binding_id)
+            if not binding:
+                continue
+            if result.status == "healthy":
+                healthy += 1
+            elif result.status == "drift":
+                drifted += 1
+            else:
+                failed += 1
+            items.append(
+                BindingReconciliationItem(
+                    binding_id=binding.id,
+                    org_id=binding.org_id,
+                    dept_id=binding.dept_id,
+                    scope_type=binding.scope_type,
+                    status=result.status,
+                    issues=list(result.issues or []),
+                )
+            )
+
+    # ---- Detect AgentCore orgs/depts that have no active binding at all. ----
+    # The drift checks above only validate existing bindings against Langfuse;
+    # they cannot catch the case where an Organization or Department was created
+    # in AgentCore (e.g. by an older code path or a manual DB insert) but the
+    # corresponding Langfuse provisioning was never run. Surface those as
+    # `binding_missing` drift items so operators can spot — and optionally heal
+    # — the gap.
+    org_query = select(Organization).where(Organization.status == "active")
+    if org_id is not None:
+        org_query = org_query.where(Organization.id == org_id)
+    elif role == "super_admin":
+        scoped_org_ids = await _admin_org_ids_for_user(session, current_user)
+        if scoped_org_ids:
+            org_query = org_query.where(Organization.id.in_(list(scoped_org_ids)))
         else:
-            failed += 1
+            org_query = org_query.where(Organization.id.is_(None))  # empty
+    active_orgs = list((await session.exec(org_query)).all())
+
+    org_admin_bound_org_ids = {
+        binding.org_id
+        for binding in bindings
+        if binding.scope_type == "org_admin" and binding.is_active
+    }
+    # Always re-query bindings for this scope (the `bindings` list above may
+    # have been narrowed by org_id) so we don't double-flag.
+    full_org_admin_stmt = select(LangfuseBinding.org_id).where(
+        LangfuseBinding.is_active.is_(True),
+        LangfuseBinding.scope_type == "org_admin",
+    )
+    org_admin_bound_org_ids.update(
+        (await session.exec(full_org_admin_stmt)).all()
+    )
+
+    dept_query = select(Department).where(Department.status == "active")
+    if org_id is not None:
+        dept_query = dept_query.where(Department.org_id == org_id)
+    elif role == "super_admin":
+        scoped_org_ids = await _admin_org_ids_for_user(session, current_user)
+        if scoped_org_ids:
+            dept_query = dept_query.where(Department.org_id.in_(list(scoped_org_ids)))
+        else:
+            dept_query = dept_query.where(Department.id.is_(None))  # empty
+    active_depts = list((await session.exec(dept_query)).all())
+
+    dept_bound_ids = {
+        binding.dept_id
+        for binding in bindings
+        if binding.scope_type == "department" and binding.is_active and binding.dept_id
+    }
+    full_dept_stmt = select(LangfuseBinding.dept_id).where(
+        LangfuseBinding.is_active.is_(True),
+        LangfuseBinding.scope_type == "department",
+    )
+    dept_bound_ids.update(
+        d for d in (await session.exec(full_dept_stmt)).all() if d is not None
+    )
+
+    missing_orgs = [org for org in active_orgs if org.id not in org_admin_bound_org_ids]
+    missing_depts = [dept for dept in active_depts if dept.id not in dept_bound_ids]
+
+    healed_org_ids: set[UUID] = set()
+    healed_dept_ids: set[UUID] = set()
+    if heal and (missing_orgs or missing_depts):
+        for org in missing_orgs:
+            try:
+                await service.provision_org_admin_project(
+                    session,
+                    org=org,
+                    actor=current_user,
+                )
+                healed_org_ids.add(org.id)
+            except LangfuseProvisioningError as exc:
+                logger.warning(
+                    "Heal failed for org_id={}: {}", org.id, exc,
+                )
+        for dept in missing_depts:
+            org = await session.get(Organization, dept.org_id)
+            if not org:
+                continue
+            try:
+                await service.provision_department_project(
+                    session,
+                    org=org,
+                    department=dept,
+                    actor=current_user,
+                )
+                healed_dept_ids.add(dept.id)
+            except LangfuseProvisioningError as exc:
+                logger.warning(
+                    "Heal failed for dept_id={}: {}", dept.id, exc,
+                )
+        await session.commit()
+
+    for org in missing_orgs:
+        if org.id in healed_org_ids:
+            healthy += 1
+            status = "healthy"
+            issues = ["binding_missing", "healed"]
+        else:
+            drifted += 1
+            status = "drift"
+            issues = ["binding_missing"]
         items.append(
             BindingReconciliationItem(
-                binding_id=binding.id,
-                org_id=binding.org_id,
-                dept_id=binding.dept_id,
-                scope_type=binding.scope_type,
-                status=result.status,
-                issues=list(result.issues or []),
+                binding_id=None,
+                org_id=org.id,
+                dept_id=None,
+                scope_type="org_admin",
+                status=status,
+                issues=issues,
+            )
+        )
+
+    for dept in missing_depts:
+        if dept.id in healed_dept_ids:
+            healthy += 1
+            status = "healthy"
+            issues = ["binding_missing", "healed"]
+        else:
+            drifted += 1
+            status = "drift"
+            issues = ["binding_missing"]
+        items.append(
+            BindingReconciliationItem(
+                binding_id=None,
+                org_id=dept.org_id,
+                dept_id=dept.id,
+                scope_type="department",
+                status=status,
+                issues=issues,
             )
         )
 

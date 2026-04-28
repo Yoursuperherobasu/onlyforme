@@ -4,7 +4,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Bot, Search, ChevronRight } from "lucide-react";
+import { Bot, ChevronRight } from "lucide-react";
 import { THEME } from "../theme";
 import { formatCost, formatTokens } from "../utils";
 import type { AgentsResponse } from "../types";
@@ -48,9 +48,8 @@ export function AgentsTab({ agentsData, agentsLoading, agentsFetching, fetchAllM
                 </CardTitle>
                 <CardDescription className="text-muted-foreground">Your AI agents with usage metrics</CardDescription>
               </div>
-              <div className="relative">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                <Input placeholder="Search agents..." value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9 h-9 w-64 bg-muted/50 border-border" />
+              <div className="w-64">
+                <Input icon="Search" placeholder="Search agents..." value={search} onChange={(e) => setSearch(e.target.value)} inputClassName="h-9 bg-muted/50 border-border" />
               </div>
             </div>
           </CardHeader>

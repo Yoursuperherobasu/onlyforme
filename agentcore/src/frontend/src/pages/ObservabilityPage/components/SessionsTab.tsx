@@ -4,7 +4,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Clock, Search, ChevronRight, XCircle } from "lucide-react";
+import { Clock, ChevronRight, XCircle } from "lucide-react";
 import { THEME } from "../theme";
 import { formatCost, formatTokens, formatLatency } from "../utils";
 import type { SessionsResponse } from "../types";
@@ -51,9 +51,8 @@ export function SessionsTab({ sessionsData, sessionsLoading, sessionsFetching, f
                 </CardTitle>
                 <CardDescription className="text-muted-foreground">Your chat sessions with metrics</CardDescription>
               </div>
-              <div className="relative">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                <Input placeholder="Search sessions..." value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9 h-9 w-64 bg-muted/50 border-border" />
+              <div className="w-64">
+                <Input icon="Search" placeholder="Search sessions..." value={search} onChange={(e) => setSearch(e.target.value)} inputClassName="h-9 bg-muted/50 border-border" />
               </div>
             </div>
           </CardHeader>

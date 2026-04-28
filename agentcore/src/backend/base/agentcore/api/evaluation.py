@@ -53,6 +53,7 @@ from agentcore.services.database.models.user_department_membership.model import 
 from agentcore.services.database.models.user_organization_membership.model import UserOrganizationMembership
 from agentcore.api.utils import DbSession
 from agentcore.api.observability import fetch_traces_from_langfuse, fetch_scores_for_trace
+from agentcore.api.observability.parsing import extract_trace_user_ids
 from agentcore.services.observability.rbac import resolve_observability_scope
 from agentcore.services.database.models.dataset.model import Dataset
 from agentcore.services.database.models.dataset_item.model import DatasetItem
@@ -238,10 +239,31 @@ async def _get_scoped_langfuse_for_evaluation(
     org_id: UUID | None = None,
     dept_id: UUID | None = None,
 ) -> tuple[set[str], Any]:
-    """Resolve allowed_user_ids and langfuse client for evaluation endpoints.
+    """Resolve allowed_user_ids and a single langfuse client for evaluation.
 
     Returns (allowed_user_ids, langfuse_client). Falls back to env-var client
-    when no bindings are configured.
+    when no bindings are configured. For super_admin the first binding is
+    the org_admin binding (see resolve_observability_scope ordering), so
+    write paths that need "one client for this user" land on the right
+    project.
+    """
+    allowed_user_ids, clients = await _get_scoped_langfuse_clients_for_evaluation(
+        session, current_user, org_id=org_id, dept_id=dept_id,
+    )
+    return allowed_user_ids, (clients[0] if clients else None)
+
+
+async def _get_scoped_langfuse_clients_for_evaluation(
+    session,
+    current_user,
+    org_id: UUID | None = None,
+    dept_id: UUID | None = None,
+) -> tuple[set[str], list[Any]]:
+    """Resolve allowed_user_ids and ALL scoped langfuse clients for evaluation.
+
+    Use this for read paths (list scores, pending reviews) so super_admin's
+    reads cover both the org_admin project (where super_admin's own traces
+    and scores live) and every department project in their org.
     """
     from agentcore.api.observability import get_langfuse_client, _get_langfuse_client_for_binding
 
@@ -255,24 +277,24 @@ async def _get_scoped_langfuse_for_evaluation(
         )
         allowed_user_ids = scope.allowed_user_ids
 
-        # Try to get a client from bindings first, fall back to env-var client
-        lf_client = None
+        clients: list[Any] = []
         for binding in scope.bindings:
             try:
                 lf_client = _get_langfuse_client_for_binding(binding)
                 if lf_client:
-                    break
+                    clients.append(lf_client)
             except Exception:
                 continue
 
-        if not lf_client:
-            lf_client = get_langfuse_client()
+        if not clients:
+            env_client = get_langfuse_client()
+            if env_client:
+                clients.append(env_client)
 
-        return allowed_user_ids, lf_client
+        return allowed_user_ids, clients
     except Exception:
-        # Fall back to single-user scope with env-var client
-        lf_client = get_langfuse_client()
-        return {str(current_user.id)}, lf_client
+        env_client = get_langfuse_client()
+        return {str(current_user.id)}, ([env_client] if env_client else [])
 
 
 # =============================================================================
@@ -627,13 +649,19 @@ def parse_trace_data(trace) -> Dict[str, Any]:
 
     top_level_user_id = get_attr(trace, 'user_id', 'userId', 'sender', 'user')
     metadata_user_id = None
+    metadata_user_uuid = None
     if isinstance(metadata, dict):
+        # Prefer the explicit app-user UUID (written by the tracer as
+        # metadata.user_uuid) over the displayable user_id/userId, which is
+        # now a username string after the langfuse username-display change.
+        metadata_user_uuid = metadata.get("user_uuid")
         metadata_user_id = (
-            metadata.get("user_id")
-            or metadata.get("userId")
+            metadata_user_uuid
             or metadata.get("app_user_id")
             or metadata.get("created_by_user_id")
             or metadata.get("owner_user_id")
+            or metadata.get("user_id")
+            or metadata.get("userId")
         )
 
     top_level_session_id = get_attr(trace, 'session_id', 'sessionId')
@@ -648,7 +676,11 @@ def parse_trace_data(trace) -> Dict[str, Any]:
         "input": get_attr(trace, 'input', 'inputs', 'input_data', 'generation', 'query'),
         "output": get_attr(trace, 'output', 'outputs', 'generation', 'text_output', 'response'),
         "session_id": top_level_session_id or metadata_session_id,
-        "user_id": top_level_user_id or metadata_user_id,
+        # Prefer the app-user UUID (metadata) over the top-level user_id,
+        # which after the langfuse username-display change is a username
+        # string. Downstream consumers expect UUIDs here.
+        "user_id": metadata_user_id or top_level_user_id,
+        "user_uuid": metadata_user_uuid,
         "metadata": metadata,
         "tags": get_attr(trace, 'tags', 'labels'),
     }
@@ -2997,11 +3029,13 @@ async def _resolve_trace_for_judge(
         if fetched_trace:
             trace_dict = parse_trace_data(fetched_trace)
             fetched_id = str(trace_dict.get("id") or trace_id)
-            fetched_user_id = str(trace_dict.get("user_id") or "")
-            if not fetched_user_id or fetched_user_id == str(user_id):
+            # Langfuse's trace.user_id is now a username string; the app UUID
+            # lives in metadata.user_uuid. extract_trace_user_ids reads both.
+            trace_user_ids = extract_trace_user_ids(fetched_trace)
+            if not trace_user_ids or str(user_id) in trace_user_ids:
                 return fetched_id, trace_dict
             logger.warning(
-                f"Resolved trace {fetched_id} belongs to different user_id={fetched_user_id}; expected={user_id}"
+                f"Resolved trace {fetched_id} belongs to different user; expected={user_id}, got={trace_user_ids}"
             )
 
         # Step 2: fallback lookup by context among user traces.
@@ -3835,17 +3869,25 @@ async def get_scores(
     List evaluation scores visible to the current user (scope-aware).
     Uses allowed_user_ids from RBAC scope resolution.
     """
-    # Resolve scope-aware langfuse client and allowed user IDs
-    allowed_user_ids, client = await _get_scoped_langfuse_for_evaluation(
+    # Resolve scope-aware langfuse clients and allowed user IDs. Super_admin
+    # has both the org_admin project (where their own scores live) and every
+    # department project in their org in scope, so we query all of them and
+    # merge results.
+    allowed_user_ids, clients = await _get_scoped_langfuse_clients_for_evaluation(
         session, current_user, org_id=org_id, dept_id=dept_id
     )
-    if not client:
-        client = get_langfuse_client()
-    if not client:
+    if not clients:
+        env_client = get_langfuse_client()
+        if env_client:
+            clients = [env_client]
+    if not clients:
         raise HTTPException(status_code=503, detail="Langfuse not configured.")
+    # Preserve `client` for back-compat with code paths below that may still
+    # reference a single client (e.g. logging).
+    client = clients[0]
     logger.info(
         f"get_scores: user={current_user.id}, env={environment}, page={page}, limit={limit}, "
-        f"has_client_scores={hasattr(client, 'client') and hasattr(getattr(client, 'client', None) or object(), 'scores')}"
+        f"num_clients={len(clients)}"
     )
 
     try:
@@ -3899,12 +3941,13 @@ async def get_scores(
                 total_items = len(rows)
             return rows, total_items
 
-        def _list_scores_page(page_num: int, page_limit: int, *, include_user_filter: bool) -> tuple[list[Any], int | None]:
-            if not (hasattr(client, "client") and hasattr(client.client, "scores")):
-                logger.warning("Langfuse client does not have client.scores attribute — trying alternative methods")
+        def _list_scores_page_for_client(
+            lf_client: Any, page_num: int, page_limit: int, *, include_user_filter: bool,
+        ) -> tuple[list[Any], int | None]:
+            if not (hasattr(lf_client, "client") and hasattr(lf_client.client, "scores")):
                 # Try alternative score list methods
-                if hasattr(client, "api"):
-                    api_obj = client.api
+                if hasattr(lf_client, "api"):
+                    api_obj = lf_client.api
                     for attr in ("score_v_2", "scores", "score"):
                         score_api = getattr(api_obj, attr, None)
                         if score_api and hasattr(score_api, "get"):
@@ -3914,7 +3957,6 @@ async def get_scores(
                                     kwargs["trace_id"] = trace_id
                                 response = score_api.get(**kwargs)
                                 rows, total = _extract_scores_payload(response)
-                                logger.info(f"Score list via api.{attr}.get() returned {len(rows)} rows")
                                 return rows, total
                             except Exception as e:
                                 logger.debug(f"api.{attr}.get() failed: {e}")
@@ -3926,7 +3968,6 @@ async def get_scores(
                                     kwargs["trace_id"] = trace_id
                                 response = score_api.list(**kwargs)
                                 rows, total = _extract_scores_payload(response)
-                                logger.info(f"Score list via api.{attr}.list() returned {len(rows)} rows")
                                 return rows, total
                             except Exception as e:
                                 logger.debug(f"api.{attr}.list() failed: {e}")
@@ -3945,13 +3986,40 @@ async def get_scores(
                 kwargs["user_id"] = user_id
 
             try:
-                response = client.client.scores.list(**kwargs)
+                response = lf_client.client.scores.list(**kwargs)
             except TypeError:
                 kwargs.pop("user_id", None)
-                response = client.client.scores.list(**kwargs)
+                response = lf_client.client.scores.list(**kwargs)
             rows, total = _extract_scores_payload(response)
-            logger.info(f"Score list via client.client.scores.list(user_filter={include_user_filter}) returned {len(rows)} rows, total={total}")
             return rows, total
+
+        def _list_scores_page(page_num: int, page_limit: int, *, include_user_filter: bool) -> tuple[list[Any], int | None]:
+            """Fetch the same page from every scoped client and merge by score id."""
+            merged: dict[str, Any] = {}
+            ordered: list[Any] = []
+            total_across: int = 0
+            for lf_client in clients:
+                try:
+                    rows, subtotal = _list_scores_page_for_client(
+                        lf_client, page_num, page_limit, include_user_filter=include_user_filter,
+                    )
+                except Exception as e:
+                    logger.debug(f"Score list per-client fetch failed: {e}")
+                    continue
+                for row in rows:
+                    sid = str(get_attr(row, "id", default="") or "")
+                    key = sid or f"{get_attr(row, 'trace_id', 'traceId', default='')}::{get_attr(row, 'name', default='')}::{get_attr(row, 'created_at', 'createdAt', 'timestamp', default='')}"
+                    if key in merged:
+                        continue
+                    merged[key] = row
+                    ordered.append(row)
+                if subtotal is not None:
+                    total_across += int(subtotal)
+            logger.info(
+                f"Score list merged across {len(clients)} client(s) (user_filter={include_user_filter}) "
+                f"returned {len(ordered)} rows, total_across={total_across}"
+            )
+            return ordered, (total_across or None)
 
         def _score_matches_name(score_row: Any) -> bool:
             if not name:
@@ -4204,24 +4272,29 @@ async def get_pending_reviews(
                 logger.warning("fetch_traces_from_langfuse failed for user_id={}: {}", uid, str(e))
         logger.info(f"Fetched {len(traces_data)} traces for {len(allowed_user_ids)} allowed user(s) (limit={fetch_limit})")
 
-        # Fetch all scores for these traces
+        # Fetch scores and count per trace. Langfuse's score.user_id mirrors
+        # trace.user_id (now a username string, not the app UUID), so scoping
+        # by user_id on the server side is unreliable. Instead fetch scores
+        # once and filter to the trace ids we already resolved.
         score_counts = defaultdict(int)
-        if hasattr(client, 'client') and hasattr(client.client, 'scores'):
-            # Fetch scores for all allowed users
-            for uid in allowed_user_ids:
-                try:
-                    scores_response = client.client.scores.list(user_id=uid, limit=1000)
-                    uid_scores = []
-                    if hasattr(scores_response, 'data'):
-                        uid_scores = scores_response.data
-                    elif isinstance(scores_response, list):
-                        uid_scores = scores_response
-                    for score in uid_scores:
-                        s_trace_id = get_attr(score, 'trace_id', 'traceId')
-                        if s_trace_id:
-                            score_counts[s_trace_id] += 1
-                except Exception:
-                    continue
+        scoped_trace_ids: set[str] = {
+            str(parse_trace_data(t).get('id') or '') for t in traces_data
+        }
+        scoped_trace_ids.discard('')
+        if scoped_trace_ids and hasattr(client, 'client') and hasattr(client.client, 'scores'):
+            try:
+                scores_response = client.client.scores.list(limit=1000)
+                all_scores = []
+                if hasattr(scores_response, 'data'):
+                    all_scores = scores_response.data
+                elif isinstance(scores_response, list):
+                    all_scores = scores_response
+                for score in all_scores:
+                    s_trace_id = get_attr(score, 'trace_id', 'traceId')
+                    if s_trace_id and str(s_trace_id) in scoped_trace_ids:
+                        score_counts[s_trace_id] += 1
+            except Exception:
+                pass
 
         # Get agent names from database for better context
         agent_query = select(agent).where(agent.user_id == current_user.id)
@@ -4259,9 +4332,19 @@ async def get_pending_reviews(
             if session_id and str(trace_dict.get('session_id') or '').lower().find(session_id.lower()) < 0:
                 continue
 
-            # filter by user id
-            if user_id_filter and str(trace_dict.get('user_id') or '').lower().find(user_id_filter.lower()) < 0:
-                continue
+            # filter by user id — match against the UUID, the user_uuid
+            # metadata, or the display username from the original trace.
+            if user_id_filter:
+                filter_l = user_id_filter.lower()
+                candidates = [
+                    str(trace_dict.get('user_id') or ''),
+                    str(trace_dict.get('user_uuid') or ''),
+                ]
+                tmeta = trace_dict.get('metadata')
+                if isinstance(tmeta, dict):
+                    candidates.append(str(tmeta.get('user_id') or ''))
+                if not any(filter_l in c.lower() for c in candidates if c):
+                    continue
 
             # filter by timestamp range if provided (ISO format)
             if ts_from or ts_to:

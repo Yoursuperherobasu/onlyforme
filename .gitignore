@@ -66,6 +66,7 @@ typings/
 # dotenv environment variables file
 .env
 .env.test
+.old.env
 
 # parcel-bundler cache (https://parceljs.org/)
 .cache
@@ -232,3 +233,13 @@ scripts/compare_keyvault_secrets.py
 docs
 agentcore/src/services/guardrails-service/E2E_TEST_REPORT.md
 agentcore/src/services/guardrails-service/PII_MASKING_TEST_REPORT.md
+
+.claude
+AGENTS.md
+CLAUDE.md
+GEMINI.md
+.windsurfrules
+.gitignore
+.mcp.json
+.opencode.json
+.cursorrules

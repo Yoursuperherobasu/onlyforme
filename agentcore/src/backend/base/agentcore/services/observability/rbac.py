@@ -297,10 +297,15 @@ async def resolve_observability_scope(
         target_org_ids = {dept_to_org[d] for d in target_dept_ids if d in dept_to_org}
 
     bindings: list[LangfuseBinding] = []
-    if target_dept_ids:
-        bindings.extend(await _active_department_bindings(session, target_dept_ids))
+    # Order matters: callers that pick "the first binding" (e.g. evaluation
+    # score/read paths) need the org_admin binding first for super_admin/root,
+    # because super_admin trace writes land in the `<org>-admin-observability`
+    # project (see resolve_write_langfuse_binding). Department bindings are
+    # still included so admin reads can see per-dept data too.
     if role in {"root", "super_admin", "leader_executive"} and target_org_ids and trace_scope != "dept":
         bindings.extend(await _active_org_admin_bindings(session, target_org_ids))
+    if target_dept_ids:
+        bindings.extend(await _active_department_bindings(session, target_dept_ids))
 
     return ObservabilityScopeResolution(
         role=role,
@@ -347,13 +352,16 @@ async def resolve_write_langfuse_binding(
         if department:
             candidate_org_id = department.org_id
 
-    if candidate_dept_id is not None:
+    # Super_admin sits above the department hierarchy: their trace writes
+    # should always land in the `<org>-admin-observability` project
+    # (scope_type="org_admin"), never in a dept project, even when the
+    # agent being run is tagged with a dept_id. Skip the dept-binding
+    # branch entirely for super_admin so the fall-through below picks the
+    # org_admin binding.
+    if candidate_dept_id is not None and role != "super_admin":
         can_use_dept = False
         if role == "root":
             can_use_dept = True
-        elif role == "super_admin":
-            if candidate_org_id and candidate_org_id in org_ids:
-                can_use_dept = True
         else:
             can_use_dept = candidate_dept_id in dept_ids
 

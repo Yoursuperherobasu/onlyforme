@@ -59,11 +59,13 @@ class TraceContext:
         observability_project_id: str | None = None,
         observability_project_name: str | None = None,
         environment: str | None = None,
+        user_name: str | None = None,
     ):
         self.run_id: UUID | None = run_id
         self.run_name: str | None = run_name
         self.project_name: str | None = project_name
         self.user_id: str | None = user_id
+        self.user_name: str | None = user_name
         self.session_id: str | None = session_id
         # Observability tracking fields
         self.agent_id: str | None = agent_id
@@ -177,6 +179,7 @@ class TracingService(Service):
             project_name=trace_context.project_name,
             trace_id=trace_context.run_id,
             user_id=trace_context.user_id,
+            user_name=trace_context.user_name,
             session_id=trace_context.session_id,
             agent_id=trace_context.agent_id,
             agent_name=trace_context.agent_name,
@@ -283,6 +286,7 @@ class TracingService(Service):
         observability_project_id: str | None = None,
         observability_project_name: str | None = None,
         environment: str | None = None,
+        user_name: str | None = None,
     ) -> None:
         """Start a trace for a graph run.
 
@@ -316,6 +320,7 @@ class TracingService(Service):
                 run_name=run_name,
                 project_name=project_name,
                 user_id=user_id,
+                user_name=user_name,
                 session_id=effective_session_id,
                 agent_id=agent_id,
                 agent_name=agent_name,

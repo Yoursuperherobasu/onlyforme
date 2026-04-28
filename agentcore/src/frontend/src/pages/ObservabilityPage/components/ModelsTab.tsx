@@ -5,7 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from "recharts";
 import { SafeResponsiveContainer } from "@/components/charts/SafeResponsiveContainer";
-import { Cpu, Search, TrendingUp } from "lucide-react";
+import { Cpu, TrendingUp } from "lucide-react";
 import { THEME } from "../theme";
 import { formatCost, formatTokens, formatLatency } from "../utils";
 import type { Metrics } from "../types";
@@ -35,9 +35,8 @@ export function ModelsTab({ metrics, metricsLoading }: ModelsTabProps) {
               <Cpu className="h-5 w-5" style={{ color: THEME.chartColors[4] }} />
               Model Usage Breakdown
             </CardTitle>
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input placeholder="Search models..." value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9 h-9 w-64 bg-muted/50 border-border" />
+            <div className="w-64">
+              <Input icon="Search" placeholder="Search models..." value={search} onChange={(e) => setSearch(e.target.value)} inputClassName="h-9 bg-muted/50 border-border" />
             </div>
           </div>
         </CardHeader>

@@ -68,6 +68,7 @@ async def create_guardrail(
         published_by=data.published_by,
         published_at=data.published_at,
         environment="uat",  # New guardrails are always UAT
+        latest_version=1
     )
     session.add(row)
     await session.commit()
