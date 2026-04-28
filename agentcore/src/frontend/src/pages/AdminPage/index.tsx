@@ -1,5 +1,6 @@
 import { cloneDeep } from "lodash";
 import { useContext, useEffect, useRef, useState } from "react";
+import type { MouseEvent as ReactMouseEvent } from "react";
 import { useTranslation } from "react-i18next";
 import PaginatorComponent from "@/components/common/paginatorComponent";
 import {
@@ -49,6 +50,22 @@ import type {
   OrganizationListItem,
 } from "@/controllers/API/queries/auth";
 
+const DEFAULT_COLUMN_WIDTHS = {
+  username: 200,
+  organization: 180,
+  department: 180,
+  role: 160,
+  createdBy: 180,
+  active: 120,
+  createdAt: 140,
+  updatedAt: 140,
+  expiresAt: 140,
+  actions: 100,
+} as const;
+
+type ColumnKey = keyof typeof DEFAULT_COLUMN_WIDTHS;
+const MIN_COLUMN_WIDTH = 90;
+
 
 export default function AdminPage() {
   const { t } = useTranslation();
@@ -68,6 +85,14 @@ export default function AdminPage() {
   const [deleteDialogError, setDeleteDialogError] = useState<string[]>([]);
   const [deleteDialogChecking, setDeleteDialogChecking] = useState(false);
   const [deleteDialogDeleting, setDeleteDialogDeleting] = useState(false);
+  const [columnWidths, setColumnWidths] = useState<Record<ColumnKey, number>>({
+    ...DEFAULT_COLUMN_WIDTHS,
+  });
+  const [resizingColumn, setResizingColumn] = useState<{
+    key: ColumnKey;
+    startX: number;
+    startWidth: number;
+  } | null>(null);
 
   const [size, setPageSize] = useState(PAGINATION_SIZE);
   const [index, setPageIndex] = useState(PAGINATION_PAGE);
@@ -113,6 +138,47 @@ export default function AdminPage() {
   const [filterUserList, setFilterUserList] = useState(userList.current);
 
   const { mutate: mutateGetUsers, isPending, isIdle } = useGetUsers({});
+
+  useEffect(() => {
+    if (!resizingColumn) return;
+
+    const onMouseMove = (event: MouseEvent) => {
+      const diff = event.clientX - resizingColumn.startX;
+      const nextWidth = Math.max(
+        MIN_COLUMN_WIDTH,
+        resizingColumn.startWidth + diff,
+      );
+      setColumnWidths((prev) => ({
+        ...prev,
+        [resizingColumn.key]: nextWidth,
+      }));
+    };
+
+    const onMouseUp = () => {
+      setResizingColumn(null);
+    };
+
+    window.addEventListener("mousemove", onMouseMove);
+    window.addEventListener("mouseup", onMouseUp);
+    return () => {
+      window.removeEventListener("mousemove", onMouseMove);
+      window.removeEventListener("mouseup", onMouseUp);
+    };
+  }, [resizingColumn]);
+
+  function startColumnResize(event: ReactMouseEvent, key: ColumnKey) {
+    event.preventDefault();
+    event.stopPropagation();
+    setResizingColumn({
+      key,
+      startX: event.clientX,
+      startWidth: columnWidths[key],
+    });
+  }
+
+  function resetColumnWidths() {
+    setColumnWidths({ ...DEFAULT_COLUMN_WIDTHS });
+  }
 
   function normalizeErrorMessages(error: any): string[] {
     const detail = error?.response?.data?.detail;
@@ -609,6 +675,10 @@ export default function AdminPage() {
               </Button>
             </div>
             <div className="flex items-center gap-2">
+              <Button variant="outline" onClick={resetColumnWidths}>
+                <IconComponent name="RotateCcw" className="mr-2 h-4 w-4" />
+                {t("Reset Widths")}
+              </Button>
               <Button variant="outline" onClick={handleDownloadCSV}>
                 <IconComponent name="Download" className="mr-2 h-4 w-4" />
                 {t("Download CSV")}
@@ -828,23 +898,63 @@ export default function AdminPage() {
                 }
               >
                 <Table className={"table-fixed outline-1"}>
+                  <colgroup>
+                    <col style={{ width: columnWidths.username }} />
+                    <col style={{ width: columnWidths.organization }} />
+                    <col style={{ width: columnWidths.department }} />
+                    <col style={{ width: columnWidths.role }} />
+                    <col style={{ width: columnWidths.createdBy }} />
+                    <col style={{ width: columnWidths.active }} />
+                    <col style={{ width: columnWidths.createdAt }} />
+                    <col style={{ width: columnWidths.updatedAt }} />
+                    <col style={{ width: columnWidths.expiresAt }} />
+                    <col style={{ width: columnWidths.actions }} />
+                  </colgroup>
                   <TableHeader
                     className={
                       isPending ? "hidden" : "table-fixed bg-muted outline-1"
                     }
                   >
                     <TableRow>
-                      
-                      <TableHead className="h-10">{t("Username")}</TableHead>
-                      <TableHead className="h-10">{t("Organization")}</TableHead>
-                      <TableHead className="h-10">{t("Department")}</TableHead>
-                      <TableHead className="h-10">{t("Role")}</TableHead>
-                      <TableHead className="h-10">{t("Created By")}</TableHead>
-                      <TableHead className="h-10">{t("Active")}</TableHead>
-                      <TableHead className="h-10">{t("Created At")}</TableHead>
-                      <TableHead className="h-10">{t("Updated At")}</TableHead>
-                      <TableHead className="h-10">{t("Expires At")}</TableHead>
-                      <TableHead className="h-10 w-[100px] text-right"></TableHead>
+                      <TableHead className="relative h-10">
+                        {t("Username")}
+                        <div className="absolute right-0 top-0 h-full w-2 cursor-col-resize" onMouseDown={(event) => startColumnResize(event, "username")} />
+                      </TableHead>
+                      <TableHead className="relative h-10">
+                        {t("Organization")}
+                        <div className="absolute right-0 top-0 h-full w-2 cursor-col-resize" onMouseDown={(event) => startColumnResize(event, "organization")} />
+                      </TableHead>
+                      <TableHead className="relative h-10">
+                        {t("Department")}
+                        <div className="absolute right-0 top-0 h-full w-2 cursor-col-resize" onMouseDown={(event) => startColumnResize(event, "department")} />
+                      </TableHead>
+                      <TableHead className="relative h-10">
+                        {t("Role")}
+                        <div className="absolute right-0 top-0 h-full w-2 cursor-col-resize" onMouseDown={(event) => startColumnResize(event, "role")} />
+                      </TableHead>
+                      <TableHead className="relative h-10">
+                        {t("Created By")}
+                        <div className="absolute right-0 top-0 h-full w-2 cursor-col-resize" onMouseDown={(event) => startColumnResize(event, "createdBy")} />
+                      </TableHead>
+                      <TableHead className="relative h-10">
+                        {t("Active")}
+                        <div className="absolute right-0 top-0 h-full w-2 cursor-col-resize" onMouseDown={(event) => startColumnResize(event, "active")} />
+                      </TableHead>
+                      <TableHead className="relative h-10">
+                        {t("Created At")}
+                        <div className="absolute right-0 top-0 h-full w-2 cursor-col-resize" onMouseDown={(event) => startColumnResize(event, "createdAt")} />
+                      </TableHead>
+                      <TableHead className="relative h-10">
+                        {t("Updated At")}
+                        <div className="absolute right-0 top-0 h-full w-2 cursor-col-resize" onMouseDown={(event) => startColumnResize(event, "updatedAt")} />
+                      </TableHead>
+                      <TableHead className="relative h-10">
+                        {t("Expires At")}
+                        <div className="absolute right-0 top-0 h-full w-2 cursor-col-resize" onMouseDown={(event) => startColumnResize(event, "expiresAt")} />
+                      </TableHead>
+                      <TableHead className="relative h-10 text-right">
+                        <div className="absolute right-0 top-0 h-full w-2 cursor-col-resize" onMouseDown={(event) => startColumnResize(event, "actions")} />
+                      </TableHead>
                     </TableRow>
                   </TableHeader>
                   {!isPending && can("view_admin_page") && (

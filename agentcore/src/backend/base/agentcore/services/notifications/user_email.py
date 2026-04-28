@@ -4,20 +4,20 @@ import asyncio
 from dataclasses import dataclass
 from email.message import EmailMessage
 from html import escape
+import logging
 from pathlib import Path
 import smtplib
 import ssl
 
 
 TEMPLATES_DIR = Path(__file__).with_suffix("").parent / "templates"
+logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
 class SmtpConfig:
     host: str
     port: int
-    username: str | None
-    password: str | None
     from_email: str
     from_name: str | None
     use_tls: bool
@@ -71,8 +71,6 @@ def _load_smtp_config(settings) -> SmtpConfig:
     if not host or not port_raw or not from_email:
         raise ValueError("SMTP is not fully configured.")
 
-    username = _coalesce_setting(settings, "smtp_username", "smtp_user")
-    password = _coalesce_setting(settings, "smtp_password")
     from_name = _coalesce_setting(settings, "smtp_from_name")
     use_ssl = _coalesce_bool_setting(settings, "smtp_use_ssl", default=False)
     use_tls = _coalesce_bool_setting(settings, "smtp_use_tls", default=not use_ssl)
@@ -85,8 +83,6 @@ def _load_smtp_config(settings) -> SmtpConfig:
     return SmtpConfig(
         host=host,
         port=port_raw,
-        username=username,
-        password=password,
         from_email=from_email,
         from_name=from_name,
         use_tls=use_tls,
@@ -141,6 +137,13 @@ def _send_message_sync(
     smtp_config: SmtpConfig,
     message: EmailMessage,
 ) -> None:
+    logger.info(
+        "Sending notification email via SMTP host=%s port=%s tls=%s ssl=%s",
+        smtp_config.host,
+        smtp_config.port,
+        smtp_config.use_tls,
+        smtp_config.use_ssl,
+    )
     if smtp_config.use_ssl:
         with smtplib.SMTP_SSL(
             smtp_config.host,
@@ -148,9 +151,8 @@ def _send_message_sync(
             timeout=smtp_config.timeout_seconds,
             context=ssl.create_default_context(),
         ) as server:
-            if smtp_config.username and smtp_config.password:
-                server.login(smtp_config.username, smtp_config.password)
             server.send_message(message)
+        logger.info("Notification email sent successfully via SMTP_SSL.")
         return
 
     with smtplib.SMTP(
@@ -162,9 +164,8 @@ def _send_message_sync(
         if smtp_config.use_tls:
             server.starttls(context=ssl.create_default_context())
             server.ehlo()
-        if smtp_config.username and smtp_config.password:
-            server.login(smtp_config.username, smtp_config.password)
         server.send_message(message)
+    logger.info("Notification email sent successfully via SMTP.")
 
 
 async def send_user_notification_email(
@@ -182,11 +183,13 @@ async def send_user_notification_email(
     department_name: str | None = None,
 ) -> tuple[bool, str | None]:
     if not recipient_email:
+        logger.warning("Skipping notification email because recipient email is missing.")
         return False, "Recipient email is missing for this user."
 
     try:
         smtp_config = _load_smtp_config(settings)
     except ValueError as exc:
+        logger.warning("Skipping notification email because SMTP config is incomplete: %s", exc)
         return False, str(exc)
 
     context = {
@@ -215,4 +218,5 @@ async def send_user_notification_email(
         )
         return True, None
     except Exception as exc:  # noqa: BLE001
+        logger.exception("Failed to send notification email via SMTP: %s", exc)
         return False, str(exc)
