@@ -57,7 +57,6 @@ export default function AgentCatalogueView({
   const [ratingOpen, setRatingOpen] = useState(false);
   const [score, setScore] = useState(5);
   const [scoreInput, setScoreInput] = useState("5");
-  const [review, setReview] = useState("");
 
   const { permissions } = useContext(AuthContext);
   const navigate = useCustomNavigate();
@@ -302,7 +301,6 @@ export default function AgentCatalogueView({
     setRatingOpen(true);
     setScore(5);
     setScoreInput("5");
-    setReview("");
   };
 
   const handleRate = async () => {
@@ -311,7 +309,6 @@ export default function AgentCatalogueView({
       await rateMutation.mutateAsync({
         registry_id: selectedEntry.id,
         score,
-        review: review.trim() || undefined,
       });
       await refetchRatings();
       setSuccessData({ title: t("Rating submitted successfully") });
@@ -839,13 +836,6 @@ export default function AgentCatalogueView({
                 className="w-full rounded-md border bg-card px-3 py-2"
               />
             </div>
-            <textarea
-              value={review}
-              onChange={(e) => setReview(e.target.value)}
-              className="w-full rounded-md border bg-card px-3 py-2"
-              placeholder={t("Write a short review (optional)")}
-            />
-
             <div className="rounded-md border bg-muted/30 p-3">
               <p className="text-xs text-muted-foreground">
                 {t("Average:")}{" "}
