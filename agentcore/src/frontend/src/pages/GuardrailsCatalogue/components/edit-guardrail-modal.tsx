@@ -105,6 +105,7 @@ export default function EditGuardrailModal({
 
   const { data: registryModels = [], isLoading: isModelsLoading } =
     useGetRegistryModels({
+      model_type: "llm",
       active_only: false,
     });
 
