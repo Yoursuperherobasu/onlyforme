@@ -4838,15 +4838,27 @@ async def delete_dataset(
 
 async def _get_dataset_with_access(db, dataset_name: str, current_user) -> Dataset:
     """Lookup dataset by name with RBAC check. Raises 404 if not found."""
-    dataset = (await db.exec(
+    datasets = (await db.exec(
         select(Dataset).where(Dataset.name == dataset_name)
-    )).first()
-    if not dataset:
+    )).all()
+    if not datasets:
         raise HTTPException(status_code=404, detail=f"Dataset '{dataset_name}' not found")
+    
     org_ids, dept_pairs = await _get_eval_scope_memberships(db, current_user.id)
-    if not _can_access_dataset(dataset, current_user, org_ids, dept_pairs):
+    
+    accessible_datasets = [
+        d for d in datasets 
+        if _can_access_dataset(d, current_user, org_ids, dept_pairs)
+    ]
+    
+    if not accessible_datasets:
         raise HTTPException(status_code=404, detail=f"Dataset '{dataset_name}' not found")
-    return dataset
+        
+    for d in accessible_datasets:
+        if d.user_id == current_user.id:
+            return d
+            
+    return accessible_datasets[0]
 
 
 @router.get("/datasets/{dataset_name}/items")
