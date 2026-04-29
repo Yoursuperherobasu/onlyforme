@@ -152,6 +152,13 @@ def _send_message_sync(
             context=ssl.create_default_context(),
         ) as server:
             server.send_message(message)
+
+
+
+
+
+
+            
         logger.info("Notification email sent successfully via SMTP_SSL.")
         return
 

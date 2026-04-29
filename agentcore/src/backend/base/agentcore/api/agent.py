@@ -25,6 +25,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from agentcore.api.utils import (
     CurrentActiveUser,
     DbSession,
+    cascade_delete_agent,
     remove_api_keys,
     strip_sensitive_values_from_agent_data,
 )
@@ -40,7 +41,6 @@ from agentcore.services.database.models.agent.model import (
     AgentHeader,
     AgentRead,
     AgentUpdate,
-    LifecycleStatusEnum,
 )
 from agentcore.services.database.models.agent_deployment_prod.model import (
     AgentDeploymentProd,
@@ -741,15 +741,11 @@ async def delete_agent(
             status_code=409,
             detail=f"This agent is published in {env_label} and cannot be deleted.",
         )
-    if agent.deleted_at is None:
-        agent.deleted_at = datetime.now(timezone.utc)
-        agent.lifecycle_status = LifecycleStatusEnum.ARCHIVED
-        session.add(agent)
+    # Semantic search: delete embedding (fire-and-forget)
+    from agentcore.services.semantic_search import delete_entity_embedding
 
-        # Semantic search: delete embedding (fire-and-forget)
-        from agentcore.services.semantic_search import delete_entity_embedding
-
-        asyncio.create_task(delete_entity_embedding("agents", str(agent.id)))
+    asyncio.create_task(delete_entity_embedding("agents", str(agent.id)))
+    await cascade_delete_agent(session, agent.id)
 
     await session.commit()
     return {"message": "agent deleted successfully"}
@@ -867,11 +863,11 @@ async def delete_multiple_agent(
                 ),
             )
 
+        from agentcore.services.semantic_search import delete_entity_embedding
+
         for agent in agents_to_delete:
-            if agent.deleted_at is None:
-                agent.deleted_at = datetime.now(timezone.utc)
-                agent.lifecycle_status = LifecycleStatusEnum.ARCHIVED
-                db.add(agent)
+            asyncio.create_task(delete_entity_embedding("agents", str(agent.id)))
+            await cascade_delete_agent(db, agent.id)
 
         await db.commit()
         return {"deleted": len(agents_to_delete)}
