@@ -795,7 +795,8 @@ async def _validate_and_store_publish_recipients(
 
     recipient_user_ids = {matched_users_by_email[email].id for email in recipient_emails}
     current_role = str(getattr(current_user, "role", "")).lower()
-    if current_role == "super_admin":
+    is_org_wide_admin = current_role in {"root", "super_admin", "admin"}
+    if is_org_wide_admin:
         org_id = await _resolve_publish_lookup_org_id(
             session,
             current_user=current_user,
@@ -899,8 +900,9 @@ async def validate_publish_email(
         raise HTTPException(status_code=404, detail="Agent not found.")
 
     current_role = str(getattr(current_user, "role", "")).lower()
+    is_org_wide_admin = current_role in {"root", "super_admin", "admin"}
     current_user_dept_ids: set[UUID] = set()
-    if current_role != "super_admin":
+    if not is_org_wide_admin:
         current_user_dept_ids = await _current_user_department_ids(session, current_user.id)
         if not current_user_dept_ids:
             return ValidatePublishEmailResponse(
@@ -923,16 +925,16 @@ async def validate_publish_email(
         return ValidatePublishEmailResponse(
             agent_id=agent_id,
             email=normalized_email,
-            department_id=None if current_role == "super_admin" else next(iter(current_user_dept_ids)),
+            department_id=None if is_org_wide_admin else next(iter(current_user_dept_ids)),
             exists_in_department=False,
             message=(
                 "Email not found in user table for this organization."
-                if current_role == "super_admin"
+                if is_org_wide_admin
                 else "Email not found in user table for this department."
             ),
         )
 
-    if current_role == "super_admin":
+    if is_org_wide_admin:
         org_id = await _resolve_publish_lookup_org_id(
             session,
             current_user=current_user,
