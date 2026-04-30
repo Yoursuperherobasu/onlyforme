@@ -5,3 +5,4 @@ export * from "./use-patch-mcp-server";
 export * from "./use-probe-mcp-server";
 export * from "./use-test-mcp-connection";
 export * from "./use-request-mcp-server";
+export * from "./use-analyze-mcp-risk";

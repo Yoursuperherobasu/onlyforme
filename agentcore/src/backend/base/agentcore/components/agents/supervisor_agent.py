@@ -627,6 +627,16 @@ Respond with ONLY a JSON array — no explanation, no markdown:
         if resolved:
             vertex.update_raw_params(resolved, overwrite=True)
 
+       
+        # LangGraph during compile, so this pass also lazy-builds them on demand.
+        extra = await self._propagate_upstream_edges(vertex, lg_state)
+        if extra:
+            vertex.update_raw_params(extra, overwrite=True)
+
+        tools_list = await self._propagate_tool_edges(vertex, lg_state)
+        if tools_list is not None:
+            vertex.update_raw_params({"tools": tools_list}, overwrite=True)
+
         # Forward any uploaded files (images, documents) from the original user
         # message so workers can process them (e.g. vision models analysing images).
         files_from_state = lg_state.get("files") or []
@@ -689,6 +699,312 @@ Respond with ONLY a JSON array — no explanation, no markdown:
             # Restore supervisor built state — ChatOutput will read from supervisor's
             # built_result for the "Final Response" handle.
             supervisor_vertex.built = supervisor_was_built
+            
+    async def _propagate_upstream_edges(
+        self, worker_vertex: Any, lg_state: dict
+    ) -> dict:
+        """Re-attach worker inputs that ``_resolve_vertex_dependencies`` skips.
+        """
+        resolved: dict = {}
+        supervisor_id = self._vertex.id
+        graph = getattr(self._vertex, "graph", None)
+        if graph is None:
+            return resolved
+
+        def _decode_handle(h: Any) -> dict:
+            # Edge handles are usually dicts; very occasionally JSON-encoded strings.
+            if isinstance(h, str):
+                try:
+                    return json.loads(h)
+                except (json.JSONDecodeError, TypeError):
+                    return {}
+            return h or {}
+
+        incoming = [
+            e for e in getattr(graph, "edges", [])
+            if isinstance(e, dict) and e.get("target") == worker_vertex.id
+        ]
+
+        for edge in incoming:
+            source_id = edge.get("source")
+            if not source_id or source_id == supervisor_id:
+                continue
+
+            tgt = _decode_handle(edge.get("data", {}).get("targetHandle"))
+            field_name = tgt.get("fieldName") if isinstance(tgt, dict) else None
+            # Skip fields that the narrow ``_resolve_vertex_dependencies`` helper
+            # demonstrably handles correctly today, to guarantee zero behaviour
+            # change on existing Supervisor flows that use them:
+            #   - ``input_value``  — overridden separately with the dispatched task
+            #   - ``tools``        — handled by ``_propagate_tool_edges`` (third pass)
+            #   - ``agent_llm`` / ``supervisor_llm`` / ``llm`` — narrow resolver wires
+            #     a LanguageModel object directly; second-pass overwrite is unnecessary
+            #   - ``child_agent_name`` — used by ``RunChildAgentComponent`` to look up
+            #     a sub-agent by name; narrow resolver already returns the right value
+            #     and we do NOT want to risk Message→str unwrapping changing it.
+            if not field_name or field_name in (
+                "input_value", "tools",
+                "agent_llm", "supervisor_llm", "llm",
+                "child_agent_name",
+            ):
+                continue
+
+            source_vertex = graph.get_vertex(source_id)
+            if source_vertex is None:
+                continue
+
+            # Lazy-build the source if LangGraph pruned it (i.e. its only consumer
+            # is an INACTIVE worker). This is what makes the rendered Prompt
+            # Template actually reach the worker's system_prompt.
+            ok = await self._ensure_source_built(source_vertex, lg_state)
+            if not ok:
+                continue
+
+            built_result = getattr(source_vertex, "built_result", None)
+            if built_result is None:
+                continue
+
+            src = _decode_handle(edge.get("data", {}).get("sourceHandle"))
+            handle_name = src.get("name", "") if isinstance(src, dict) else ""
+
+            value = self._pick_handle_value(built_result, handle_name)
+            if value is None:
+                continue
+
+            # Unwrap Message / Data into plain text for str-typed worker fields.
+            # Mirrors what the normal graph engine does when wiring a Message
+            # output into a str-typed input.
+            if isinstance(value, Message):
+                resolved[field_name] = value.text or ""
+            elif isinstance(value, Data):
+                text_val = getattr(value, "text", None)
+                if text_val:
+                    resolved[field_name] = text_val
+                elif isinstance(value.data, dict):
+                    resolved[field_name] = json.dumps(value.data)
+                else:
+                    resolved[field_name] = str(value.data) if value.data else ""
+            else:
+                resolved[field_name] = value
+
+        return resolved
+
+    async def _ensure_source_built(
+        self, source_vertex: Any, lg_state: dict
+    ) -> bool:
+        """Lazy-build a source vertex if it hasn't run yet.
+
+        Returns ``True`` if the source is built (already or after the call),
+        ``False`` if the build failed and the caller should skip this edge.
+
+        Why this exists:
+          The adapter pre-marks every connected worker INACTIVE before the
+          run starts. LangGraph then prunes any branch whose only consumer
+          is an inactive worker — so a Prompt Template wired exclusively
+          into a single worker is never built during normal flow. This
+          method builds it on demand, using the same parameters the
+          supervisor uses for its own worker invocations.
+
+        Handles the chain-of-prompts case (e.g. ``Intake → PromptTemplate``
+        feeding into ``Reconciliation``'s tool toolkit) because the chain's
+        upstream agents have already been built by previous supervisor steps,
+        so their results are available when we trigger this build.
+        """
+        if source_vertex is None:
+            return False
+        if getattr(source_vertex, "built", False):
+            return True
+        if not hasattr(source_vertex, "build"):
+            return False
+        try:
+            await asyncio.wait_for(
+                source_vertex.build(
+                    user_id=lg_state.get("user_id"),
+                    inputs={},
+                    files=None,
+                    event_manager=getattr(self._vertex.graph, "_event_manager", None),
+                    fallback_to_env_vars=False,
+                ),
+                timeout=60,
+            )
+            return bool(getattr(source_vertex, "built", False))
+        except asyncio.TimeoutError:
+            logger.warning(
+                f"[SupervisorAgent] lazy-build of {getattr(source_vertex, 'id', '?')} "
+                "timed out after 60s — edge will be skipped"
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning(
+                f"[SupervisorAgent] lazy-build of {getattr(source_vertex, 'id', '?')} "
+                f"failed: {e} — edge will be skipped"
+            )
+        return False
+
+    @staticmethod
+    def _pick_handle_value(built_result: Any, handle_name: str) -> Any:
+        """Pull the value for a specific output handle from a vertex's built_result.
+
+        ``built_result`` is typically a dict keyed by output-handle name
+        (e.g. ``{"prompt": Message(...)}`` for Prompt Template, or
+        ``{"response": Message(...)}`` for Agents). For single-output
+        components it can also be a bare ``Message`` / ``Data``.
+        """
+        if built_result is None:
+            return None
+        if isinstance(built_result, dict):
+            if handle_name and handle_name in built_result:
+                return built_result[handle_name]
+            # Fall back to first non-None value for single-output components
+            for v in built_result.values():
+                if v is not None:
+                    return v
+            return None
+        return built_result
+
+    async def _propagate_tool_edges(
+        self, worker_vertex: Any, lg_state: dict
+    ) -> list | None:
+        """Walk the worker's incoming ``tools`` edges and produce a clean
+        ``list[BaseTool]`` regardless of the source vertex's output shape.
+
+        Why this is needed:
+          The narrow ``_resolve_vertex_dependencies`` helper attaches whatever
+          is stored at ``built_result[<handle>]`` for each tool edge, which
+          may be a ``BaseTool`` (e.g. ``Calculator.api_build_tool``), a list
+          of ``BaseTool`` (e.g. ``Prompt Template.component_as_tool`` after
+          ``to_toolkit()`` ran), or — when the source vertex was not built
+          through normal flow — a Component instance, an unawaited coroutine,
+          or even ``None``. The AgentNode's tools-normalisation guard rejects
+          anything that is not a list, a string, or an object with a
+          ``.name`` attribute, logs ``Unknown tools type``, and resets to
+          ``[]``.
+
+          Sources whose only consumer is an INACTIVE worker (e.g. a Prompt
+          Template wired into a single worker) are pruned by LangGraph during
+          compile, so this pass also lazy-builds them on demand via
+          ``_ensure_source_built``.
+
+        Returns:
+            * ``None`` when the worker has no incoming ``tools`` edges
+              (preserves zero-edge behaviour exactly as before)
+            * ``list[BaseTool]`` (possibly empty) when the worker has tool
+              edges — caller replaces ``worker.tools`` with this list
+        """
+        from langchain_core.tools import BaseTool
+
+        graph = getattr(self._vertex, "graph", None)
+        if graph is None:
+            return None
+
+        supervisor_id = self._vertex.id
+        tool_edges: list[dict] = []
+        for edge in getattr(graph, "edges", []):
+            if not isinstance(edge, dict):
+                continue
+            if edge.get("target") != worker_vertex.id:
+                continue
+            if edge.get("source") == supervisor_id:
+                continue
+            tgt = edge.get("data", {}).get("targetHandle")
+            if isinstance(tgt, str):
+                try:
+                    tgt = json.loads(tgt)
+                except (json.JSONDecodeError, TypeError):
+                    tgt = {}
+            if not isinstance(tgt, dict) or tgt.get("fieldName") != "tools":
+                continue
+            tool_edges.append(edge)
+
+        if not tool_edges:
+            return None  # worker has no tool wiring → leave as-is
+
+        coerced_tools: list = []
+        for edge in tool_edges:
+            source_id = edge.get("source")
+            source_vertex = graph.get_vertex(source_id) if source_id else None
+            if source_vertex is None:
+                continue
+
+            # Lazy-build pruned sources (e.g. Prompt Template fed by a chain of
+            # other workers' outputs that LangGraph never built because their
+            # consumer was INACTIVE).
+            await self._ensure_source_built(source_vertex, lg_state)
+
+            src = edge.get("data", {}).get("sourceHandle")
+            if isinstance(src, str):
+                try:
+                    src = json.loads(src)
+                except (json.JSONDecodeError, TypeError):
+                    src = {}
+            handle_name = src.get("name", "") if isinstance(src, dict) else ""
+
+            built_result = getattr(source_vertex, "built_result", None) if getattr(
+                source_vertex, "built", False
+            ) else None
+            value = self._pick_handle_value(built_result, handle_name)
+
+            tools_for_edge = await self._coerce_to_tool_list(value, source_vertex)
+            if tools_for_edge:
+                coerced_tools.extend(tools_for_edge)
+            else:
+                logger.warning(
+                    f"[SupervisorAgent] tools edge {source_id}.{handle_name or '<default>'} "
+                    f"→ {worker_vertex.id}.tools could not be coerced to BaseTool — skipped."
+                )
+
+        # De-duplicate by id() so the same Tool object isn't bound twice
+        seen: set[int] = set()
+        unique_tools: list = []
+        for t in coerced_tools:
+            if isinstance(t, BaseTool) and id(t) not in seen:
+                seen.add(id(t))
+                unique_tools.append(t)
+        return unique_tools
+
+    @staticmethod
+    async def _coerce_to_tool_list(value: Any, source_vertex: Any) -> list:
+        """Best-effort conversion of a source-vertex output into ``list[BaseTool]``.
+
+        Handles, in order:
+          1. Already a ``BaseTool`` → wrap in list.
+          2. Already a list → filter to ``BaseTool`` instances.
+          3. ``value`` itself has ``to_toolkit`` (Component instance) → invoke it,
+             awaiting if it returns a coroutine. Filter to BaseTool instances.
+          4. Fallback to ``source_vertex.built_object`` (the underlying Component)
+             and try ``to_toolkit`` there — covers the case where the resolver
+             stored an intermediate value rather than the toolkit itself.
+        """
+        from langchain_core.tools import BaseTool
+
+        if isinstance(value, BaseTool):
+            return [value]
+        if isinstance(value, list):
+            return [t for t in value if isinstance(t, BaseTool)]
+
+        async def _try_to_toolkit(target: Any) -> list:
+            if target is None or not hasattr(target, "to_toolkit"):
+                return []
+            try:
+                tk = target.to_toolkit()
+                if asyncio.iscoroutine(tk):
+                    tk = await tk
+                if isinstance(tk, list):
+                    return [t for t in tk if isinstance(t, BaseTool)]
+                if isinstance(tk, BaseTool):
+                    return [tk]
+            except Exception as e:  # noqa: BLE001 — best-effort; never crash the supervisor
+                logger.warning(
+                    f"[SupervisorAgent] to_toolkit() raised on "
+                    f"{getattr(target, '__class__', type(target)).__name__}: {e}"
+                )
+            return []
+
+        # Try to_toolkit() on the resolver-supplied value first…
+        toolkit = await _try_to_toolkit(value)
+        if toolkit:
+            return toolkit
+        # …then on the source vertex's underlying Component instance.
+        return await _try_to_toolkit(getattr(source_vertex, "built_object", None))
 
     # ------------------------------------------------------------------
     # Dynamic output handles (driven by the workers table)

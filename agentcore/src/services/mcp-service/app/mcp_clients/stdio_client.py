@@ -6,6 +6,7 @@ import asyncio
 import logging
 import os
 import platform
+import shlex
 import uuid
 from typing import Any
 
@@ -13,6 +14,7 @@ from anyio import ClosedResourceError
 from mcp import ClientSession, StdioServerParameters
 from mcp.shared.exceptions import McpError
 
+from app.config import get_settings
 from app.mcp_clients.session_manager import MCPSessionManager
 
 logger = logging.getLogger(__name__)
@@ -27,25 +29,55 @@ class MCPStdioClient:
         self._session_manager = session_manager
 
     async def _connect_to_server(self, command_str: str, env: dict[str, str] | None = None) -> list:
-        """Connect to MCP server using stdio transport (SDK style)."""
-        command = command_str.split(" ")
-        env_data: dict[str, str] = {"DEBUG": "true", "PATH": os.environ.get("PATH", ""), **(env or {})}
+        """Connect to MCP server using stdio transport (SDK style).
 
-        if platform.system() == "Windows":
+        When ``MCP_SERVICE_STDIO_SAFE_SPAWN`` is true (the default), the
+        executable and arguments are passed directly to the MCP SDK's
+        ``StdioServerParameters`` - no shell wrapper. This means shell
+        metacharacters in arguments (``;``, ``|``, ``&``, ``$(...)``, backticks)
+        are treated as literal characters by the subprocess and cannot be
+        used for injection.
+
+        The legacy shell-wrapped path is preserved behind the flag for
+        emergency rollback only.
+        """
+        env_data: dict[str, str] = {"DEBUG": "true", "PATH": os.environ.get("PATH", ""), **(env or {})}
+        settings = get_settings()
+
+        if getattr(settings, "stdio_safe_spawn", True):
+            posix = platform.system() != "Windows"
+            try:
+                tokens = shlex.split(command_str, posix=posix)
+            except ValueError as e:
+                msg = f"Failed to tokenize MCP command: {e}"
+                raise ValueError(msg) from e
+            if not tokens:
+                msg = "MCP command is empty after tokenization."
+                raise ValueError(msg)
+            executable, *exec_args = tokens
             server_params = StdioServerParameters(
-                command="cmd",
-                args=[
-                    "/c",
-                    f"{command[0]} {' '.join(command[1:])} || echo Command failed with exit code %errorlevel% 1>&2",
-                ],
+                command=executable,
+                args=exec_args,
                 env=env_data,
             )
         else:
-            server_params = StdioServerParameters(
-                command="bash",
-                args=["-c", f"exec {command_str} || echo 'Command failed with exit code $?' >&2"],
-                env=env_data,
-            )
+            # Legacy shell-wrapped path - kept for emergency rollback only.
+            command = command_str.split(" ")
+            if platform.system() == "Windows":
+                server_params = StdioServerParameters(
+                    command="cmd",
+                    args=[
+                        "/c",
+                        f"{command[0]} {' '.join(command[1:])} || echo Command failed with exit code %errorlevel% 1>&2",
+                    ],
+                    env=env_data,
+                )
+            else:
+                server_params = StdioServerParameters(
+                    command="bash",
+                    args=["-c", f"exec {command_str} || echo 'Command failed with exit code $?' >&2"],
+                    env=env_data,
+                )
 
         self._connection_params = server_params
 

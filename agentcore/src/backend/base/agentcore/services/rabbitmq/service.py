@@ -569,29 +569,6 @@ class RabbitMQService(Service):
             async with session_scope() as session:
                 uat_deployment = await session.get(AgentDeploymentUAT, uuid.UUID(job_data["uat_deployment_id"]))
 
-        def _extract_text_from_payload(payload: Any) -> str:
-            candidates: list[str] = []
-
-            def _visit(value: Any) -> None:
-                if isinstance(value, dict):
-                    for key in ("text", "message"):
-                        candidate = value.get(key)
-                        if isinstance(candidate, str) and candidate.strip():
-                            candidates.append(candidate.strip())
-                    for nested in value.values():
-                        if isinstance(nested, (dict, list)):
-                            _visit(nested)
-                elif isinstance(value, list):
-                    for item in value:
-                        _visit(item)
-                elif isinstance(value, str) and value.strip():
-                    candidates.append(value.strip())
-
-            _visit(payload)
-            if not candidates:
-                return ""
-            return max(candidates, key=len)
-
         if is_stream:
             # Streaming: run the agent directly with event_manager for token streaming.
             # Do NOT use run_agent_generator here - it waits on a client_consumed_queue
@@ -623,17 +600,13 @@ class RabbitMQService(Service):
                     except Exception:
                         result_payload = {"session_id": getattr(result, "session_id", None), "outputs": []}
 
-                final_text = _extract_text_from_payload(result_payload)
                 end_data: dict[str, Any] = {"result": result_payload}
-                if final_text:
-                    end_data["text"] = final_text
 
                 try:
                     event_manager.on_end(data=end_data)
                 except Exception as end_exc:  # noqa: BLE001
                     logger.warning(f"[RabbitMQ] end event serialization failed for run job {job_id}: {end_exc}")
                     fallback_end = {
-                        "text": final_text,
                         "result": {
                             "session_id": result_payload.get("session_id"),
                             "outputs": [],

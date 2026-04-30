@@ -126,3 +126,34 @@ export interface McpProbeResponse {
   tools_count?: number;
   tools?: McpToolInfo[];
 }
+
+// --- Risk advisor types (decision-support for admins reviewing MCP configs) ---
+
+export type McpRiskSeverity = "high" | "medium" | "low";
+export type McpRiskOverall = "looks_ok" | "review_carefully" | "high_risk";
+
+export interface McpRiskFinding {
+  category: string;
+  severity: McpRiskSeverity;
+  rule_id: string;
+  title: string;
+  detail: string;
+  recommendation: string;
+}
+
+export interface McpRiskAnalyzeRequest {
+  mode?: "sse" | "stdio" | null;
+  url?: string | null;
+  command?: string | null;
+  args?: string[] | null;
+  env_vars?: Record<string, string> | null;
+  headers?: Record<string, string> | null;
+}
+
+export interface McpRiskAnalysisResponse {
+  overall: McpRiskOverall;
+  high_count: number;
+  medium_count: number;
+  low_count: number;
+  findings: McpRiskFinding[];
+}

@@ -29,11 +29,17 @@ import { useAddMCPServer } from "@/controllers/API/queries/mcp/use-add-mcp-serve
 import { usePatchMCPServer } from "@/controllers/API/queries/mcp/use-patch-mcp-server";
 import { useRequestMCPServer } from "@/controllers/API/queries/mcp/use-request-mcp-server";
 import { useTestMCPConnection } from "@/controllers/API/queries/mcp/use-test-mcp-connection";
+import { useAnalyzeMCPRisk } from "@/controllers/API/queries/mcp/use-analyze-mcp-risk";
+import RiskAssessmentPanel from "@/components/RiskAssessmentPanel";
+import HighRiskConfirmDialog from "@/components/HighRiskConfirmDialog";
 import BaseModal from "@/modals/baseModal";
 import IOKeyPairInput from "@/modals/IOModal/components/IOFieldView/components/key-pair-input";
 import type {
   McpRegistryType,
   McpRegistryCreateRequest,
+  McpRiskAnalysisResponse,
+  McpRiskAnalyzeRequest,
+  McpRiskFinding,
   McpTestConnectionResponse,
 } from "@/types/mcp";
 import type { MCPServerType } from "@/types/mcp";
@@ -84,6 +90,11 @@ export default function AddMcpServerModal({
   const patchMutation = usePatchMCPServer();
   const requestMutation = useRequestMCPServer();
   const testMutation = useTestMCPConnection();
+  const analyzeRiskMutation = useAnalyzeMCPRisk();
+  const [riskAnalysis, setRiskAnalysis] = useState<McpRiskAnalysisResponse | null>(null);
+  const [pendingRiskAction, setPendingRiskAction] = useState<
+    null | { kind: "test" | "submit"; findings: McpRiskFinding[] }
+  >(null);
   const setSuccessData = useAlertStore((state) => state.setSuccessData);
   const setErrorData = useAlertStore((state) => state.setErrorData);
 
@@ -188,6 +199,38 @@ export default function AddMcpServerModal({
     return value.trim().slice(0, MAX_MCP_SERVER_NAME_LENGTH);
   }
 
+  function buildRiskPayload(): McpRiskAnalyzeRequest | null {
+    if (type === "STDIO") {
+      if (
+        !stdioCommand.trim() &&
+        stdioArgs.every((a) => !a.trim()) &&
+        !stdioEnv.length
+      )
+        return null;
+      return {
+        mode: "stdio",
+        command: stdioCommand,
+        args: stdioArgs.filter((a) => a.trim() !== ""),
+        env_vars: parseEnvList(stdioEnv),
+      };
+    }
+    if (type === "SSE") {
+      if (!sseUrl.trim() && !sseHeaders.length && !sseEnv.length) return null;
+      return {
+        mode: "sse",
+        url: sseUrl,
+        env_vars: parseEnvList(sseEnv),
+        headers: parseEnvList(sseHeaders),
+      };
+    }
+    return null;
+  }
+
+  function getHighFindings(): McpRiskFinding[] {
+    if (!riskAnalysis) return [];
+    return riskAnalysis.findings.filter((f) => f.severity === "high");
+  }
+
   function buildTenancyPayload() {
     const isPublic = visibilityScope !== "private";
     const resolvedPrivateDeptId = canMultiDept
@@ -210,7 +253,45 @@ export default function AddMcpServerModal({
     };
   }
 
+  useEffect(() => {
+    if (!open || type === "JSON") {
+      setRiskAnalysis(null);
+      return;
+    }
+    const payload = buildRiskPayload();
+    if (!payload) {
+      setRiskAnalysis(null);
+      return;
+    }
+    const handle = setTimeout(() => {
+      analyzeRiskMutation
+        .mutateAsync(payload)
+        .then((res) => setRiskAnalysis(res))
+        .catch(() => setRiskAnalysis(null));
+    }, 400);
+    return () => clearTimeout(handle);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    open,
+    type,
+    stdioCommand,
+    JSON.stringify(stdioArgs),
+    JSON.stringify(stdioEnv),
+    sseUrl,
+    JSON.stringify(sseEnv),
+    JSON.stringify(sseHeaders),
+  ]);
+
   async function testConnection() {
+    const highs = getHighFindings();
+    if (highs.length > 0 && !pendingRiskAction) {
+      setPendingRiskAction({ kind: "test", findings: highs });
+      return;
+    }
+    await testConnectionInner();
+  }
+
+  async function testConnectionInner() {
     setTestResult(null);
     setError(null);
     try {
@@ -236,6 +317,15 @@ export default function AddMcpServerModal({
   }
 
   async function submitForm() {
+    const highs = getHighFindings();
+    if (highs.length > 0 && !pendingRiskAction && type !== "JSON") {
+      setPendingRiskAction({ kind: "submit", findings: highs });
+      return;
+    }
+    await submitFormInner();
+  }
+
+  async function submitFormInner() {
     setError(null);
     if (type !== "JSON" && isNameTaken) {
       setError(nameAvailability.reason || "Name is already taken.");
@@ -245,7 +335,7 @@ export default function AddMcpServerModal({
     const desiredEnvs =
       deploymentEnvSelection === "both" ? ["uat", "prod"] : [deploymentEnvSelection];
     const primaryEnv = desiredEnvs[0] ?? "uat";
-    const requiresTest = !isEditMode && type !== "JSON";
+    const requiresTest = !isEditMode && !requestMode && type !== "JSON";
 
     if (type === "STDIO") {
       if (!stdioName.trim() || !stdioCommand.trim()) return setError("Name and command are required.");
@@ -387,26 +477,28 @@ export default function AddMcpServerModal({
         for (const srv of servers) {
           const serverName = formatServerName(srv.name);
           const mode: "sse" | "stdio" = srv.command ? "stdio" : "sse";
-          const testPayload =
-            mode === "stdio"
-              ? {
-                  mode,
-                  command: srv.command,
-                  args: srv.args?.filter((a) => a.trim() !== ""),
-                  env_vars: srv.env ?? undefined,
-                }
-              : {
-                  mode,
-                  url: srv.url,
-                  env_vars: srv.env ?? undefined,
-                  headers: srv.headers ?? undefined,
-                };
-          const testResult = await testMutation.mutateAsync(testPayload as any);
-          if (!testResult.success) {
-            const msg = testResult.message || "Connection test failed.";
-            setError(msg);
-            setErrorData({ title: "Connection test failed", list: [msg] });
-            return;
+          if (!requestMode) {
+            const testPayload =
+              mode === "stdio"
+                ? {
+                    mode,
+                    command: srv.command,
+                    args: srv.args?.filter((a) => a.trim() !== ""),
+                    env_vars: srv.env ?? undefined,
+                  }
+                : {
+                    mode,
+                    url: srv.url,
+                    env_vars: srv.env ?? undefined,
+                    headers: srv.headers ?? undefined,
+                  };
+            const testResult = await testMutation.mutateAsync(testPayload as any);
+            if (!testResult.success) {
+              const msg = testResult.message || "Connection test failed.";
+              setError(msg);
+              setErrorData({ title: "Connection test failed", list: [msg] });
+              return;
+            }
           }
           const createReq: McpRegistryCreateRequest = {
             server_name: serverName,
@@ -863,6 +955,21 @@ export default function AddMcpServerModal({
                     </>
                   )}
                 </div>
+                {type !== "JSON" && (
+                  <div className="flex flex-col gap-2">
+                    <Label className="!text-mmd">Risk Assessment</Label>
+                    <RiskAssessmentPanel
+                      analysis={riskAnalysis}
+                      isLoading={analyzeRiskMutation.isPending && !riskAnalysis}
+                      compact
+                      emptyMessage={
+                        type === "STDIO"
+                          ? "Enter a command to see the risk assessment."
+                          : "Enter a URL to see the risk assessment."
+                      }
+                    />
+                  </div>
+                )}
                 {type === "JSON" && (
                   <div className="flex flex-col gap-4">
                     <div className="flex flex-col gap-2">
@@ -887,7 +994,7 @@ export default function AddMcpServerModal({
           )}
           <div className="flex items-center justify-between">
             <div>
-              {type !== "JSON" && (
+              {type !== "JSON" && !requestMode && (
                 <Button variant="outline" size="sm" onClick={testConnection} disabled={isPending || testMutation.isPending} loading={testMutation.isPending} data-testid="test-mcp-connection-button">
                   <ForwardedIconComponent name="Plug" className="mr-1.5 h-3.5 w-3.5" />
                   <span className="text-mmd font-normal">Test Connection</span>
@@ -911,6 +1018,28 @@ export default function AddMcpServerModal({
           </div>
         </div>
       </BaseModal.Content>
+      <HighRiskConfirmDialog
+        open={!!pendingRiskAction}
+        highFindings={pendingRiskAction?.findings ?? []}
+        actionLabel={
+          pendingRiskAction?.kind === "test"
+            ? "Test Connection"
+            : isEditMode
+              ? "Save"
+              : requestMode
+                ? "Submit Request"
+                : type === "JSON"
+                  ? "Import"
+                  : "Register"
+        }
+        onCancel={() => setPendingRiskAction(null)}
+        onConfirm={() => {
+          const action = pendingRiskAction;
+          setPendingRiskAction(null);
+          if (action?.kind === "test") void testConnectionInner();
+          else void submitFormInner();
+        }}
+      />
     </BaseModal>
   );
 }

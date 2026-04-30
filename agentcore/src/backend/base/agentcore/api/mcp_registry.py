@@ -37,6 +37,7 @@ from agentcore.services.database.models.mcp_registry.model import (
     McpToolInfo,
 )
 from agentcore.services.mcp_registry_service import apply_mcp_secret_refs
+from agentcore.services.mcp_security import analyze as analyze_mcp_risk
 from agentcore.services.database.models.mcp_approval_request.model import McpApprovalRequest
 from agentcore.services.database.models.mcp_audit_log.model import McpAuditLog
 from agentcore.services.database.models.organization.model import Organization
@@ -1302,15 +1303,68 @@ async def test_mcp_connection(
     body: McpTestConnectionRequest,
     current_user: CurrentActiveUser,
 ):
-    """Test connectivity to an MCP server and return the number of tools discovered."""
+    """Test connectivity to an MCP server and return the number of tools discovered.
+
+    Restricted to MCP admins (`add_new_mcp` permission). Developers and business users
+    submit MCP requests for admin review; admins run Test Connection during review.
+    Test connection spawns a subprocess (STDIO mode) or opens an outbound connection
+    (SSE mode) using raw, un-vetted form input, so it must not be reachable by the
+    request-only roles.
+    """
     await _require_mcp_permission(current_user, "view_mcp_page")
-    await _require_any_mcp_permission(current_user, {"add_new_mcp", "request_new_mcp"})
+    await _require_mcp_permission(current_user, "add_new_mcp")
     try:
         result = await test_mcp_connection_via_service(body.model_dump(mode="json"))
         return McpTestConnectionResponse(**result)
     except Exception as e:
         logger.warning("MCP test connection via microservice failed: %s", e)
         return McpTestConnectionResponse(success=False, message=str(e))
+
+
+class McpRiskAnalyzeRequest(BaseModel):
+    mode: str | None = None
+    url: str | None = None
+    command: str | None = None
+    args: list[str] | None = None
+    env_vars: dict[str, str] | None = None
+    headers: dict[str, str] | None = None
+
+
+class McpRiskFinding(BaseModel):
+    category: str
+    severity: str
+    rule_id: str
+    title: str
+    detail: str
+    recommendation: str
+
+
+class McpRiskAnalysisResponse(BaseModel):
+    overall: str
+    high_count: int
+    medium_count: int
+    low_count: int
+    findings: list[McpRiskFinding]
+
+
+@router.post("/analyze-risk", response_model=McpRiskAnalysisResponse)
+async def analyze_mcp_risk_endpoint(
+    body: McpRiskAnalyzeRequest,
+    current_user: CurrentActiveUser,
+):
+    """Run the static risk advisor against an in-progress MCP config payload.
+
+    Pure rule check - does NOT spawn anything, does NOT write to the DB. Used
+    by the Add/Request modal for live feedback and by the Approvals review
+    screen to show findings alongside a pending request.
+
+    Available to anyone who can view the MCP page. Findings are advisory; no
+    action is taken automatically.
+    """
+    await _require_mcp_permission(current_user, "view_mcp_page")
+    payload = body.model_dump(exclude_none=True, mode="json")
+    analysis = analyze_mcp_risk(payload, mode=body.mode)
+    return McpRiskAnalysisResponse(**analysis.to_dict())
 
 
 @router.post("/{server_id}/probe", response_model=McpProbeResponse)

@@ -17,6 +17,7 @@ export { useApproveAgent } from "./use-approve-agent";
 export { useRejectAgent } from "./use-reject-agent";
 
 export { useGetMcpApprovalConfig } from "./use-get-mcp-approval-config";
+export { useProbeMcpApproval } from "./use-probe-mcp-approval";
 export {
   useGetApprovalNotifications,
   useMarkApprovalNotificationRead,
