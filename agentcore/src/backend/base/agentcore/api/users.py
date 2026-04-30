@@ -13,34 +13,34 @@ from sqlalchemy.exc import IntegrityError
 from sqlmodel import select
 from sqlmodel.sql.expression import SelectOfScalar
 
-from agentcore.api.schemas import UsersResponse, UserReadWithPermissions
-from agentcore.api.utils import CurrentActiveUser, DbSession
-from agentcore.services.auth.decorators import PermissionChecker
-from agentcore.services.auth.permissions import get_permissions_for_role, normalize_role, permission_cache
-from agentcore.services.auth.invalidation import invalidate_user_auth
-from agentcore.services.auth.utils import get_password_hash, verify_password
-from agentcore.services.cache.user_cache import UserCacheService
-from agentcore.services.database.models.agent.model import Agent
-from agentcore.services.database.models.agent_api_key.model import AgentApiKey
-from agentcore.services.database.models.agent_bundle.model import AgentBundle
-from agentcore.services.database.models.agent_deployment_prod.model import AgentDeploymentProd, DeploymentPRODStatusEnum
-from agentcore.services.database.models.agent_deployment_uat.model import AgentDeploymentUAT, DeploymentUATStatusEnum
-from agentcore.services.database.models.agent_edit_lock.model import AgentEditLock
-from agentcore.services.database.models.agent_publish_recipient.model import AgentPublishRecipient
-from agentcore.services.database.models.agent_registry.model import AgentRegistry, AgentRegistryRating
-from agentcore.services.database.models.approval_request.model import ApprovalRequest
-from agentcore.services.database.models.department.model import Department
-from agentcore.services.database.models.file.model import File
-from agentcore.services.database.models.organization.model import Organization
-from agentcore.services.database.models.project.model import Project
-from agentcore.services.database.models.role.model import Role
-from agentcore.services.database.models.user.crud import get_user_by_id, update_user
-from agentcore.services.database.models.user.model import User, UserCreate, UserRead, UserUpdate
-from agentcore.services.database.models.user_department_membership.model import UserDepartmentMembership
-from agentcore.services.database.models.user_organization_membership.model import UserOrganizationMembership
-from agentcore.services.deps import get_settings_service
-from agentcore.services.notifications import send_user_notification_email
-from agentcore.services.observability import (
+from MiCore.api.schemas import UsersResponse, UserReadWithPermissions
+from MiCore.api.utils import CurrentActiveUser, DbSession
+from MiCore.services.auth.decorators import PermissionChecker
+from MiCore.services.auth.permissions import get_permissions_for_role, normalize_role, permission_cache
+from MiCore.services.auth.invalidation import invalidate_user_auth
+from MiCore.services.auth.utils import get_password_hash, verify_password
+from MiCore.services.cache.user_cache import UserCacheService
+from MiCore.services.database.models.agent.model import Agent
+from MiCore.services.database.models.agent_api_key.model import AgentApiKey
+from MiCore.services.database.models.agent_bundle.model import AgentBundle
+from MiCore.services.database.models.agent_deployment_prod.model import AgentDeploymentProd, DeploymentPRODStatusEnum
+from MiCore.services.database.models.agent_deployment_uat.model import AgentDeploymentUAT, DeploymentUATStatusEnum
+from MiCore.services.database.models.agent_edit_lock.model import AgentEditLock
+from MiCore.services.database.models.agent_publish_recipient.model import AgentPublishRecipient
+from MiCore.services.database.models.agent_registry.model import AgentRegistry, AgentRegistryRating
+from MiCore.services.database.models.approval_request.model import ApprovalRequest
+from MiCore.services.database.models.department.model import Department
+from MiCore.services.database.models.file.model import File
+from MiCore.services.database.models.organization.model import Organization
+from MiCore.services.database.models.project.model import Project
+from MiCore.services.database.models.role.model import Role
+from MiCore.services.database.models.user.crud import get_user_by_id, update_user
+from MiCore.services.database.models.user.model import User, UserCreate, UserRead, UserUpdate
+from MiCore.services.database.models.user_department_membership.model import UserDepartmentMembership
+from MiCore.services.database.models.user_organization_membership.model import UserOrganizationMembership
+from MiCore.services.deps import get_settings_service
+from MiCore.services.notifications import send_user_notification_email
+from MiCore.services.observability import (
     LangfuseProvisioningError,
     get_langfuse_provisioning_service,
 )
@@ -97,6 +97,27 @@ async def _find_organization_by_normalized_name(
     ).first()
 
 
+async def _resolve_user_organization_name(
+    session: DbSession,
+    user_id: UUID,
+) -> str | None:
+    org = (
+        await session.exec(
+            select(Organization)
+            .join(
+                UserOrganizationMembership,
+                UserOrganizationMembership.org_id == Organization.id,
+            )
+            .where(
+                UserOrganizationMembership.user_id == user_id,
+                UserOrganizationMembership.status.in_(list(ACTIVE_ORG_STATUSES)),
+            )
+            .order_by(UserOrganizationMembership.updated_at.desc())
+        )
+    ).first()
+    return _strip_or_none(org.name) if org else None
+
+
 async def _find_department_by_normalized_name(
     session: DbSession,
     *,
@@ -136,11 +157,11 @@ def _format_notification_email_status(
     sent: bool,
     detail: str | None = None,
 ) -> None:
-    response.headers["X-Agentcore-Notification-Email-Status"] = "sent" if sent else "not_sent"
+    response.headers["X-MiCore-Notification-Email-Status"] = "sent" if sent else "not_sent"
     if sent:
         return
-    response.headers["X-Agentcore-Warning-Title"] = "Email not sent"
-    response.headers["X-Agentcore-Warning"] = (
+    response.headers["X-MiCore-Warning-Title"] = "Email not sent"
+    response.headers["X-MiCore-Warning"] = (
         detail
         or "Notification email could not be sent."
     )
@@ -361,6 +382,66 @@ async def _get_admin_department_ids(session: DbSession, current_user: User) -> s
         )
     ).all()
     return set(rows)
+
+
+async def _active_memberships_for_user(
+    session: DbSession,
+    *,
+    user_id: UUID,
+    org_id: UUID | None = None,
+) -> list[UserDepartmentMembership]:
+    stmt = select(UserDepartmentMembership).where(
+        UserDepartmentMembership.user_id == user_id,
+        UserDepartmentMembership.status == ACTIVE_DEPT_STATUS,
+    )
+    if org_id is not None:
+        stmt = stmt.where(UserDepartmentMembership.org_id == org_id)
+    return (await session.exec(stmt)).all()
+
+
+async def _require_single_department_for_admin(
+    session: DbSession,
+    *,
+    current_user: User,
+) -> UserDepartmentMembership:
+    memberships = await _active_memberships_for_user(
+        session,
+        user_id=current_user.id,
+    )
+    if not memberships:
+        raise HTTPException(status_code=400, detail="Department admin is missing membership mapping.")
+    if len(memberships) > 1:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Department admin must be mapped to exactly one active department. "
+                "Please contact super admin to clean duplicate department mappings."
+            ),
+        )
+    return memberships[0]
+
+
+async def _reject_cross_department_duplicate_for_dept_admin(
+    session: DbSession,
+    *,
+    target_user: User,
+    target_org_id: UUID,
+    target_department_id: UUID,
+) -> None:
+    memberships = await _active_memberships_for_user(
+        session,
+        user_id=target_user.id,
+        org_id=target_org_id,
+    )
+    for membership in memberships:
+        if membership.department_id == target_department_id:
+            return
+        existing_department = await session.get(Department, membership.department_id)
+        existing_dept_name = existing_department.name if existing_department else str(membership.department_id)
+        raise HTTPException(
+            status_code=400,
+            detail=f"User is already added in department '{existing_dept_name}'.",
+        )
 
 
 async def _resolve_creator_org(
@@ -1111,7 +1192,7 @@ async def _ensure_langfuse_org_admin_binding(
     org: Organization,
     actor: User,
 ) -> None:
-    """Idempotently provision the Langfuse org + admin project for an AgentCore org.
+    """Idempotently provision the Langfuse org + admin project for an MiCore org.
 
     Safe to call from any code path that creates or reuses an Organization
     (add_user, patch_user, etc.). The underlying service short-circuits if a
@@ -1139,7 +1220,7 @@ async def _ensure_langfuse_department_binding(
     department: Department,
     actor: User,
 ) -> None:
-    """Idempotently provision the Langfuse project for an AgentCore department.
+    """Idempotently provision the Langfuse project for an MiCore department.
 
     Safe to call from any code path that creates or reuses a Department.
     """
@@ -1387,17 +1468,18 @@ async def add_user(
                     raise HTTPException(status_code=400, detail="Invalid target role for super admin.")
 
         elif creator_role == "department_admin":
-            creator_membership = (
-                await session.exec(
-                    select(UserDepartmentMembership).where(
-                        UserDepartmentMembership.user_id == current_user.id,
-                        UserDepartmentMembership.status == ACTIVE_DEPT_STATUS,
-                    )
-                )
-            ).first()
-            if not creator_membership:
-                raise HTTPException(status_code=400, detail="Department admin is missing membership mapping.")
+            creator_membership = await _require_single_department_for_admin(
+                session,
+                current_user=current_user,
+            )
             department = await session.get(Department, creator_membership.department_id)
+            if existing_user:
+                await _reject_cross_department_duplicate_for_dept_admin(
+                    session,
+                    target_user=existing_user,
+                    target_org_id=creator_membership.org_id,
+                    target_department_id=creator_membership.department_id,
+                )
             new_user.department_admin_email = current_user.username
             new_user.department_name = department.name if department else None
             await _ensure_org_membership(
@@ -1419,18 +1501,19 @@ async def add_user(
         session.add(new_user)
         await session.commit()
         await session.refresh(new_user)
+        resolved_org_name = await _resolve_user_organization_name(session, new_user.id)
         settings = get_settings_service().settings
         email_sent, email_detail = await send_user_notification_email(
             settings=settings,
             recipient_email=_notification_recipient_for_user(new_user),
             recipient_name=_display_name_for_user(new_user),
-            subject="Your AgentCore account has been created",
-            headline="Your AgentCore account is ready",
-            intro_text="Your account has been created or reactivated in AgentCore.",
+            subject="Your MiCore account has been created",
+            headline="Your MiCore account is ready",
+            intro_text="Your account has been created or reactivated in MiCore.",
             summary_text="You are receiving this email because an administrator created or updated your access.",
             actor_name=_display_name_for_user(current_user),
             changed_fields=_build_add_user_email_details(new_user),
-            organization_name=organization_name,
+            organization_name=resolved_org_name or organization_name,
             department_name=new_user.department_name,
         )
         _format_notification_email_status(
@@ -2356,7 +2439,7 @@ async def patch_user(
                 # org already has an active binding, the service short-circuits.
                 # Without this call, promoting a previously-registered user to
                 # super_admin via PATCH leaves Langfuse out of sync with the
-                # AgentCore org.
+                # MiCore org.
                 await _ensure_langfuse_org_admin_binding(
                     session,
                     org=organization,
@@ -2374,17 +2457,18 @@ async def patch_user(
             await session.commit()
             await session.refresh(user_db)
             if non_password_updates:
+                resolved_org_name = await _resolve_user_organization_name(session, user_db.id)
                 email_sent, email_detail = await send_user_notification_email(
                     settings=get_settings_service().settings,
                     recipient_email=_notification_recipient_for_user(user_db),
                     recipient_name=_display_name_for_user(user_db),
-                    subject="Your AgentCore profile was updated",
-                    headline="Your AgentCore profile was updated",
-                    intro_text="Your account details were updated in AgentCore.",
+                    subject="Your MiCore profile was updated",
+                    headline="Your MiCore profile was updated",
+                    intro_text="Your account details were updated in MiCore.",
                     summary_text="No additional field changes were detected, but this action was recorded.",
                     actor_name=_display_name_for_user(user),
                     changed_fields=["Profile information reviewed."],
-                    organization_name=_strip_or_none(user_update.organization_name),
+                    organization_name=resolved_org_name or _strip_or_none(user_update.organization_name),
                     department_name=user_db.department_name,
                 )
                 _format_notification_email_status(
@@ -2395,13 +2479,14 @@ async def patch_user(
             return user_db
         updated_user = await update_user(user_db, user_update, session)
         if non_password_updates:
+            resolved_org_name = await _resolve_user_organization_name(session, updated_user.id)
             email_sent, email_detail = await send_user_notification_email(
                 settings=get_settings_service().settings,
                 recipient_email=_notification_recipient_for_user(updated_user),
                 recipient_name=_display_name_for_user(updated_user),
-                subject="Your AgentCore profile was updated",
-                headline="Your AgentCore profile was updated",
-                intro_text="Your account details were updated in AgentCore.",
+                subject="Your MiCore profile was updated",
+                headline="Your MiCore profile was updated",
+                intro_text="Your account details were updated in MiCore.",
                 summary_text="Please review the changed fields below.",
                 actor_name=_display_name_for_user(user),
                 changed_fields=_build_update_user_email_details(
@@ -2409,7 +2494,7 @@ async def patch_user(
                     current_user=updated_user,
                     requested_updates=non_password_updates,
                 ),
-                organization_name=_strip_or_none(user_update.organization_name),
+                organization_name=resolved_org_name or _strip_or_none(user_update.organization_name),
                 department_name=updated_user.department_name,
             )
             _format_notification_email_status(
