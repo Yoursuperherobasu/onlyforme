@@ -2371,18 +2371,25 @@ export default function AgentOrchestrator() {
               setHeaderModelOverride(null);
             }
             let routedDisplayName: string | null = null;
+            // For image_gen routing, only update the message label (agentName) —
+            // do NOT switch the dropdown. Promoting selectedAiModel to nano-banana
+            // would auto-enable imageMode (see useEffect at ~line 1542) and force
+            // every followup through the image_mode fast-path on the backend, even
+            // for plain text questions. Users who want successive image generations
+            // can pick the image model explicitly via the dropdown or + → Create image.
+            const skipDropdownSwitch = routedMode === "image_gen";
             if (noAgentMode && data?.routed_model_id) {
               const routedId = String(data.routed_model_id);
               const match = aiModels.find((m) => m.id === routedId);
               if (match) {
                 routedDisplayName = match.name;
-                if (routedId !== selectedAiModel) setSelectedAiModel(routedId);
+                if (!skipDropdownSwitch && routedId !== selectedAiModel) setSelectedAiModel(routedId);
               }
             }
             if (!routedDisplayName && data?.routed_model_name) {
               const nameStr = String(data.routed_model_name);
               routedDisplayName = nameStr;
-              if (noAgentMode) {
+              if (noAgentMode && !skipDropdownSwitch) {
                 const byName = aiModels.find(
                   (m) => m.name.toLowerCase() === nameStr.toLowerCase(),
                 );
@@ -2514,30 +2521,45 @@ export default function AgentOrchestrator() {
             // to a different model than the one the user selected (e.g. user picked
             // "MiBuddy AI" → router picked "gpt-5.1-chat" → dropdown updates to
             // "gpt-5.1-chat" so the user knows subsequent messages will use it).
+            //
+            // Exception: don't promote to image-gen models. Doing so would auto-
+            // enable imageMode and force all followup messages through the
+            // image_mode fast-path on the backend, even plain-text queries.
+            const isImageModelName = (n: string) =>
+              /nano[\s_-]?banana|dall[\s_-]?e|flash[\s_-]?image|image[\s_-]?gen/i.test(n);
             if (noAgentMode && data?.routed_model_id) {
               const routedId = data.routed_model_id;
               if (routedId !== selectedAiModel) {
                 const match = aiModels.find((m) => m.id === routedId);
-                if (match) setSelectedAiModel(routedId);
+                if (match && !isImageModelName(match.name)) setSelectedAiModel(routedId);
               }
             } else if (noAgentMode && data?.routed_model_name) {
               // Fallback: match by display name if no id is present
+              const nameStr = String(data.routed_model_name);
               const byName = aiModels.find(
-                (m) => m.name.toLowerCase() === String(data.routed_model_name).toLowerCase(),
+                (m) => m.name.toLowerCase() === nameStr.toLowerCase(),
               );
-              if (byName && byName.id !== selectedAiModel) setSelectedAiModel(byName.id);
+              if (byName && byName.id !== selectedAiModel && !isImageModelName(byName.name)) {
+                setSelectedAiModel(byName.id);
+              }
             }
 
-            // Also auto-enable image mode if an image was returned
+            // Re-lock the dropdown to the image model only if the user was
+            // already on one (i.e. they explicitly picked Nano Banana or used
+            // + → Create image). For auto-routed image generations from a
+            // chat model like MiBuddy AI, leave the dropdown alone so the
+            // next message goes through normal intent classification.
             const finalText = data?.agent_text || "";
             const hasGeneratedImage = /!\[[^\]]*\]\([^)]+\)/.test(finalText);
             if (hasGeneratedImage && noAgentMode) {
-              const imageModel = aiModels.find((m) =>
-                /nano[\s_-]?banana|dall[\s_-]?e|flash[\s_-]?image|image[\s_-]?gen/i.test(m.name)
-              );
-              if (imageModel && imageModel.id !== selectedAiModel) {
-                setSelectedAiModel(imageModel.id);
-                // image_mode useEffect will auto-enable the chip
+              const currentModel = aiModels.find((m) => m.id === selectedAiModel);
+              const userOnImageModel = currentModel ? isImageModelName(currentModel.name) : false;
+              if (userOnImageModel) {
+                const imageModel = aiModels.find((m) => isImageModelName(m.name));
+                if (imageModel && imageModel.id !== selectedAiModel) {
+                  setSelectedAiModel(imageModel.id);
+                  // image_mode useEffect will auto-enable the chip
+                }
               }
             }
             // End event carries the final complete text — flush immediately.

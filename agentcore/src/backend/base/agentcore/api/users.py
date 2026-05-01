@@ -13,34 +13,34 @@ from sqlalchemy.exc import IntegrityError
 from sqlmodel import select
 from sqlmodel.sql.expression import SelectOfScalar
 
-from MiCore.api.schemas import UsersResponse, UserReadWithPermissions
-from MiCore.api.utils import CurrentActiveUser, DbSession
-from MiCore.services.auth.decorators import PermissionChecker
-from MiCore.services.auth.permissions import get_permissions_for_role, normalize_role, permission_cache
-from MiCore.services.auth.invalidation import invalidate_user_auth
-from MiCore.services.auth.utils import get_password_hash, verify_password
-from MiCore.services.cache.user_cache import UserCacheService
-from MiCore.services.database.models.agent.model import Agent
-from MiCore.services.database.models.agent_api_key.model import AgentApiKey
-from MiCore.services.database.models.agent_bundle.model import AgentBundle
-from MiCore.services.database.models.agent_deployment_prod.model import AgentDeploymentProd, DeploymentPRODStatusEnum
-from MiCore.services.database.models.agent_deployment_uat.model import AgentDeploymentUAT, DeploymentUATStatusEnum
-from MiCore.services.database.models.agent_edit_lock.model import AgentEditLock
-from MiCore.services.database.models.agent_publish_recipient.model import AgentPublishRecipient
-from MiCore.services.database.models.agent_registry.model import AgentRegistry, AgentRegistryRating
-from MiCore.services.database.models.approval_request.model import ApprovalRequest
-from MiCore.services.database.models.department.model import Department
-from MiCore.services.database.models.file.model import File
-from MiCore.services.database.models.organization.model import Organization
-from MiCore.services.database.models.project.model import Project
-from MiCore.services.database.models.role.model import Role
-from MiCore.services.database.models.user.crud import get_user_by_id, update_user
-from MiCore.services.database.models.user.model import User, UserCreate, UserRead, UserUpdate
-from MiCore.services.database.models.user_department_membership.model import UserDepartmentMembership
-from MiCore.services.database.models.user_organization_membership.model import UserOrganizationMembership
-from MiCore.services.deps import get_settings_service
-from MiCore.services.notifications import send_user_notification_email
-from MiCore.services.observability import (
+from agentcore.api.schemas import UsersResponse, UserReadWithPermissions
+from agentcore.api.utils import CurrentActiveUser, DbSession
+from agentcore.services.auth.decorators import PermissionChecker
+from agentcore.services.auth.permissions import get_permissions_for_role, normalize_role, permission_cache
+from agentcore.services.auth.invalidation import invalidate_user_auth
+from agentcore.services.auth.utils import get_password_hash, verify_password
+from agentcore.services.cache.user_cache import UserCacheService
+from agentcore.services.database.models.agent.model import Agent
+from agentcore.services.database.models.agent_api_key.model import AgentApiKey
+from agentcore.services.database.models.agent_bundle.model import AgentBundle
+from agentcore.services.database.models.agent_deployment_prod.model import AgentDeploymentProd, DeploymentPRODStatusEnum
+from agentcore.services.database.models.agent_deployment_uat.model import AgentDeploymentUAT, DeploymentUATStatusEnum
+from agentcore.services.database.models.agent_edit_lock.model import AgentEditLock
+from agentcore.services.database.models.agent_publish_recipient.model import AgentPublishRecipient
+from agentcore.services.database.models.agent_registry.model import AgentRegistry, AgentRegistryRating
+from agentcore.services.database.models.approval_request.model import ApprovalRequest
+from agentcore.services.database.models.department.model import Department
+from agentcore.services.database.models.file.model import File
+from agentcore.services.database.models.organization.model import Organization
+from agentcore.services.database.models.project.model import Project
+from agentcore.services.database.models.role.model import Role
+from agentcore.services.database.models.user.crud import get_user_by_id, update_user
+from agentcore.services.database.models.user.model import User, UserCreate, UserRead, UserUpdate
+from agentcore.services.database.models.user_department_membership.model import UserDepartmentMembership
+from agentcore.services.database.models.user_organization_membership.model import UserOrganizationMembership
+from agentcore.services.deps import get_settings_service
+from agentcore.services.notifications import send_user_notification_email
+from agentcore.services.observability import (
     LangfuseProvisioningError,
     get_langfuse_provisioning_service,
 )
