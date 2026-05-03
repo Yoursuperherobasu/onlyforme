@@ -29,4 +29,6 @@ class UserOrganizationMembership(SQLModel, table=True):  # type: ignore[call-arg
         Index("ix_uom_user_id", "user_id"),
         Index("ix_uom_org_id", "org_id"),
         Index("ix_uom_role_id", "role_id"),
+        Index("ix_uom_user_status", "user_id", "status"),
+        Index("ix_uom_org_status", "org_id", "status"),
     )

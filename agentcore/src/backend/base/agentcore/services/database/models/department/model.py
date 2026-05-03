@@ -31,7 +31,7 @@ class Department(SQLModel, table=True):  # type: ignore[call-arg]
             server_default=text("'active'"),
         ),
     )
-    created_by: UUID = Field(foreign_key="user.id", nullable=False)
+    created_by: UUID = Field(foreign_key="user.id", nullable=False, index=True)
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc),
         sa_column=Column(DateTime(), nullable=False),

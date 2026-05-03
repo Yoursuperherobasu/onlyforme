@@ -130,6 +130,7 @@ class ApprovalRequest(ApprovalRequestBase, table=True):  # type: ignore[call-arg
     )
 
     __table_args__ = (
+        Index("ix_approval_agent_id", "agent_id"),
         Index("ix_approval_deployment_id", "deployment_id"),
         Index("ix_approval_org", "org_id"),
         Index("ix_approval_dept", "dept_id"),

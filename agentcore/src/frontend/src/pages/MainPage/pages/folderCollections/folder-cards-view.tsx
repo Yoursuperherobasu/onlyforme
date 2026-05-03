@@ -899,7 +899,7 @@ export default function FolderCardsView({
                             }}
                           >
                             <Edit2 className="mr-2 h-4 w-4" />
-                            Rename
+                            Edit
                           </DropdownMenuItem>
                           )}
                           {can("delete_project") && (
@@ -1265,7 +1265,7 @@ export default function FolderCardsView({
                                 }}
                               >
                                 <Edit2 className="mr-2 h-4 w-4" />
-                                Rename
+                                Edit
                               </DropdownMenuItem>
                               )}
                               {can("delete_project") && (

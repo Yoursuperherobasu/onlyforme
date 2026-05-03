@@ -36,4 +36,6 @@ class UserDepartmentMembership(SQLModel, table=True):  # type: ignore[call-arg]
         Index("ix_udm_org_id", "org_id"),
         Index("ix_udm_department_id", "department_id"),
         Index("ix_udm_role_id", "role_id"),
+        Index("ix_udm_user_status", "user_id", "status"),
+        Index("ix_udm_dept_status", "department_id", "status"),
     )

@@ -6,7 +6,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Response
 from fastapi.responses import StreamingResponse
-from sqlalchemy import and_, distinct, exists, func, or_, asc, desc, delete, update, inspect
+from sqlalchemy import and_, distinct, exists, func, or_, asc, desc, delete, update, inspect, text
 from sqlalchemy.sql import column, table
 from sqlalchemy.orm import aliased
 from sqlalchemy.exc import IntegrityError
@@ -60,11 +60,16 @@ def _strip_or_none(value: str | None) -> str | None:
     return stripped or None
 
 
-async def _table_exists(session: DbSession, table_name: str) -> bool:
-    connection = await session.connection()
-    return await connection.run_sync(
-        lambda sync_connection: table_name in inspect(sync_connection).get_table_names()
+async def _which_tables_exist(session: DbSession, *names: str) -> set[str]:
+    """Single targeted query replacing repeated catalog-scan _table_exists calls."""
+    result = await session.execute(
+        text(
+            "SELECT table_name FROM information_schema.tables "
+            "WHERE table_schema = current_schema() AND table_name = ANY(:names)"
+        ),
+        {"names": list(names)},
     )
+    return {row[0] for row in result}
 
 
 def _normalize_identity(value: str | None) -> str | None:
@@ -776,24 +781,38 @@ async def _get_super_admin_delete_blocker(
     if not subordinate_dept_admin_ids:
         return None
 
-    subordinate_dept_admins = (
-        await session.exec(
-            select(User).where(User.id.in_(subordinate_dept_admin_ids))
-        )
-    ).all()
-
-    blocking_admins: list[str] = []
-    for dept_admin in subordinate_dept_admins:
-        if await _target_has_managed_users(session, dept_admin):
-            blocking_admins.append(
-                _strip_or_none(dept_admin.display_name)
-                or _strip_or_none(dept_admin.username)
-                or str(dept_admin.id)
+    # Single JOIN: find which subordinate admins have any other active member in
+    # their departments — replaces an N×2 sequential query loop.
+    adm = aliased(UserDepartmentMembership)
+    mbr = aliased(UserDepartmentMembership)
+    blocking_admin_ids: set[UUID] = set(
+        (
+            await session.exec(
+                select(distinct(adm.user_id))
+                .select_from(adm)
+                .join(
+                    mbr,
+                    (mbr.department_id == adm.department_id)
+                    & (mbr.user_id != adm.user_id)
+                    & (mbr.status == ACTIVE_DEPT_STATUS),
+                )
+                .where(
+                    adm.user_id.in_(subordinate_dept_admin_ids),
+                    adm.status == ACTIVE_DEPT_STATUS,
+                )
             )
-
-    if not blocking_admins:
+        ).all()
+    )
+    if not blocking_admin_ids:
         return None
 
+    subordinate_dept_admins = (
+        await session.exec(select(User).where(User.id.in_(list(blocking_admin_ids))))
+    ).all()
+    blocking_admins = [
+        _strip_or_none(a.display_name) or _strip_or_none(a.username) or str(a.id)
+        for a in subordinate_dept_admins
+    ]
     blockers = ", ".join(sorted(blocking_admins))
     return (
         "This super admin cannot be deleted because these department admins still "
@@ -818,35 +837,22 @@ async def _active_runtime_dependency_counts(
     *,
     user_id: UUID,
 ) -> tuple[int, int]:
-    uat_count = int(
-        (
-            await session.exec(
-                select(func.count())
-                .select_from(AgentDeploymentUAT)
-                .join(Agent, Agent.id == AgentDeploymentUAT.agent_id)
-                .where(
-                    Agent.user_id == user_id,
-                    AgentDeploymentUAT.is_active.is_(True),
-                )
-            )
-        ).one()
-        or 0
+    uat_sub = (
+        select(func.count())
+        .select_from(AgentDeploymentUAT)
+        .join(Agent, Agent.id == AgentDeploymentUAT.agent_id)
+        .where(Agent.user_id == user_id, AgentDeploymentUAT.is_active.is_(True))
+        .scalar_subquery()
     )
-    prod_count = int(
-        (
-            await session.exec(
-                select(func.count())
-                .select_from(AgentDeploymentProd)
-                .join(Agent, Agent.id == AgentDeploymentProd.agent_id)
-                .where(
-                    Agent.user_id == user_id,
-                    AgentDeploymentProd.is_active.is_(True),
-                )
-            )
-        ).one()
-        or 0
+    prod_sub = (
+        select(func.count())
+        .select_from(AgentDeploymentProd)
+        .join(Agent, Agent.id == AgentDeploymentProd.agent_id)
+        .where(Agent.user_id == user_id, AgentDeploymentProd.is_active.is_(True))
+        .scalar_subquery()
     )
-    return uat_count, prod_count
+    row = (await session.exec(select(uat_sub, prod_sub))).one()
+    return int(row[0] or 0), int(row[1] or 0)
 
 
 async def _published_deployment_counts_for_user(
@@ -854,35 +860,22 @@ async def _published_deployment_counts_for_user(
     *,
     user_id: UUID,
 ) -> tuple[int, int]:
-    uat_count = int(
-        (
-            await session.exec(
-                select(func.count())
-                .select_from(AgentDeploymentUAT)
-                .join(Agent, Agent.id == AgentDeploymentUAT.agent_id)
-                .where(
-                    Agent.user_id == user_id,
-                    AgentDeploymentUAT.status == DeploymentUATStatusEnum.PUBLISHED,
-                )
-            )
-        ).one()
-        or 0
+    uat_sub = (
+        select(func.count())
+        .select_from(AgentDeploymentUAT)
+        .join(Agent, Agent.id == AgentDeploymentUAT.agent_id)
+        .where(Agent.user_id == user_id, AgentDeploymentUAT.status == DeploymentUATStatusEnum.PUBLISHED)
+        .scalar_subquery()
     )
-    prod_count = int(
-        (
-            await session.exec(
-                select(func.count())
-                .select_from(AgentDeploymentProd)
-                .join(Agent, Agent.id == AgentDeploymentProd.agent_id)
-                .where(
-                    Agent.user_id == user_id,
-                    AgentDeploymentProd.status == DeploymentPRODStatusEnum.PUBLISHED,
-                )
-            )
-        ).one()
-        or 0
+    prod_sub = (
+        select(func.count())
+        .select_from(AgentDeploymentProd)
+        .join(Agent, Agent.id == AgentDeploymentProd.agent_id)
+        .where(Agent.user_id == user_id, AgentDeploymentProd.status == DeploymentPRODStatusEnum.PUBLISHED)
+        .scalar_subquery()
     )
-    return uat_count, prod_count
+    row = (await session.exec(select(uat_sub, prod_sub))).one()
+    return int(row[0] or 0), int(row[1] or 0)
 
 
 async def _can_current_admin_delete_target_user(
@@ -1052,8 +1045,9 @@ async def _hard_delete_user_assets(
             ).all()
         )
 
-    has_control_panel_uat = await _table_exists(session, "control_panel_uat")
-    has_publish_record = await _table_exists(session, "publish_record")
+    _present = await _which_tables_exist(session, "control_panel_uat", "publish_record")
+    has_control_panel_uat = "control_panel_uat" in _present
+    has_publish_record = "publish_record" in _present
 
     if uat_deployment_ids and has_control_panel_uat:
         control_panel_uat_table = table("control_panel_uat", column("deployment_id"))
@@ -2336,25 +2330,26 @@ async def patch_user(
             "organization_name": _strip_or_none(user_update.organization_name),
         }
 
+        # Lazily populated once — reused for both role-change and dept-move checks.
+        has_managed_users: bool | None = None
+
         # Don't allow demoting a department admin while their department still
         # has active users under them — otherwise the department is left with
         # no admin. Reassign / remove the users first, or promote a new admin.
         if user_update.role is not None:
             requested_role = normalize_role(user_update.role)
             current_role = normalize_role(user_db.role)
-            if (
-                current_role == "department_admin"
-                and requested_role != "department_admin"
-                and await _target_has_managed_users(session, user_db)
-            ):
-                raise HTTPException(
-                    status_code=409,
-                    detail=(
-                        "This department admin still has users under them. "
-                        "Reassign or remove those users (or assign a new "
-                        "department admin) before changing this user's role."
-                    ),
-                )
+            if current_role == "department_admin" and requested_role != "department_admin":
+                has_managed_users = await _target_has_managed_users(session, user_db)
+                if has_managed_users:
+                    raise HTTPException(
+                        status_code=409,
+                        detail=(
+                            "This department admin still has users under them. "
+                            "Reassign or remove those users (or assign a new "
+                            "department admin) before changing this user's role."
+                        ),
+                    )
 
             # Don't allow promoting a user who's already a member of someone
             # else's department to department_admin. They were created under
@@ -2398,7 +2393,9 @@ async def patch_user(
             # still has subordinates — otherwise the old department is left
             # without an admin and the moved admin becomes "rootless" in the
             # new dept while still owning users in the old one.
-            if await _target_has_managed_users(session, user_db):
+            if has_managed_users is None:
+                has_managed_users = await _target_has_managed_users(session, user_db)
+            if has_managed_users:
                 raise HTTPException(
                     status_code=409,
                     detail=(
@@ -2470,7 +2467,17 @@ async def patch_user(
                     session.add(organization)
                     await session.flush()
 
-                super_admin_role = await _get_role_entity(session, "super_admin")
+                _role_map = {
+                    r.name: r
+                    for r in (
+                        await session.exec(select(Role).where(Role.name.in_(["super_admin", "root"])))
+                    ).all()
+                }
+                super_admin_role = _role_map.get("super_admin")
+                root_role = _role_map.get("root")
+                if not super_admin_role or not root_role:
+                    raise HTTPException(status_code=500, detail="Required roles are not configured.")
+
                 await _ensure_org_membership(
                     session,
                     user_id=user_db.id,
@@ -2479,7 +2486,6 @@ async def patch_user(
                     actor_user_id=user.id,
                 )
 
-                root_role = await _get_role_entity(session, "root")
                 await _ensure_org_membership(
                     session,
                     user_id=user.id,

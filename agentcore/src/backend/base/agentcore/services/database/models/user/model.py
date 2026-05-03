@@ -39,15 +39,15 @@ class User(SQLModel, table=True):  # type: ignore[call-arg]
     create_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     last_login_at: datetime | None = Field(default=None, nullable=True)
-    deleted_at: datetime | None = Field(default=None, sa_column=Column(DateTime(timezone=True), nullable=True))
+    deleted_at: datetime | None = Field(default=None, sa_column=Column(DateTime(timezone=True), nullable=True, index=True))
     store_api_key: str | None = Field(default=None, nullable=True)
     department_name: str | None = Field(default=None, nullable=True, max_length=255, index=True)
     department_admin: UUID | None = Field(
-        default=None, nullable=True, foreign_key="user.id",
+        default=None, nullable=True, foreign_key="user.id", index=True,
         description="FK to the department admin user",
     )
     created_by: UUID | None = Field(
-        default=None, nullable=True, foreign_key="user.id",
+        default=None, nullable=True, foreign_key="user.id", index=True,
         description="FK to the user who created this account",
     )
     country: str | None = Field(default=None, nullable=True, max_length=100, index=True)

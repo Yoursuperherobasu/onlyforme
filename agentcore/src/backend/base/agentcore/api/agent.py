@@ -26,6 +26,7 @@ from agentcore.api.utils import (
     CurrentActiveUser,
     DbSession,
     cascade_delete_agent,
+    cascade_delete_agents_batch,
     remove_api_keys,
     strip_sensitive_values_from_agent_data,
 )
@@ -727,25 +728,39 @@ async def delete_agent(
     current_user: CurrentActiveUser,
 ):
     """Delete a agent."""
-    agent = await _read_agent(
-        session=session,
-        agent_id=agent_id,
-        user_id=current_user.id,
+    # Single round-trip: confirm ownership + check deployment status together.
+    prod_pub_q = (
+        select(AgentDeploymentProd.id)
+        .where(AgentDeploymentProd.agent_id == agent_id)
+        .where(AgentDeploymentProd.status == DeploymentPRODStatusEnum.PUBLISHED)
     )
-    if not agent:
+    uat_pub_q = (
+        select(AgentDeploymentUAT.id)
+        .where(AgentDeploymentUAT.agent_id == agent_id)
+        .where(AgentDeploymentUAT.status == DeploymentUATStatusEnum.PUBLISHED)
+        .where(AgentDeploymentUAT.moved_to_prod.is_(False))
+    )
+    row = (
+        await session.execute(
+            select(Agent.id, exists(prod_pub_q), exists(uat_pub_q))
+            .where(Agent.id == agent_id)
+            .where(Agent.user_id == current_user.id)
+        )
+    ).first()
+    if row is None:
         raise HTTPException(status_code=404, detail="agent not found")
-    is_blocked, envs = await _agent_has_deployed_versions(session, agent.id)
-    if is_blocked:
-        env_label = " and ".join(envs)
+    _, prod_pub, uat_pub = row
+    if prod_pub or uat_pub:
+        envs = (["PROD"] if prod_pub else []) + (["UAT"] if uat_pub else [])
         raise HTTPException(
             status_code=409,
-            detail=f"This agent is published in {env_label} and cannot be deleted.",
+            detail=f"This agent is published in {' and '.join(envs)} and cannot be deleted.",
         )
     # Semantic search: delete embedding (fire-and-forget)
     from agentcore.services.semantic_search import delete_entity_embedding
 
-    asyncio.create_task(delete_entity_embedding("agents", str(agent.id)))
-    await cascade_delete_agent(session, agent.id)
+    asyncio.create_task(delete_entity_embedding("agents", str(agent_id)))
+    await cascade_delete_agent(session, agent_id)
 
     await session.commit()
     return {"message": "agent deleted successfully"}
@@ -839,10 +854,30 @@ async def delete_multiple_agent(
         agents_to_delete = (
             await db.exec(select(Agent).where(col(Agent.id).in_(agent_ids)).where(Agent.user_id == user.id))
         ).all()
+
+        # Batch deployment check — 2 queries for all agents instead of N queries
+        ids = [a.id for a in agents_to_delete]
+        prod_blocked: set[UUID] = set((await db.exec(
+            select(AgentDeploymentProd.agent_id)
+            .where(AgentDeploymentProd.agent_id.in_(ids),
+                   AgentDeploymentProd.status == DeploymentPRODStatusEnum.PUBLISHED)
+            .distinct()
+        )).all())
+        uat_blocked: set[UUID] = set((await db.exec(
+            select(AgentDeploymentUAT.agent_id)
+            .where(AgentDeploymentUAT.agent_id.in_(ids),
+                   AgentDeploymentUAT.status == DeploymentUATStatusEnum.PUBLISHED,
+                   AgentDeploymentUAT.moved_to_prod.is_(False))
+            .distinct()
+        )).all())
         blocked: dict[str, list[str]] = {}
         for agent in agents_to_delete:
-            is_blocked, envs = await _agent_has_deployed_versions(db, agent.id)
-            if is_blocked:
+            envs = []
+            if agent.id in prod_blocked:
+                envs.append("PROD")
+            if agent.id in uat_blocked:
+                envs.append("UAT")
+            if envs:
                 blocked[str(agent.id)] = envs
         if blocked:
             if len(blocked) == 1 and len(agent_ids) == 1:
@@ -867,7 +902,7 @@ async def delete_multiple_agent(
 
         for agent in agents_to_delete:
             asyncio.create_task(delete_entity_embedding("agents", str(agent.id)))
-            await cascade_delete_agent(db, agent.id)
+        await cascade_delete_agents_batch(db, ids)
 
         await db.commit()
         return {"deleted": len(agents_to_delete)}

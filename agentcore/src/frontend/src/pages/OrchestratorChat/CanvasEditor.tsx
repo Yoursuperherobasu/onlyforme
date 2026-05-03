@@ -9,7 +9,7 @@
  *
  * Floating panel + reading-level slider matches MiBuddy exactly.
  */
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Pencil, Check, Mail } from "lucide-react";
 
 // MiBuddy SVG icons
@@ -98,6 +98,10 @@ function mdToHtml(md: string): string {
   return out.join("\n");
 }
 
+function looksLikeHtml(s: string): boolean {
+  return /<(h[1-6]|p|ul|ol|li|div|span|strong|em|code|pre|blockquote|br)\b[^>]*>/i.test(s);
+}
+
 /** Very small HTML → plain text for the DRAFT mailto: body. */
 function htmlToPlain(html: string): string {
   return html
@@ -174,6 +178,16 @@ export default function CanvasEditor({
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [showReadingLevel]);
 
+  // Set contentEditable innerHTML exactly once when entering edit mode.
+  // We intentionally do NOT pass dangerouslySetInnerHTML in edit mode so that
+  // React never resets innerHTML (and the cursor) on re-renders triggered by
+  // saveState / panelLoading / emojiAction state changes.
+  useLayoutEffect(() => {
+    if (!isEditing || !editorRef.current) return;
+    editorRef.current.innerHTML = looksLikeHtml(current) ? current : mdToHtml(current);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isEditing]);
+
   const _canvasCall = (body: Record<string, unknown>) => {
     const tokenMatch = document.cookie.match(/(?:^|;\s*)access_token_ag=([^;]*)/);
     const headers: Record<string, string> = { "Content-Type": "application/json" };
@@ -218,6 +232,7 @@ export default function CanvasEditor({
       const data = await res.json();
       const newContent = data?.data?.[0]?.content;
       if (newContent) {
+        if (editorRef.current) editorRef.current.innerHTML = newContent;
         setCurrent(newContent);
         onContentChange?.(newContent);
       }
@@ -243,6 +258,7 @@ export default function CanvasEditor({
       const data = await res.json();
       const newContent = data?.data?.[0]?.content;
       if (newContent) {
+        if (editorRef.current) editorRef.current.innerHTML = newContent;
         setCurrent(newContent);
         onContentChange?.(newContent);
       }
@@ -280,7 +296,8 @@ export default function CanvasEditor({
 
   const handleInput = (e: React.FormEvent<HTMLDivElement>) => {
     const html = e.currentTarget.innerHTML;
-    setCurrent(html);
+    // Do NOT call setCurrent here — it triggers a re-render which resets
+    // dangerouslySetInnerHTML and moves the cursor to position 0 on every keystroke.
     if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
     saveTimeoutRef.current = setTimeout(() => persist(html), 800);
   };
@@ -290,6 +307,7 @@ export default function CanvasEditor({
       if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
       const html = editorRef.current?.innerHTML ?? current;
       persist(html);
+      setCurrent(html); // sync state now so view mode re-renders with the latest content
     }
     setIsEditing((v) => !v);
   };
@@ -309,10 +327,9 @@ export default function CanvasEditor({
     }
   };
 
-  const initialHtml =
-    (current || "").trim().startsWith("<")
-      ? current
-      : mdToHtml(current || "");
+  const initialHtml = looksLikeHtml(current || "")
+    ? (current || "")
+    : mdToHtml(current || "");
 
   return (
     <div className="ac_canvas_wrapper">
@@ -323,7 +340,7 @@ export default function CanvasEditor({
         contentEditable={isEditing}
         suppressContentEditableWarning
         onInput={handleInput}
-        dangerouslySetInnerHTML={{ __html: initialHtml }}
+        {...(!isEditing ? { dangerouslySetInnerHTML: { __html: initialHtml } } : {})}
       />
       <div className="ac_canvas_actions">
         {saveState !== "idle" && (

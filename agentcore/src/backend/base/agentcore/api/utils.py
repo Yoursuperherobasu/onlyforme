@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Annotated, Any
 from fastapi import Depends, HTTPException, Query
 from fastapi_pagination import Params
 from loguru import logger
-from sqlalchemy import delete
+from sqlalchemy import delete, text as _sa_text
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from agentcore.graph_langgraph import LangGraphAdapter
@@ -415,19 +415,40 @@ def parse_value(value: Any, input_type: str) -> Any:
     return value
 
 
+_CASCADE_DELETE_ONE = """
+WITH
+  d1 AS (DELETE FROM conversation   WHERE agent_id = :aid),
+  d2 AS (DELETE FROM "transaction"  WHERE agent_id = :aid),
+  d3 AS (DELETE FROM vertex_build   WHERE agent_id = :aid)
+DELETE FROM agent WHERE id = :aid
+"""
+
+_CASCADE_DELETE_BATCH = """
+WITH
+  d1 AS (DELETE FROM conversation   WHERE agent_id = ANY(:aids)),
+  d2 AS (DELETE FROM "transaction"  WHERE agent_id = ANY(:aids)),
+  d3 AS (DELETE FROM vertex_build   WHERE agent_id = ANY(:aids))
+DELETE FROM agent WHERE id = ANY(:aids)
+"""
+
 async def cascade_delete_agent(session: AsyncSession, agent_id: uuid.UUID) -> None:
     try:
-
-        await session.exec(delete(ConversationTable).where(ConversationTable.agent_id == agent_id))
-        await session.exec(delete(TransactionTable).where(TransactionTable.agent_id == agent_id))
-        await session.exec(delete(VertexBuildTable).where(VertexBuildTable.agent_id == agent_id))
-        await session.exec(delete(Agent).where(Agent.id == agent_id))
+        await session.execute(_sa_text(_CASCADE_DELETE_ONE), {"aid": agent_id})
     except Exception as e:
         msg = (
             f"Unable to delete agent {agent_id}. "
             "It is published in UAT or PROD and cannot be deleted."
         )
         raise RuntimeError(msg) from e
+
+
+async def cascade_delete_agents_batch(session: AsyncSession, agent_ids: list[uuid.UUID]) -> None:
+    if not agent_ids:
+        return
+    try:
+        await session.execute(_sa_text(_CASCADE_DELETE_BATCH), {"aids": agent_ids})
+    except Exception as e:
+        raise RuntimeError("Unable to delete agents. They may be published in UAT or PROD.") from e
 
 
 def custom_params(

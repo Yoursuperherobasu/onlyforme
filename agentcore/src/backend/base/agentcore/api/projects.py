@@ -18,7 +18,7 @@ from sqlalchemy import func, or_, update
 from sqlalchemy.orm import selectinload
 from sqlmodel import select
 
-from agentcore.api.utils import CurrentActiveUser, DbSession, cascade_delete_agent, custom_params, remove_api_keys
+from agentcore.api.utils import CurrentActiveUser, DbSession, cascade_delete_agent, cascade_delete_agents_batch, custom_params, remove_api_keys
 from agentcore.api.agent import create_agent
 from agentcore.api.v1_schemas import AgentListCreate
 from agentcore.helpers.agent import generate_unique_agent_name
@@ -665,9 +665,8 @@ async def delete_project(
             agents = (
                 await session.exec(select(Agent).where(Agent.project_id == project_id, Agent.user_id == current_user.id))
             ).all()
-        if len(agents) > 0:
-            for agent in agents:
-                await cascade_delete_agent(session, agent.id)
+        if agents:
+            await cascade_delete_agents_batch(session, [a.id for a in agents])
     except HTTPException:
         raise
     except RuntimeError as e:
