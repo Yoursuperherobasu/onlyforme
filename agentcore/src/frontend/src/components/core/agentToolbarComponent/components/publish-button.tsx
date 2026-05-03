@@ -117,6 +117,7 @@ const PublishButton = ({}: PublishButtonProps) => {
     }>
   >([]);
   const [validationInProgress, setValidationInProgress] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const latestValidationRun = useRef(0);
   const publishMutation = usePostUnifiedPublishAgent();
   const { data: publishStatus } = useGetPublishStatus(
@@ -371,6 +372,9 @@ const PublishButton = ({}: PublishButtonProps) => {
   }, [normalizedEmails, invalidEmails, open, currentAgent?.id]);
 
   const handleSubmit = async () => {
+    if (isSubmitting) return;
+    setIsSubmitting(true);
+    try {
     if (!currentAgent?.id) {
       setErrorData({ title: "No active agent found." });
       return;
@@ -519,6 +523,9 @@ const PublishButton = ({}: PublishButtonProps) => {
         list: [error?.response?.data?.detail ?? "Please try again."],
       });
       return;
+    }
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -770,6 +777,7 @@ const PublishButton = ({}: PublishButtonProps) => {
             <Button
               onClick={handleSubmit}
               disabled={
+                isSubmitting ||
                 validationInProgress ||
                 publishMutation.isPending ||
                 agentNameAvailability.isFetching ||

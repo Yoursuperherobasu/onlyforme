@@ -953,12 +953,15 @@ async def validate_publish_email(
                 message="Current super admin user has no active organization mapping.",
             )
 
-        org_membership = (
+        # Super admins can share with any user in any dept within their org.
+        # Use UserDepartmentMembership (org-scoped) as the source of truth —
+        # dept members/admins may not have UserOrganizationMembership rows.
+        dept_membership = (
             await session.exec(
-                select(UserOrganizationMembership).where(
-                    UserOrganizationMembership.user_id == user.id,
-                    UserOrganizationMembership.org_id == org_id,
-                    UserOrganizationMembership.status.in_(["accepted", "active"]),
+                select(UserDepartmentMembership).where(
+                    UserDepartmentMembership.user_id == user.id,
+                    UserDepartmentMembership.org_id == org_id,
+                    UserDepartmentMembership.status == "active",
                 )
             )
         ).first()
@@ -967,10 +970,10 @@ async def validate_publish_email(
             agent_id=agent_id,
             email=normalized_email,
             department_id=fallback_department_id,
-            exists_in_department=org_membership is not None,
+            exists_in_department=dept_membership is not None,
             message=(
                 "Email found in your organization."
-                if org_membership
+                if dept_membership
                 else "Email exists, but not in your organization."
             ),
         )

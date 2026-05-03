@@ -574,13 +574,14 @@ export default function AdminPage() {
           title: "SMTP is not configured",
           list: [smtpError],
         });
-        return;
+        throw new Error(smtpError);
       }
 
       setErrorData({
         title: USER_ADD_ERROR_ALERT,
         list: errors,
       });
+      throw new Error(errors.join(" | "));
     }
   }
 

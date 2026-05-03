@@ -671,8 +671,8 @@ async def update_agent(
         if db_agent.project_id:
             selected_project = await session.get(Folder, db_agent.project_id)
             if selected_project:
-                db_agent.org_id = selected_project.org_id or db_agent.org_id
-                db_agent.dept_id = selected_project.dept_id or db_agent.dept_id
+                db_agent.org_id = db_agent.org_id or selected_project.org_id
+                db_agent.dept_id = db_agent.dept_id or selected_project.dept_id
 
         await _verify_fs_path(db_agent.fs_path)
 

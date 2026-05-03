@@ -444,6 +444,55 @@ async def _reject_cross_department_duplicate_for_dept_admin(
         )
 
 
+async def _build_existing_user_conflict_detail(
+    session: DbSession,
+    *,
+    target_user: User,
+) -> str:
+    identity = _strip_or_none(target_user.username) or _strip_or_none(target_user.email) or "This user"
+
+    membership_rows = (
+        await session.exec(
+            select(Organization.name, Department.name)
+            .join(
+                UserOrganizationMembership,
+                UserOrganizationMembership.org_id == Organization.id,
+            )
+            .join(
+                UserDepartmentMembership,
+                and_(
+                    UserDepartmentMembership.user_id == UserOrganizationMembership.user_id,
+                    UserDepartmentMembership.org_id == UserOrganizationMembership.org_id,
+                ),
+                isouter=True,
+            )
+            .join(Department, Department.id == UserDepartmentMembership.department_id, isouter=True)
+            .where(
+                UserOrganizationMembership.user_id == target_user.id,
+                UserOrganizationMembership.status.in_(list(ACTIVE_ORG_STATUSES)),
+            )
+        )
+    ).all()
+
+    memberships: list[str] = []
+    seen: set[tuple[str, str]] = set()
+    for org_name, dept_name in membership_rows:
+        org_value = _strip_or_none(org_name) or "-"
+        dept_value = _strip_or_none(dept_name) or "-"
+        key = (org_value, dept_value)
+        if key in seen:
+            continue
+        seen.add(key)
+        memberships.append(f"Organization: {org_value}, Department: {dept_value}")
+
+    if not memberships:
+        org_value = _strip_or_none(getattr(target_user, "organization_name", None)) or "-"
+        dept_value = _strip_or_none(getattr(target_user, "department_name", None)) or "-"
+        memberships.append(f"Organization: {org_value}, Department: {dept_value}")
+
+    return f"Username '{identity}' already exists. " + " | ".join(memberships)
+
+
 async def _resolve_creator_org(
     session: DbSession,
     current_user: User,
@@ -1283,7 +1332,11 @@ async def add_user(
             and normalize_role(getattr(existing_user, "role", "consumer")) == target_role
         )
         if existing_user and not is_reusing_consumer and not is_reusing_same_role and not is_reusing_soft_deleted:
-            raise HTTPException(status_code=400, detail="This username is unavailable.")
+            detail = await _build_existing_user_conflict_detail(
+                session,
+                target_user=existing_user,
+            )
+            raise HTTPException(status_code=400, detail=detail)
 
         raw_password = user.password or secrets.token_urlsafe(32)
         if (is_reusing_consumer or is_reusing_same_role or is_reusing_soft_deleted) and existing_user:

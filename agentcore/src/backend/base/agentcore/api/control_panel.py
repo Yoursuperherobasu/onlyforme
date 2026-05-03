@@ -1034,15 +1034,30 @@ async def update_agent_sharing_options(
             if missing_users:
                 raise HTTPException(status_code=400, detail=f"User not found for emails: {', '.join(missing_users)}")
 
-            memberships = (
-                await session.exec(
-                    select(UserDepartmentMembership).where(
-                        UserDepartmentMembership.user_id.in_([users_by_email[email].id for email in normalized_emails]),
-                        UserDepartmentMembership.department_id == dept_id,
-                        UserDepartmentMembership.status == "active",
+            is_org_wide_admin = current_role in {"root", "super_admin", "admin"}
+            recipient_user_ids = [users_by_email[email].id for email in normalized_emails]
+            if is_org_wide_admin and deployment.org_id:
+                # Super/root admins can share with any user in any dept in the org
+                memberships = (
+                    await session.exec(
+                        select(UserDepartmentMembership).where(
+                            UserDepartmentMembership.user_id.in_(recipient_user_ids),
+                            UserDepartmentMembership.org_id == deployment.org_id,
+                            UserDepartmentMembership.status == "active",
+                        )
                     )
-                )
-            ).all()
+                ).all()
+            else:
+                # Dept admins / developers / business users: only their own dept
+                memberships = (
+                    await session.exec(
+                        select(UserDepartmentMembership).where(
+                            UserDepartmentMembership.user_id.in_(recipient_user_ids),
+                            UserDepartmentMembership.department_id == dept_id,
+                            UserDepartmentMembership.status == "active",
+                        )
+                    )
+                ).all()
             allowed_user_ids = {membership.user_id for membership in memberships}
             invalid_membership = [
                 email for email in normalized_emails if users_by_email[email].id not in allowed_user_ids

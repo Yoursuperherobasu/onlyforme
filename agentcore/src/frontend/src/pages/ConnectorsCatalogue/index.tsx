@@ -745,6 +745,7 @@ export default function ConnectorsCatalogueView(): JSX.Element {
   };
 
   const handleTestConnection = async (connectorId: string) => {
+    setActioningConnectorId(connectorId);
     try {
       const result = await testMutation.mutateAsync(connectorId);
       setTestResult(result);
@@ -758,6 +759,8 @@ export default function ConnectorsCatalogueView(): JSX.Element {
       const detail = getErrorMessage(err, t("Test request failed"));
       setTestResult({ success: false, message: detail });
       setErrorData({ title: t("Connection test failed"), list: [detail] });
+    } finally {
+      setActioningConnectorId(null);
     }
   };
 
@@ -834,6 +837,7 @@ export default function ConnectorsCatalogueView(): JSX.Element {
   };
 
   const handleToggleConnection = async (connector: ConnectorInfo) => {
+    setActioningConnectorId(connector.id);
     try {
       if (connector.status === "connected") {
         await disconnectMutation.mutateAsync(connector.id);
@@ -854,9 +858,12 @@ export default function ConnectorsCatalogueView(): JSX.Element {
         title: t("Connector action failed"),
         list: [getErrorMessage(err, t("Unable to update connector status"))],
       });
+    } finally {
+      setActioningConnectorId(null);
     }
   };
 
+  const [actioningConnectorId, setActioningConnectorId] = useState<string | null>(null);
   const [linkingMailbox, setLinkingMailbox] = useState(false);
   const handleLinkMailbox = async (connectorId: string) => {
     try {
@@ -1212,7 +1219,7 @@ export default function ConnectorsCatalogueView(): JSX.Element {
                             <div className="flex items-center gap-1">
                               <button
                                 onClick={() => handleToggleConnection(c)}
-                                disabled={testMutation.isPending || disconnectMutation.isPending}
+                                disabled={actioningConnectorId === c.id}
                                 className={`rounded p-1.5 transition-colors ${
                                   c.status === "connected"
                                     ? "text-green-500 hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-900/20"
@@ -1220,7 +1227,7 @@ export default function ConnectorsCatalogueView(): JSX.Element {
                                 }`}
                                 title={c.status === "connected" ? t("Disconnect") : t("Connect")}
                               >
-                                {testMutation.isPending || disconnectMutation.isPending ? (
+                                {actioningConnectorId === c.id ? (
                                   <Loader2 className="h-4 w-4 animate-spin" />
                                 ) : c.status === "connected" ? (
                                   <Unplug className="h-4 w-4" />
@@ -1230,11 +1237,15 @@ export default function ConnectorsCatalogueView(): JSX.Element {
                               </button>
                               <button
                                 onClick={() => handleTestConnection(c.id)}
-                                disabled={testMutation.isPending}
+                                disabled={actioningConnectorId === c.id}
                                 className="rounded p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
                                 title={t("Test Connection")}
                               >
-                                <Zap className="h-4 w-4" />
+                                {actioningConnectorId === c.id ? (
+                                  <Loader2 className="h-4 w-4 animate-spin" />
+                                ) : (
+                                  <Zap className="h-4 w-4" />
+                                )}
                               </button>
                               {EMAIL_PROVIDERS.has(c.provider) && (
                                 <button
