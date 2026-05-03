@@ -219,14 +219,14 @@ const ListComponent = ({
         onClick={handleClick}
         className={cn(
           "flex flex-row bg-background group justify-between rounded-lg border-none px-4 py-3 shadow-none hover:bg-muted",
-          isComponent || effectiveDisabled ? "cursor-default" : "cursor-pointer",
+          isComponent ? "cursor-default" : effectiveDisabled ? "cursor-not-allowed" : "cursor-pointer",
           effectiveDisabled && "opacity-70"
         )}
         data-testid="list-card"
       >
         <div
           className={`flex min-w-0 ${
-            isComponent || effectiveDisabled ? "cursor-default" : "cursor-pointer"
+            isComponent ? "cursor-default" : effectiveDisabled ? "cursor-not-allowed" : "cursor-pointer"
           } items-center gap-4`}
         >
           <div className="group/checkbox relative flex items-center">

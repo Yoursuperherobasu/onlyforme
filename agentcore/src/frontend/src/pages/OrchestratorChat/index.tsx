@@ -37,6 +37,8 @@ import useAlertStore from "@/stores/alertStore";
 import shareTeamsIcon from "@/assets/share_teams.png";
 import outlookIcon from "@/assets/icons8-outlook-48.png";
 import openaiLogo from "@/assets/openai_logo.svg";
+import openaiLightLogo from "@/assets/openai_light.jfif";
+import useDarkStore from "@/stores/darkStore";
 import geminiLogo from "@/assets/gemini_logo.svg";
 import mistralLogo from "@/assets/mistral_logo.svg";
 import claudeLogo from "@/assets/claude_logo.svg";
@@ -74,11 +76,14 @@ import MessagesPage from "../SettingsPage/pages/messagesPage";
 
 
 function SidebarMaskIcon({ src, className = "h-4 w-4 shrink-0" }: { src: string; className?: string }) {
+  const isDark = useDarkStore((state) => state.dark);
+  const resolvedSrc = isDark && src === openaiLogo ? openaiLightLogo : src;
+  const isOpenAILight = resolvedSrc === openaiLightLogo;
   return (
     <img
-      src={src}
+      src={resolvedSrc}
       alt=""
-      className={`${className} opacity-80 object-contain dark:invert`}
+      className={`${className} opacity-80 object-contain${isOpenAILight ? "" : " dark:invert"}`}
     />
   );
 }

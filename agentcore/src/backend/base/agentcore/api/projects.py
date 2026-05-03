@@ -40,7 +40,7 @@ from agentcore.services.database.models.user.model import User
 from agentcore.services.database.models.user_department_membership.model import UserDepartmentMembership
 from agentcore.services.database.models.user_organization_membership.model import UserOrganizationMembership
 from agentcore.services.database.models.tag.model import ProjectTag, Tag
-from agentcore.api.tags import get_tags_for_project, sync_project_tags, _get_user_org_id
+from agentcore.api.tags import get_tags_for_project, get_tags_for_projects_batch, sync_project_tags, _get_user_org_id
 from agentcore.services.auth.permissions import get_permissions_for_role, normalize_role
 
 router = APIRouter(prefix="/projects", tags=["Projects"])
@@ -51,24 +51,23 @@ def _is_admin_role(role: str | None) -> bool:
 
 
 async def _get_scope_memberships(session: DbSession, user_id: UUID) -> tuple[set[UUID], set[UUID]]:
-    org_rows = (
-        await session.exec(
-            select(UserOrganizationMembership.org_id).where(
-                UserOrganizationMembership.user_id == user_id,
-                UserOrganizationMembership.status.in_(["accepted", "active"]),
+    from sqlalchemy import literal, union_all as _union_all
+    rows = (
+        await session.execute(
+            _union_all(
+                select(literal("o").label("t"), UserOrganizationMembership.org_id.label("id")).where(
+                    UserOrganizationMembership.user_id == user_id,
+                    UserOrganizationMembership.status.in_(["accepted", "active"]),
+                ),
+                select(literal("d").label("t"), UserDepartmentMembership.department_id.label("id")).where(
+                    UserDepartmentMembership.user_id == user_id,
+                    UserDepartmentMembership.status == "active",
+                ),
             )
         )
     ).all()
-    dept_rows = (
-        await session.exec(
-            select(UserDepartmentMembership.department_id).where(
-                UserDepartmentMembership.user_id == user_id,
-                UserDepartmentMembership.status == "active",
-            )
-        )
-    ).all()
-    org_ids = {r if isinstance(r, UUID) else r[0] for r in org_rows}
-    dept_ids = {r if isinstance(r, UUID) else r[0] for r in dept_rows}
+    org_ids = {row.id for row in rows if row.t == "o"}
+    dept_ids = {row.id for row in rows if row.t == "d"}
     return org_ids, dept_ids
 
 
@@ -405,6 +404,8 @@ async def read_projects(
                     if user_id not in org_map:
                         org_map[user_id] = org_name
 
+            tags_by_project = await get_tags_for_projects_batch(session, [p.id for p in projects])
+
             result: list[ProjectRead] = []
             for project in projects:
                 creator_id = project.created_by or project.owner_user_id or project.user_id
@@ -435,7 +436,6 @@ async def read_projects(
                     organization_name = None
                     department_name = None
 
-                project_tags = await get_tags_for_project(session, project.id)
                 result.append(
                     ProjectRead(
                         id=project.id,
@@ -448,7 +448,7 @@ async def read_projects(
                         created_by_email=created_by_email,
                         department_name=department_name,
                         organization_name=organization_name,
-                        tags=project_tags,
+                        tags=tags_by_project.get(project.id, []),
                     )
                 )
 

@@ -128,6 +128,23 @@ async def get_tags_for_agent(session, agent_id: UUID) -> list[str]:
     return list(rows)
 
 
+async def get_tags_for_projects_batch(session, project_ids: list[UUID]) -> dict[UUID, list[str]]:
+    """Fetch tags for multiple projects in one query. Returns {project_id: [tag_names]}."""
+    if not project_ids:
+        return {}
+    rows = (
+        await session.exec(
+            select(ProjectTag.project_id, Tag.name)
+            .join(Tag, Tag.id == ProjectTag.tag_id)
+            .where(ProjectTag.project_id.in_(project_ids))
+        )
+    ).all()
+    result: dict[UUID, list[str]] = {}
+    for proj_id, tag_name in rows:
+        result.setdefault(proj_id, []).append(tag_name)
+    return result
+
+
 # ── Endpoints ────────────────────────────────────────────────────────────
 
 @router.get("/predefined", response_model=list[TagRead], status_code=200)

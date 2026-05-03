@@ -142,7 +142,7 @@ export const SidebarDraggableComponent = forwardRef(
               className={cn(
                 "group/draggable flex items-center gap-2 rounded-md bg-muted p-3 hover:bg-secondary-hover/75",
                 error && "cursor-not-allowed select-none",
-                readOnly ? "cursor-default" : "cursor-grab",
+                readOnly ? "cursor-not-allowed" : "cursor-grab",
                 disabled
                   ? "pointer-events-none bg-accent text-placeholder-foreground"
                   : "bg-muted text-foreground",

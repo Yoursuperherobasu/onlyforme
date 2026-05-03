@@ -945,7 +945,7 @@ export default function Page({
               deleteKeyCode={[]}
               fitView={isEmptyAgent.current ? false : true}
               fitViewOptions={fitViewOptions}
-              className="theme-attribution"
+              className={`theme-attribution${isReadOnlyCanvas ? " cursor-not-allowed" : ""}`}
               tabIndex={isReadOnlyCanvas ? -1 : undefined}
               minZoom={MIN_ZOOM}
               maxZoom={MAX_ZOOM}
