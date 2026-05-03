@@ -293,6 +293,7 @@ async def chat_completion_stream(request: ChatCompletionRequest) -> AsyncIterato
     # Stream content chunks and accumulate for usage extraction
     accumulated = None
     finish_reason = "stop"
+    _logged_shape = False
     async for chunk in provider.stream(model, messages):
         # Accumulate chunks so the final message carries usage metadata
         try:
@@ -303,20 +304,33 @@ async def chat_completion_stream(request: ChatCompletionRequest) -> AsyncIterato
         content = ""
         reasoning = ""
 
-        # Check for reasoning content in streaming chunks
-        # Anthropic extended thinking: content may be a list of blocks
+        # Check for reasoning content in streaming chunks.
+        #   Anthropic extended thinking: content blocks with type="thinking"
+        #   Google Gemini (langchain-google-genai): content blocks with thought=True,
+        #     OR additional_kwargs.thoughts / thinking_content
+        #   OpenAI o-series / DeepSeek-R1 / Grok: additional_kwargs.reasoning_content
         raw = chunk.content if hasattr(chunk, "content") else chunk
         if isinstance(raw, list):
             for block in raw:
                 if isinstance(block, dict):
+                    # Gemini marks thought parts with thought=True regardless of
+                    # the block's "type" field. Check this FIRST so a thought
+                    # block isn't accidentally counted as user-facing content.
+                    if block.get("thought") is True:
+                        reasoning += block.get("text", "") or block.get("thinking", "")
+                        continue
                     if block.get("type") == "thinking":
                         reasoning += block.get("thinking", "")
                     elif block.get("type") == "text":
                         content += block.get("text", "")
-                elif hasattr(block, "type"):
-                    if block.type == "thinking":
+                elif hasattr(block, "type") or hasattr(block, "thought"):
+                    # Object-style content block (some langchain providers)
+                    if getattr(block, "thought", False) is True:
+                        reasoning += getattr(block, "text", "") or getattr(block, "thinking", "")
+                        continue
+                    if getattr(block, "type", None) == "thinking":
                         reasoning += getattr(block, "thinking", "")
-                    elif block.type == "text":
+                    elif getattr(block, "type", None) == "text":
                         content += getattr(block, "text", "")
         elif raw:
             content = str(raw) if not isinstance(raw, str) else raw
@@ -325,6 +339,36 @@ async def chat_completion_stream(request: ChatCompletionRequest) -> AsyncIterato
         additional_kwargs = getattr(chunk, "additional_kwargs", {}) or {}
         if additional_kwargs.get("reasoning_content"):
             reasoning = additional_kwargs["reasoning_content"]
+        # Gemini surfaces thoughts in additional_kwargs in some
+        # langchain-google-genai versions. Append (don't overwrite) so we don't
+        # clobber thoughts already extracted from content blocks above.
+        for _gemini_key in ("thoughts", "thinking_content", "thought_content"):
+            _val = additional_kwargs.get(_gemini_key)
+            if not _val:
+                continue
+            if isinstance(_val, list):
+                reasoning += "".join(str(p) for p in _val if p)
+            else:
+                reasoning += str(_val)
+
+        # One-shot diagnostic on the first chunk that declared reasoning intent.
+        # Prints the shape that landed so we can adjust the extractor for new
+        # provider versions without guessing.
+        if not _logged_shape:
+            try:
+                from loguru import logger as _logger
+                _content_preview = (
+                    raw[:2] if isinstance(raw, list) else str(raw)[:120]
+                )
+                _logger.info(
+                    f"[ModelSvcStream][reasoning-debug] first_chunk content_type={type(raw).__name__} "
+                    f"content_preview={_content_preview!r} "
+                    f"additional_kwargs_keys={list(additional_kwargs.keys())} "
+                    f"extracted_reasoning_len={len(reasoning)} extracted_content_len={len(content)}"
+                )
+            except Exception:  # noqa: BLE001
+                pass
+            _logged_shape = True
 
         if reasoning:
             reasoning_chunk = ChatCompletionChunk(

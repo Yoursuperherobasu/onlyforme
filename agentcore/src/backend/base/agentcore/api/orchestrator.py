@@ -767,7 +767,22 @@ async def _orch_call_run_api(
                         f"content_blocks={len(end_content_blocks)}"
                     )
                 elif etype == "error":
-                    raise ValueError(edata.get("error", "Stream error from /run"))
+                    # The run-API emits two flavors of `error` events:
+                    #   1. Component-level ErrorMessage sent via send_error()
+                    #      — payload has `text="<msg>"` plus `error=True`
+                    #        (a boolean flag from MessageEvent), and
+                    #   2. run_agent_generator's terminal error
+                    #      — payload has `error="<msg>"` (string).
+                    # Picking the literal "error" key first turns the boolean
+                    # into the user-visible string "False". Prefer `text`,
+                    # fall back to `error` only if it is a non-empty string.
+                    err_msg: Any = edata.get("text") if isinstance(edata, dict) else None
+                    if not (isinstance(err_msg, str) and err_msg.strip()):
+                        candidate = edata.get("error") if isinstance(edata, dict) else None
+                        err_msg = candidate if isinstance(candidate, str) and candidate.strip() else None
+                    if not (isinstance(err_msg, str) and err_msg.strip()):
+                        err_msg = "Stream error from /run"
+                    raise ValueError(err_msg)
 
     reconstructed_text = _reconstructed_stream_text()
     if not was_interrupted:
@@ -2382,8 +2397,45 @@ async def orch_chat_stream(
             })
         except Exception as exc:
             logger.exception(f"[ORCH-STREAM] Error: {exc}")
-            event_manager.on_error(data={"text": str(exc)})
-            event_manager.on_end(data={})
+            # Surface the agent failure to the user the same way Playground
+            # does: persist a visible agent message carrying the error text
+            # and close the stream via `end` with `agent_text` populated.
+            # Relying on the `error` SSE event alone leaves the placeholder
+            # bubble empty — the frontend then falls back to rendering
+            # EMPTY_OUTPUT_SEND_MESSAGE ("Message empty.").
+            error_text = str(exc) or "Agent run failed."
+            from agentcore.services.deps import session_scope
+
+            err_msg_id = uuid4()
+            try:
+                err_ts = datetime.now(timezone.utc).replace(tzinfo=None)
+                async with session_scope() as db:
+                    err_agent_msg = OrchConversationTable(
+                        id=err_msg_id,
+                        sender="agent",
+                        sender_name=agent_name,
+                        session_id=chat_session_id,
+                        text=error_text,
+                        agent_id=dep_agent_id,
+                        user_id=dep_user_id,
+                        deployment_id=dep_deployment_id,
+                        timestamp=err_ts,
+                        files=[],
+                        properties={"error": True},
+                        category="error",
+                        content_blocks=[],
+                    )
+                    await orch_add_message(err_agent_msg, db)
+            except Exception as _persist_err:
+                logger.warning(f"[ORCH-STREAM] Could not persist error message: {_persist_err}")
+
+            event_manager.on_error(data={"text": error_text})
+            event_manager.on_end(data={
+                "agent_text": error_text,
+                "message_id": str(err_msg_id),
+                "content_blocks": [],
+                "error": True,
+            })
         finally:
             # Sentinel to stop the consumer
             queue.put_nowait((None, None, None))

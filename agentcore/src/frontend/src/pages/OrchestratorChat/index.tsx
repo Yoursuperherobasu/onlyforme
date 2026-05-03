@@ -740,7 +740,13 @@ function ImageGalleryView({
  * Stages here are TIME-BASED (frontend-only). For genuine backend-event
  * stages, an SSE protocol upgrade is required (see chat history).
  */
-function ThinkingIndicator({ fileNames }: { fileNames: string[] }) {
+function ThinkingIndicator({
+  fileNames,
+  routedMode,
+}: {
+  fileNames: string[];
+  routedMode: string | null;
+}) {
   const { t } = useTranslation();
   const [elapsed, setElapsed] = useState(0);
 
@@ -770,7 +776,25 @@ function ThinkingIndicator({ fileNames }: { fileNames: string[] }) {
         label = t("Generating response");
       }
     }
+  } else if (routedMode === "image_gen") {
+    const phrases = [
+      t("Understanding your prompt"),
+      t("Generating image"),
+      t("Adding final touches"),
+    ];
+    const idx = Math.floor(elapsed / PHRASE_DWELL_MS) % phrases.length;
+    label = phrases[idx];
+  } else if (routedMode === "web_search") {
+    const phrases = [
+      t("Searching the web"),
+      t("Reading top results"),
+      t("Summarizing findings"),
+    ];
+    const idx = Math.floor(elapsed / PHRASE_DWELL_MS) % phrases.length;
+    label = phrases[idx];
   } else {
+    // No routing decision (covers agents — which never emit a routing event —
+    // and the pre-routing gap for models). Also catches routedMode === "chat".
     const phrases = [
       t("Reading your message"),
       t("Thinking"),
@@ -784,6 +808,10 @@ function ThinkingIndicator({ fileNames }: { fileNames: string[] }) {
   const dotCount = (Math.floor(elapsed / 400) % 3) + 1;
   const dots = ".".repeat(dotCount);
 
+  // Skeleton differs per output type. Image-gen → square placeholder
+  // (the actual image is what's coming), everything else → text bars.
+  const isImageOutput = routedMode === "image_gen";
+
   return (
     <div className="flex flex-col gap-2">
       <div className="flex items-baseline gap-2 text-sm text-muted-foreground">
@@ -792,12 +820,17 @@ function ThinkingIndicator({ fileNames }: { fileNames: string[] }) {
           <span className="inline-block w-4 text-left">{dots}</span>
         </span>
       </div>
-      {/* Skeleton bars — give the eye somewhere to look */}
-      <div className="flex flex-col gap-1.5">
-        <div className="h-2 w-3/4 animate-pulse rounded bg-muted-foreground/30" />
-        <div className="h-2 w-5/6 animate-pulse rounded bg-muted-foreground/30" style={{ animationDelay: "150ms" }} />
-        <div className="h-2 w-2/3 animate-pulse rounded bg-muted-foreground/30" style={{ animationDelay: "300ms" }} />
-      </div>
+      {isImageOutput ? (
+        <div className="flex h-48 w-48 animate-pulse items-center justify-center rounded-lg bg-muted-foreground/20">
+          <Image size={32} className="text-muted-foreground/40" />
+        </div>
+      ) : (
+        <div className="flex flex-col gap-1.5">
+          <div className="h-2 w-3/4 animate-pulse rounded bg-muted-foreground/30" />
+          <div className="h-2 w-5/6 animate-pulse rounded bg-muted-foreground/30" style={{ animationDelay: "150ms" }} />
+          <div className="h-2 w-2/3 animate-pulse rounded bg-muted-foreground/30" style={{ animationDelay: "300ms" }} />
+        </div>
+      )}
     </div>
   );
 }
@@ -879,6 +912,11 @@ export default function AgentOrchestrator() {
   const [isCanvasEnabled, setIsCanvasEnabled] = useState(false);
   // Addon: Image generation mode (sticky chip — stays until user clicks ×)
   const [imageMode, setImageMode] = useState(false);
+  // Per-send routing decision from backend SSE "routing" event. Drives the
+  // ThinkingIndicator's phrase set and skeleton shape ("image_gen" → image
+  // placeholder + "Generating image"; "web_search" → search phrases; etc.).
+  // Null = backend hasn't decided yet (gap between send and routing event).
+  const [routedMode, setRoutedMode] = useState<string | null>(null);
   // Addon: Per-message export menu (msg.id) and copy feedback
   const [exportMenuOpenId, setExportMenuOpenId] = useState<string | null>(null);
   const [copiedMsgId, setCopiedMsgId] = useState<string | null>(null);
@@ -1145,7 +1183,7 @@ export default function AgentOrchestrator() {
 
     const filesToUpload = Array.from(files).slice(0, available);
     if (files.length > available) {
-      alert(`Only ${available} more file(s) can be added. Maximum is ${MAX_FILES}.`);
+      alert(`Only ${available} file(s) can be added. Maximum is ${MAX_FILES}.`);
     }
 
     for (const file of filesToUpload) {
@@ -2178,7 +2216,13 @@ export default function AgentOrchestrator() {
 
     // 2. Call PUT endpoint to do the in-place update on the backend
     try {
+      // Mark THIS session as sending so isSendingThisSession (and therefore
+      // ThinkingIndicator) becomes true while the edit's PUT is in flight.
+      // Without sendingSessionId, the optimistically-cleared agent bubble
+      // would render "Message empty." via MarkdownField's empty fallback.
       setIsSending(true);
+      setSendingSessionId(currentSessionId);
+      setRoutedMode(null);
       const headers: Record<string, string> = { "Content-Type": "application/json" };
       const tokenMatch = document.cookie.match(/(?:^|;\s*)access_token_ag=([^;]*)/);
       if (tokenMatch?.[1]) headers["Authorization"] = `Bearer ${decodeURIComponent(tokenMatch[1])}`;
@@ -2240,6 +2284,8 @@ export default function AgentOrchestrator() {
       });
     } finally {
       setIsSending(false);
+      setSendingSessionId(null);
+      setRoutedMode(null);
     }
   }, [editDraft, editingMsgId, cotReasoning, imageMode]);
 
@@ -2405,6 +2451,7 @@ export default function AgentOrchestrator() {
       setIsSending(true);
       setSendingSessionId(currentSessionId);
       setStreamingAgentName(responderName);
+      setRoutedMode(null);
     });
 
     // Wait for the browser to actually paint the thinking state.
@@ -2527,6 +2574,10 @@ export default function AgentOrchestrator() {
           if (eventType === "routing") {
             console.warn("[Orch][routing event]", data);
             const routedMode = String(data?.mode || "").toLowerCase();
+            // Drive the ThinkingIndicator's phrase set + skeleton shape.
+            // Falsy mode → leave as null so indicator keeps the neutral
+            // pre-routing label instead of falling into the "chat" branch.
+            setRoutedMode(routedMode || null);
             if (noAgentMode && routedMode === "web_search" && data?.routed_model_name) {
               const nameStr = String(data.routed_model_name);
               const byName = aiModels.find(
@@ -2816,6 +2867,7 @@ export default function AgentOrchestrator() {
       setSendingSessionId(null);
       setStreamingAgentName("");
       setStreamingMsgId(null);
+      setRoutedMode(null);
     }
   }, [canInteract, input, isSending, sendingSessionId, hasPendingHitl, agents, selectedAgent, selectedModelId, noAgentMode, selectedAiModel, currentSessionId, effectiveSessionId, refetchSessions, refetchMessages, imageMode, cotReasoning, uploadFiles, isCanvasEnabled, isSharedReadOnly]);
 
@@ -3683,22 +3735,61 @@ export default function AgentOrchestrator() {
             // Restrict COT to Gemini models only (the only provider with reliable
             // visible thinking support in our current setup). Matches names like
             // "Gemini 3 Pro", "gemini-3.1-pro-preview", "Google 3.1 Pro", "Gemini 2.5 Flash".
-            const modelName = `${selectedModel?.name || ""}`.toLowerCase();
-            const isGeminiModel = /\b(gemini|google)\b/.test(modelName) && /\b(2\.5|3|3\.\d+)\b/.test(modelName);
-            const cotDisabled = noAgentMode && !isGeminiModel;
+            const isGeminiName = (n: string) => {
+              const ln = (n || "").toLowerCase();
+              return /\b(gemini|google)\b/.test(ln) && /\b(2\.5|3|3\.\d+)\b/.test(ln);
+            };
+            const isGeminiModel = isGeminiName(selectedModel?.name || "");
+            // Find the best Gemini reasoning model in the registry — Option A:
+            // Pro + is_default → Pro → default → first available.
+            const geminiCandidates = aiModels.filter((m) => isGeminiName(m.name));
+            const bestGemini =
+              geminiCandidates.find((m) => /\bpro\b/i.test(m.name) && m.is_default) ||
+              geminiCandidates.find((m) => /\bpro\b/i.test(m.name)) ||
+              geminiCandidates.find((m) => m.is_default) ||
+              geminiCandidates[0] ||
+              null;
+            // Disabled only if not in model mode, or no Gemini model exists
+            // in the registry to switch to. Otherwise the button is always
+            // clickable: toggling on auto-switches to the best Gemini, mirror-
+            // ing how "Create image" auto-switches to an image-gen model.
+            const cotDisabled = !noAgentMode || !bestGemini;
+            const willAutoSwitch = !cotDisabled && !cotReasoning && !isGeminiModel && !!bestGemini;
             return (
           <button
-            onClick={() => { if (!cotDisabled) setCotReasoning(!cotReasoning); }}
+            onClick={() => {
+              if (cotDisabled) return;
+              const turningOn = !cotReasoning;
+              if (turningOn && !isGeminiModel && bestGemini) {
+                // Switch to a reasoning-capable Gemini first, then enable COT.
+                setSelectedAiModel(bestGemini.id);
+                setNoAgentMode(true);
+              }
+              setCotReasoning(turningOn);
+            }}
             className={`flex w-full items-center justify-between rounded-lg px-3 py-2.5 text-left text-sm ${
               cotDisabled ? "cursor-not-allowed text-muted-foreground/50" : "text-foreground hover:bg-accent"
             }`}
-            title={cotDisabled ? "Selected model does not support reasoning" : undefined}
+            title={
+              cotDisabled
+                ? (!noAgentMode
+                    ? "COT reasoning is only available in model (No Agent) mode"
+                    : "No Gemini reasoning model is registered")
+                : willAutoSwitch && bestGemini
+                  ? `Will switch to ${bestGemini.name} (Gemini reasoning)`
+                  : undefined
+            }
           >
             <div className="flex items-center gap-3">
               <Lightbulb size={16} className={cotDisabled ? "text-muted-foreground/30" : "text-muted-foreground"} />
               <span>{t("COT reasoning")}</span>
-              {cotDisabled && noAgentMode && selectedModel && (
-                <span className="text-xxs text-muted-foreground/50">({t("not supported")})</span>
+              {willAutoSwitch && bestGemini && (
+                <span className="text-xxs text-muted-foreground/70">
+                  ({t("switches to")} {bestGemini.name})
+                </span>
+              )}
+              {cotDisabled && noAgentMode && (
+                <span className="text-xxs text-muted-foreground/50">({t("no Gemini model")})</span>
               )}
             </div>
             <div
@@ -4179,14 +4270,25 @@ export default function AgentOrchestrator() {
 
               const isUser = msg.sender === "user";
               // Show ThinkingIndicator only when there is NOTHING to display yet —
-              // no text content AND no tool-call cards. Once content_blocks arrive
-              // (e.g. "Invoking calculator..."), surface those instead so the user
-              // can see real backend activity during the tool-call wait.
+              // no text content, no tool-call cards, and no reasoning tokens yet.
+              // Once any of those arrive (Gemini/Anthropic emit reasoning before
+              // the user-facing answer; tool agents emit content_blocks during
+              // tool calls), render the body so the streaming UX is visible.
               const hasContentBlocks = !!(msg.contentBlocks && msg.contentBlocks.length > 0);
+              const hasReasoning = !!(msg.reasoningContent && msg.reasoningContent.length > 0);
+              // Image-gen path: backend streams "Generating image..." as a token
+              // BEFORE the actual image markdown arrives. Without this carve-out,
+              // that placeholder text would unmount the ThinkingIndicator (and its
+              // image skeleton) the instant streaming begins. Keep showing the
+              // indicator until real image markdown ("![...](...)") appears.
+              const hasImageMarkdown = !!msg.content && msg.content.includes("![");
+              const isImageGenStreaming =
+                routedMode === "image_gen" && !hasImageMarkdown;
               const isThinking =
                 msg.sender === "agent" &&
-                msg.content === "" &&
+                (msg.content === "" || isImageGenStreaming) &&
                 !hasContentBlocks &&
+                !hasReasoning &&
                 isSendingThisSession;
               const isInlineEditingUserMessage =
                 isUser && editingMsgId === msg.id && noAgentMode;
@@ -4275,7 +4377,7 @@ export default function AgentOrchestrator() {
                         const triggerFiles = (prevUser?.files || []).map(
                           (p: string) => p.split(/[/\\]/).pop() || p,
                         );
-                        return <ThinkingIndicator fileNames={triggerFiles} />;
+                        return <ThinkingIndicator fileNames={triggerFiles} routedMode={routedMode} />;
                       })()
                     ) : isUser ? (
                       <>
@@ -4414,13 +4516,14 @@ export default function AgentOrchestrator() {
                               );
                             }}
                           />
-                        ) : msg.content || !hasContentBlocks ? (
+                        ) : msg.content || (!hasContentBlocks && !hasReasoning) ? (
                           // Render the markdown body if there is text to show, or
-                          // (as a fallback) when there are no tool cards either —
-                          // that fallback case is what the "Message empty." string
-                          // covers. While tool blocks are streaming with no text
-                          // yet, render nothing so the empty placeholder doesn't
-                          // flash between the tool card and the first token.
+                          // (as a fallback) when there are no tool cards AND no
+                          // reasoning panel either — that fallback case is what
+                          // the "Message empty." string covers. While tool blocks
+                          // or reasoning are streaming with no answer text yet,
+                          // render nothing so the empty placeholder doesn't flash
+                          // between them and the first answer token.
                           <MarkdownField
                             chat={{}}
                             isEmpty={!msg.content}
