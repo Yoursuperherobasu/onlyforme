@@ -227,6 +227,16 @@ class LCModelNode(Node):
             raise ValueError(msg)
         system_message_added = False
         message = None
+        # Defensive resolve: any chat upload reaching this LLM call must have
+        # its file content already extracted before to_lc_message() runs.
+        # ChatInput / Agent / Memory nodes upstream call resolve_attachments,
+        # but custom flows or LangGraph state checkpoints may strip the
+        # PrivateAttr cache. resolve() is idempotent — no-op if already done.
+        if isinstance(input_value, Message):
+            try:
+                await input_value.resolve_attachments()
+            except Exception as e:  # noqa: BLE001
+                logger.warning(f"[Model] resolve_attachments failed: {e}")
         if input_value:
             if isinstance(input_value, Message):
                 with warnings.catch_warnings():
@@ -408,7 +418,18 @@ class LCModelNode(Node):
                 session_id=session_id,
             )
             stored_msg = await self.send_message(init_message)
-            msg_id = str(stored_msg.id)
+            # When the LLM isn't directly wired to a Chat Output (e.g. inside a
+            # Loop), _should_skip_message returns True and send_message returns
+            # the un-stored init_message with no id. Fall back to ainvoke since
+            # there's no UI consumer for the SSE chunks anyway.
+            stored_id = stored_msg.data.get("id")
+            if not stored_id:
+                message = await runnable.ainvoke(inputs)
+                result = message.content if hasattr(message, "content") else message
+                if isinstance(message, AIMessage):
+                    ai_message = message
+                return lf_message, result, ai_message
+            msg_id = str(stored_id)
 
             # Step 2: Stream tokens
             complete = ""

@@ -215,6 +215,16 @@ class FileTrigger(Node):
             value=[],
             info="File types to monitor. Leave empty for all supported types.",
         ),
+        MessageTextInput(
+            name="custom_file_types",
+            display_name="Custom File Types",
+            value="",
+            info=(
+                "Comma-separated extensions not in the dropdown above "
+                "(e.g. xlsx, xls, parquet). Leading dot optional."
+            ),
+            advanced=True,
+        ),
         DropdownInput(
             name="trigger_on",
             display_name="Trigger On",
@@ -306,7 +316,10 @@ class FileTrigger(Node):
                     "pip install azure-storage-blob azure-identity"
                 )
 
-            types = self.file_types if self.file_types else TEXT_FILE_TYPES
+            custom = [t.strip() for t in (getattr(self, "custom_file_types", "") or "").split(",") if t.strip()]
+            types = list(self.file_types or []) + custom
+            if not types:
+                types = TEXT_FILE_TYPES
             batch_size = self.batch_size
 
             logger.info(f"FileTrigger: connecting to container={container_name}, prefix={prefix!r}")
@@ -414,7 +427,10 @@ class FileTrigger(Node):
             from urllib.parse import urlparse
 
             GRAPH = "https://graph.microsoft.com/v1.0"
-            types = self.file_types if self.file_types else TEXT_FILE_TYPES
+            custom = [t.strip() for t in (getattr(self, "custom_file_types", "") or "").split(",") if t.strip()]
+            types = list(self.file_types or []) + custom
+            if not types:
+                types = TEXT_FILE_TYPES
             batch_size = self.batch_size
 
             # Normalize types

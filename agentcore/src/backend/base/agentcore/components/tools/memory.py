@@ -730,19 +730,28 @@ class MemoryComponent(Node):
         parts.append(f"Current Message:\n{current_text}")
         enriched_text = "\n\n".join(parts)
 
-        # Collect all files from history messages and current input
-        # Ensure every image path is an Image object so resolve_images() can
-        # download it from Azure blob and cache the base64 data for the LLM.
-        from agentcore.schema.image import Image, is_image_file
+        # Collect all files from history messages and current input.
+        # Wrap raw string paths via the classifier so both images (Azure-blob
+        # → base64) and document attachments (Azure-blob → extracted text) get
+        # the right schema type; resolve_attachments() then prepares both.
+        from agentcore.schema.file_attachment import FileAttachment
+        from agentcore.schema.file_classifier import classify
+        from agentcore.schema.image import Image
 
-        all_files: list[str | Image] = []
+        all_files: list[str | Image | FileAttachment] = []
         for msg in history_messages:
             if msg.files:
                 for f in msg.files:
-                    if isinstance(f, Image):
+                    if isinstance(f, (Image, FileAttachment)):
                         all_files.append(f)
-                    elif isinstance(f, str) and is_image_file(f):
-                        all_files.append(Image(path=f))
+                    elif isinstance(f, str):
+                        kind = classify(f)
+                        if kind == "image":
+                            all_files.append(Image(path=f))
+                        elif kind == "document":
+                            all_files.append(FileAttachment(path=f))
+                        else:
+                            all_files.append(f)
                     else:
                         all_files.append(f)
         current_files = []
@@ -767,7 +776,8 @@ class MemoryComponent(Node):
 
         # Pre-fetch image data from Azure blob storage so downstream
         # to_lc_message() can build multimodal content synchronously.
-        # Each Image.resolve() downloads from blob → base64 → _base64_cache.
+        # Image.resolve() → blob → base64. FileAttachment.resolve() → blob →
+        # extracted text. Both must be awaited before to_lc_message() runs.
         for f in enriched_message.files or []:
             if isinstance(f, Image):
                 try:
@@ -776,6 +786,15 @@ class MemoryComponent(Node):
                     logger.info(f"[STM] Image resolve {'OK' if resolved else 'EMPTY'}: path={f.path}")
                 except Exception as e:
                     logger.error(f"[STM] Image resolve FAILED: path={f.path}, error={e}")
+            elif isinstance(f, FileAttachment):
+                try:
+                    await f.resolve()
+                    if f._error:
+                        logger.warning(f"[STM] FileAttachment resolve ERROR ({f._error}): path={f.path}")
+                    else:
+                        logger.info(f"[STM] FileAttachment resolve OK: path={f.path}, truncated={f._truncated}")
+                except Exception as e:
+                    logger.error(f"[STM] FileAttachment resolve FAILED: path={f.path}, error={e}")
 
         logger.info(
             f"[STM] session_id={session_id} | "

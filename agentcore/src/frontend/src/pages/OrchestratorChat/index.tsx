@@ -727,6 +727,81 @@ function ImageGalleryView({
   );
 }
 
+/* ------------------ THINKING INDICATOR ------------------ */
+/**
+ * Renders the agent loading state. Two flavours:
+ *  - With files attached: progressive timed stages
+ *      0–600ms      "Resolving attachments…"
+ *      600–2500ms   "Reading <filename>…" (rotates if multiple)
+ *      2500ms+      "Generating response…"
+ *  - Without files: cycles generic phrases.
+ * Plus: animated dots, live elapsed counter, and skeleton lines.
+ *
+ * Stages here are TIME-BASED (frontend-only). For genuine backend-event
+ * stages, an SSE protocol upgrade is required (see chat history).
+ */
+function ThinkingIndicator({ fileNames }: { fileNames: string[] }) {
+  const { t } = useTranslation();
+  const [elapsed, setElapsed] = useState(0);
+
+  useEffect(() => {
+    const start = Date.now();
+    const id = setInterval(() => setElapsed(Date.now() - start), 200);
+    return () => clearInterval(id);
+  }, []);
+
+  const hasFiles = fileNames.length > 0;
+
+  // Stage durations: tuned slow so labels read like a deliberate UX, not a flicker.
+  const RESOLVE_MS = 1500;       // "Resolving attachments…"
+  const READ_PER_FILE_MS = 3000; // each file gets a full 3s of "Reading X…"
+  const PHRASE_DWELL_MS = 3000;  // each generic phrase shows for 3s
+
+  let label: string;
+  if (hasFiles) {
+    if (elapsed < RESOLVE_MS) {
+      label = t("Resolving attachments");
+    } else {
+      const readingPhaseTotal = READ_PER_FILE_MS * fileNames.length;
+      if (elapsed < RESOLVE_MS + readingPhaseTotal) {
+        const fileIdx = Math.floor((elapsed - RESOLVE_MS) / READ_PER_FILE_MS) % fileNames.length;
+        label = `${t("Reading")} ${fileNames[fileIdx]}`;
+      } else {
+        label = t("Generating response");
+      }
+    }
+  } else {
+    const phrases = [
+      t("Reading your message"),
+      t("Thinking"),
+      t("Drafting a reply"),
+    ];
+    const idx = Math.floor(elapsed / PHRASE_DWELL_MS) % phrases.length;
+    label = phrases[idx];
+  }
+
+  // Animated dots — one dot fades in per 400ms cycle
+  const dotCount = (Math.floor(elapsed / 400) % 3) + 1;
+  const dots = ".".repeat(dotCount);
+
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="flex items-baseline gap-2 text-sm text-muted-foreground">
+        <span className="font-medium">
+          {label}
+          <span className="inline-block w-4 text-left">{dots}</span>
+        </span>
+      </div>
+      {/* Skeleton bars — give the eye somewhere to look */}
+      <div className="flex flex-col gap-1.5">
+        <div className="h-2 w-3/4 animate-pulse rounded bg-muted-foreground/30" />
+        <div className="h-2 w-5/6 animate-pulse rounded bg-muted-foreground/30" style={{ animationDelay: "150ms" }} />
+        <div className="h-2 w-2/3 animate-pulse rounded bg-muted-foreground/30" style={{ animationDelay: "300ms" }} />
+      </div>
+    </div>
+  );
+}
+
 /* ------------------ COMPONENT ------------------ */
 
 export default function AgentOrchestrator() {
@@ -742,6 +817,10 @@ export default function AgentOrchestrator() {
   const [currentSessionId, setCurrentSessionId] = useState<string>(crypto.randomUUID());
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [isSending, setIsSending] = useState(false);
+  // Tracks which session the in-flight request belongs to. When the user
+  // switches to a different chat while a response is streaming, only the
+  // sending session's input should be blocked — not the new one.
+  const [sendingSessionId, setSendingSessionId] = useState<string | null>(null);
   const [streamingAgentName, setStreamingAgentName] = useState<string>("");
   const [streamingMsgId, setStreamingMsgId] = useState<string | null>(null);
   // HITL state: track which message had its action clicked
@@ -1158,6 +1237,10 @@ export default function AgentOrchestrator() {
     [agents, selectedModelId],
   );
   const canInteract = permissions?.includes("interact_agents") ?? false;
+  // Per-session send-in-progress flag. Lets the user start a NEW chat while
+  // an old one is still streaming a response, instead of being globally
+  // locked out of all chats.
+  const isSendingThisSession = isSending && sendingSessionId === currentSessionId;
 
   // Block typing/sending while an agent is waiting for an HITL approve/reject.
   // Why: once the agent pauses for human review, new user input must not be
@@ -1247,8 +1330,21 @@ export default function AgentOrchestrator() {
           // Also preserve contentBlocks (agent worker-node "Finished" blocks)
           // and reasoningContent (CoT thinking) if API didn't return them
           if (local) {
+            // Prefer local `content` when API returns empty or shorter text —
+            // this prevents the just-streamed bubble from going blank for a
+            // moment while the post-end refetch lands with a DB row whose
+            // persistence may briefly lag behind (read-replica delay, late
+            // commit, etc). Only override when local clearly has more text.
+            const apiContent = (merged.content as string | undefined) || "";
+            const localContent = (local.content as string | undefined) || "";
+            const preferredContent =
+              localContent && (!apiContent || localContent.length > apiContent.length)
+                ? localContent
+                : apiContent;
+
             merged = {
               ...merged,
+              content: preferredContent,
               contentBlocks: merged.contentBlocks ?? local.contentBlocks,
               blocksState: merged.contentBlocks ? merged.blocksState : (local.blocksState ?? merged.blocksState),
               reasoningContent: merged.reasoningContent ?? local.reasoningContent,
@@ -1591,6 +1687,24 @@ export default function AgentOrchestrator() {
   useEffect(() => {
     setFilteredAgents(agents);
   }, [agents]);
+
+  // After a response finishes streaming in THIS session, return focus to the
+  // textarea so the user can type the next question without clicking. We
+  // gate on isSendingThisSession (not the global isSending) so a response
+  // landing in another tab/session doesn't yank focus from a chat the user
+  // is currently typing in.
+  const wasSendingThisSessionRef = useRef(false);
+  useEffect(() => {
+    if (wasSendingThisSessionRef.current && !isSendingThisSession) {
+      // Defer one tick so the textarea isn't disabled when we focus it.
+      setTimeout(() => {
+        if (!textareaRef.current?.disabled) {
+          textareaRef.current?.focus();
+        }
+      }, 0);
+    }
+    wasSendingThisSessionRef.current = isSendingThisSession;
+  }, [isSendingThisSession]);
 
   useEffect(() => {
     // Use instant scroll while streaming so it keeps up with fast tokens;
@@ -2133,10 +2247,32 @@ export default function AgentOrchestrator() {
 
   const handleSend = useCallback(async (overrideText?: string) => {
     const hasFiles = uploadFiles.some((f) => f.path && !f.loading && !f.error);
+    // Block send if any file is still uploading — otherwise it gets silently
+    // dropped (the previous behavior caused agents to reply "no document
+    // attached" because the user clicked send before upload completed).
+    const hasPendingUploads = uploadFiles.some((f) => f.loading);
+    const hasFailedUploads = uploadFiles.some((f) => f.error);
+    if (hasPendingUploads) {
+      useAlertStore.getState().setErrorData?.({
+        title: "Upload still in progress",
+        list: ["Wait for the file upload to finish before sending, or remove the file."],
+      });
+      return;
+    }
+    if (hasFailedUploads && !hasFiles) {
+      useAlertStore.getState().setErrorData?.({
+        title: "Upload failed",
+        list: ["The file failed to upload. Remove it and try again."],
+      });
+      return;
+    }
     // Accept an optional override text (used by the edit-and-send flow where
     // React state flush timing is tricky). Falls back to the live `input` state.
     const effectiveInput = (typeof overrideText === "string" ? overrideText : input);
-    if (!canInteract || (!effectiveInput.trim() && !hasFiles) || isSending || hasPendingHitl) return;
+    // Only block re-sending in THIS session — let the user send in a different
+    // session even while another is streaming (each gets its own SSE stream).
+    const sendingThisSession = isSending && sendingSessionId === currentSessionId;
+    if (!canInteract || (!effectiveInput.trim() && !hasFiles) || sendingThisSession || hasPendingHitl) return;
     // New turn starts: clear prior routed label override.
     setHeaderModelOverride(null);
     // Hide autocomplete suggestions the moment the user submits, AND cancel any
@@ -2267,6 +2403,7 @@ export default function AgentOrchestrator() {
       setInput("");
       setShowMentions(false);
       setIsSending(true);
+      setSendingSessionId(currentSessionId);
       setStreamingAgentName(responderName);
     });
 
@@ -2676,10 +2813,11 @@ export default function AgentOrchestrator() {
         );
       }
       setIsSending(false);
+      setSendingSessionId(null);
       setStreamingAgentName("");
       setStreamingMsgId(null);
     }
-  }, [canInteract, input, isSending, hasPendingHitl, agents, selectedAgent, selectedModelId, noAgentMode, selectedAiModel, currentSessionId, effectiveSessionId, refetchSessions, refetchMessages, imageMode, cotReasoning]);
+  }, [canInteract, input, isSending, sendingSessionId, hasPendingHitl, agents, selectedAgent, selectedModelId, noAgentMode, selectedAiModel, currentSessionId, effectiveSessionId, refetchSessions, refetchMessages, imageMode, cotReasoning, uploadFiles, isCanvasEnabled, isSharedReadOnly]);
 
   // Keep the ref updated so handleSaveEdit can call the latest handleSend
   useEffect(() => {
@@ -3802,7 +3940,7 @@ export default function AgentOrchestrator() {
             </button>
 
             {showModelPicker && (
-              <div className="absolute left-0 top-full z-50 mt-1 min-w-[240px] rounded-xl border border-border bg-popover p-1 shadow-lg">
+              <div className="absolute left-0 top-full z-50 mt-1 flex max-h-[60vh] min-w-[240px] flex-col overflow-hidden rounded-xl border border-border bg-popover p-1 shadow-lg">
                 {/* No Agent option */}
                 <button
                   onClick={() => {
@@ -3830,42 +3968,45 @@ export default function AgentOrchestrator() {
                   )}
                 </button>
                 <div className="my-1 h-px bg-border" />
-                {agents.map((agent) => (
-                  <button
-                    key={agent.id}
-                    onClick={() => {
-                      setSelectedModelId(agent.id);
-                      setNoAgentMode(false);
-                      setSelectedAiModel(null);
-                      setShowModelPicker(false);
-                    }}
-                    className={`flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-left text-sm text-foreground hover:bg-accent ${
-                      !noAgentMode && selectedModelId === agent.id ? "bg-accent" : ""
-                    }`}
-                  >
-                    <span
-                      className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md"
-                      style={{ background: agent.color }}
+                {/* Scrollable agent list — keeps "No Agent" pinned above */}
+                <div className="flex-1 overflow-y-auto">
+                  {agents.map((agent) => (
+                    <button
+                      key={agent.id}
+                      onClick={() => {
+                        setSelectedModelId(agent.id);
+                        setNoAgentMode(false);
+                        setSelectedAiModel(null);
+                        setShowModelPicker(false);
+                      }}
+                      className={`flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-left text-sm text-foreground hover:bg-accent ${
+                        !noAgentMode && selectedModelId === agent.id ? "bg-accent" : ""
+                      }`}
                     >
-                      <Sparkles size={14} color="white" />
-                    </span>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center font-medium">
-                        <span>{agent.name}</span>
-                        {versionBadge(agent.version_label)}
-                        {uatBadge(agent.environment)}
-                      </div>
-                      <div className="text-xs text-muted-foreground">
-                        {agent.description}
-                      </div>
-                    </div>
-                    {!noAgentMode && selectedModelId === agent.id && (
-                      <span className="ml-auto text-primary">
-                        <Check size={14} />
+                      <span
+                        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md"
+                        style={{ background: agent.color }}
+                      >
+                        <Sparkles size={14} color="white" />
                       </span>
-                    )}
-                  </button>
-                ))}
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center font-medium">
+                          <span>{agent.name}</span>
+                          {versionBadge(agent.version_label)}
+                          {uatBadge(agent.environment)}
+                        </div>
+                        <div className="text-xs text-muted-foreground">
+                          {agent.description}
+                        </div>
+                      </div>
+                      {!noAgentMode && selectedModelId === agent.id && (
+                        <span className="ml-auto text-primary">
+                          <Check size={14} />
+                        </span>
+                      )}
+                    </button>
+                  ))}
+                </div>
               </div>
             )}
           </div>
@@ -4037,7 +4178,16 @@ export default function AgentOrchestrator() {
               }
 
               const isUser = msg.sender === "user";
-              const isThinking = msg.sender === "agent" && msg.content === "" && isSending;
+              // Show ThinkingIndicator only when there is NOTHING to display yet —
+              // no text content AND no tool-call cards. Once content_blocks arrive
+              // (e.g. "Invoking calculator..."), surface those instead so the user
+              // can see real backend activity during the tool-call wait.
+              const hasContentBlocks = !!(msg.contentBlocks && msg.contentBlocks.length > 0);
+              const isThinking =
+                msg.sender === "agent" &&
+                msg.content === "" &&
+                !hasContentBlocks &&
+                isSendingThisSession;
               const isInlineEditingUserMessage =
                 isUser && editingMsgId === msg.id && noAgentMode;
 
@@ -4118,10 +4268,15 @@ export default function AgentOrchestrator() {
                     </div>
                     )}
                     {isThinking ? (
-                      <div className="flex items-center gap-2">
-                        <Loader2 size={16} className="animate-spin text-muted-foreground" />
-                        <span className="text-sm text-muted-foreground">{t("Thinking...")}</span>
-                      </div>
+                      // Look up the user message that triggered this agent
+                      // placeholder so we can show file-aware stages.
+                      (() => {
+                        const prevUser = idx > 0 ? messages[idx - 1] : null;
+                        const triggerFiles = (prevUser?.files || []).map(
+                          (p: string) => p.split(/[/\\]/).pop() || p,
+                        );
+                        return <ThinkingIndicator fileNames={triggerFiles} />;
+                      })()
                     ) : isUser ? (
                       <>
                       <div
@@ -4173,7 +4328,9 @@ export default function AgentOrchestrator() {
                                 {msg.files.map((filePath, idx) => {
                                   const ext = filePath.split(".").pop()?.toLowerCase() || "";
                                   const isImage = ["png", "jpg", "jpeg", "gif", "webp", "bmp"].includes(ext);
-                                  const fileName = filePath.split("/").pop() || filePath;
+                                  // Split on either separator — Windows Path
+                                  // stringifies with backslashes on the backend.
+                                  const fileName = filePath.split(/[/\\]/).pop() || filePath;
                                   return isImage ? (
                                     <img
                                       key={idx}
@@ -4196,9 +4353,16 @@ export default function AgentOrchestrator() {
                           </>
                         )}
                       </div>
-                      {/* Prompt action buttons — Copy and Edit (outside bubble) */}
-                      {msg.content && !isSending && noAgentMode && (
-                        <div className="mt-1 flex items-center justify-end gap-1">
+                      {/* Prompt action buttons — Copy (always) + Edit (no-agent mode only).
+                          Edit stays gated because re-sending in agent mode would
+                          re-trigger the agent run; copy is harmless in any mode. */}
+                      {msg.content && !isSending && (
+                        <div className="mt-1 flex items-center justify-end gap-2">
+                          {msg.timestamp && (
+                            <span className="text-xs font-normal text-muted-foreground">
+                              {msg.timestamp}
+                            </span>
+                          )}
                           <button
                             onClick={() => handleCopyMessage(msg.content, msg.id)}
                             className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
@@ -4206,13 +4370,15 @@ export default function AgentOrchestrator() {
                           >
                             {copiedMsgId === msg.id ? <Check size={13} className="text-green-600" /> : <Copy size={13} />}
                           </button>
-                          <button
-                            onClick={() => handleStartEdit(msg.id, msg.content)}
-                            className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
-                            title={t("Edit prompt")}
-                          >
-                            <Pencil size={13} />
-                          </button>
+                          {noAgentMode && (
+                            <button
+                              onClick={() => handleStartEdit(msg.id, msg.content)}
+                              className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
+                              title={t("Edit prompt")}
+                            >
+                              <Pencil size={13} />
+                            </button>
+                          )}
                         </div>
                       )}
                       </>
@@ -4248,14 +4414,20 @@ export default function AgentOrchestrator() {
                               );
                             }}
                           />
-                        ) : (
+                        ) : msg.content || !hasContentBlocks ? (
+                          // Render the markdown body if there is text to show, or
+                          // (as a fallback) when there are no tool cards either —
+                          // that fallback case is what the "Message empty." string
+                          // covers. While tool blocks are streaming with no text
+                          // yet, render nothing so the empty placeholder doesn't
+                          // flash between the tool card and the first token.
                           <MarkdownField
                             chat={{}}
                             isEmpty={!msg.content}
                             chatMessage={msg.content}
                             editedFlag={null}
                           />
-                        )}
+                        ) : null}
                         {/* Action buttons row — show on every assistant message,
                             including image-generation replies. Thumbs/copy/share
                             all operate on the accompanying text (captions like
@@ -4645,8 +4817,8 @@ export default function AgentOrchestrator() {
                       }
                       setShowPlusMenu(!showPlusMenu);
                     }}
-                    disabled={isSending || !canInteract || isSharedReadOnly || hasPendingHitl}
-                    className={`flex h-9 w-9 items-center justify-center rounded-full text-muted-foreground transition-colors ${(isSending || !canInteract || isSharedReadOnly || hasPendingHitl) ? "cursor-not-allowed opacity-50" : "hover:bg-accent hover:text-foreground"}`}
+                    disabled={isSendingThisSession || !canInteract || isSharedReadOnly || hasPendingHitl}
+                    className={`flex h-9 w-9 items-center justify-center rounded-full text-muted-foreground transition-colors ${(isSendingThisSession || !canInteract || isSharedReadOnly || hasPendingHitl) ? "cursor-not-allowed opacity-50" : "hover:bg-accent hover:text-foreground"}`}
                     title={noAgentMode ? t("More options") : t("Upload files")}
                   >
                     <Plus size={18} />
@@ -4658,8 +4830,8 @@ export default function AgentOrchestrator() {
                 {!((noAgentMode && selectedAiModel) || (!noAgentMode && selectedModelId)) && (
                   <button
                     onClick={() => fileInputRef.current?.click()}
-                    disabled={isSending || !canInteract || isSharedReadOnly || hasPendingHitl}
-                    className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors ${(isSending || !canInteract || isSharedReadOnly || hasPendingHitl) ? "cursor-not-allowed opacity-50" : "hover:bg-accent hover:text-foreground"}`}
+                    disabled={isSendingThisSession || !canInteract || isSharedReadOnly || hasPendingHitl}
+                    className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors ${(isSendingThisSession || !canInteract || isSharedReadOnly || hasPendingHitl) ? "cursor-not-allowed opacity-50" : "hover:bg-accent hover:text-foreground"}`}
                     title={t("Upload image")}
                   >
                     <ImagePlus size={18} />
@@ -4671,7 +4843,7 @@ export default function AgentOrchestrator() {
                   value={input}
                   onChange={(e) => handleInputChange(e.target.value)}
                   onPaste={handlePaste}
-                  disabled={isSending || !canInteract || isSharedReadOnly || hasPendingHitl}
+                  disabled={isSendingThisSession || !canInteract || isSharedReadOnly || hasPendingHitl}
                   onKeyDown={(e) => {
                     if (showSuggestions && suggestions.length > 0) {
                       if (e.key === "ArrowDown") {
@@ -4708,7 +4880,7 @@ export default function AgentOrchestrator() {
                         ? t("You do not have permission to interact with agents.")
                         : hasPendingHitl
                           ? t("Waiting for human review — approve or reject to continue")
-                          : isSending
+                          : isSendingThisSession
                             ? t("Waiting for response...")
                             : noAgentMode && messages.length > 0
                               ? t("Start typing to chat with the Model")
@@ -4716,7 +4888,7 @@ export default function AgentOrchestrator() {
                   }
                   rows={1}
                   style={{ maxHeight: TEXTAREA_MAX_HEIGHT }}
-                  className={`min-w-0 flex-1 resize-none overflow-y-hidden border-none bg-transparent px-2 py-1.5 text-[15px] leading-6 text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-0 ${(isSending || !canInteract || isSharedReadOnly || hasPendingHitl) ? "cursor-not-allowed opacity-50" : ""}`}
+                  className={`min-w-0 flex-1 resize-none overflow-y-hidden border-none bg-transparent px-2 py-1.5 text-[15px] leading-6 text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-0 ${(isSendingThisSession || !canInteract || isSharedReadOnly || hasPendingHitl) ? "cursor-not-allowed opacity-50" : ""}`}
                 />
 
                 <input
@@ -4731,11 +4903,11 @@ export default function AgentOrchestrator() {
                 {/* Mic */}
                 <button
                   onClick={handleMicClick}
-                  disabled={isSending || !canInteract || isSharedReadOnly || hasPendingHitl}
+                  disabled={isSendingThisSession || !canInteract || isSharedReadOnly || hasPendingHitl}
                   className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full transition-colors ${
                     isListening
                       ? "bg-red-500 text-white animate-pulse"
-                      : (isSending || !canInteract || isSharedReadOnly || hasPendingHitl)
+                      : (isSendingThisSession || !canInteract || isSharedReadOnly || hasPendingHitl)
                         ? "cursor-not-allowed text-muted-foreground opacity-50"
                         : "text-muted-foreground hover:bg-accent hover:text-foreground"
                   }`}
@@ -4744,18 +4916,44 @@ export default function AgentOrchestrator() {
                   {isListening ? <AudioLines size={18} /> : <Mic size={18} />}
                 </button>
 
-                {/* Send — wrap in arrow fn so React's MouseEvent isn't passed as the override text */}
-                <button
-                  onClick={() => handleSend()}
-                  disabled={(!input.trim() && !uploadFiles.some((f) => f.path)) || isSending || !canInteract || isSharedReadOnly || hasPendingHitl}
-                  className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full transition-colors ${
-                    (input.trim() || uploadFiles.some((f) => f.path)) && !isSending && canInteract && !isSharedReadOnly && !hasPendingHitl
-                      ? "bg-foreground text-background hover:opacity-90"
-                      : "bg-muted text-muted-foreground"
-                  }`}
-                >
-                  <Send size={16} className="-ml-px -mt-px" />
-                </button>
+                {/* Send — wrap in arrow fn so React's MouseEvent isn't passed as the override text.
+                    Disabled while any file is still uploading so the user can't accidentally send
+                    a message before the file is attached (causing "no document" agent replies). */}
+                {(() => {
+                  const anyUploading = uploadFiles.some((f) => f.loading);
+                  const sendDisabled =
+                    (!input.trim() && !uploadFiles.some((f) => f.path)) ||
+                    isSendingThisSession ||
+                    !canInteract ||
+                    isSharedReadOnly ||
+                    hasPendingHitl ||
+                    anyUploading;
+                  const sendActive =
+                    (input.trim() || uploadFiles.some((f) => f.path)) &&
+                    !isSendingThisSession &&
+                    canInteract &&
+                    !isSharedReadOnly &&
+                    !hasPendingHitl &&
+                    !anyUploading;
+                  return (
+                    <button
+                      onClick={() => handleSend()}
+                      disabled={sendDisabled}
+                      title={anyUploading ? t("Waiting for upload to finish…") : undefined}
+                      className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full transition-colors ${
+                        sendActive
+                          ? "bg-foreground text-background hover:opacity-90"
+                          : "bg-muted text-muted-foreground"
+                      }`}
+                    >
+                      {anyUploading ? (
+                        <Loader2 size={16} className="animate-spin" />
+                      ) : (
+                        <Send size={16} className="-ml-px -mt-px" />
+                      )}
+                    </button>
+                  );
+                })()}
               </div>
             </div>
 

@@ -28,10 +28,11 @@ SUPPORTED_DOC_EXTENSIONS = {
     # Documents
     ".pdf", ".docx", ".pptx", ".xlsx", ".xls", ".xlsm",
     # Text / Markup
-    ".txt", ".md", ".csv", ".html", ".tex",
+    ".txt", ".md", ".mdx", ".csv", ".html", ".htm", ".tex",
+    ".json", ".yaml", ".yml", ".xml",
     # Code
-    ".py", ".js", ".ts", ".java", ".cpp", ".c", ".cs", ".go",
-    ".rb", ".php", ".sh", ".css", ".json",
+    ".py", ".js", ".ts", ".tsx", ".jsx", ".java", ".cpp", ".c", ".cs",
+    ".h", ".hpp", ".go", ".rs", ".rb", ".php", ".sh", ".css", ".sql",
 }
 
 
@@ -83,12 +84,13 @@ def extract_text_from_bytes(file_bytes: bytes, file_ext: str) -> str:
     try:
         # --- Text / Code files ---
         if file_ext in {
-            ".txt", ".md", ".csv", ".c", ".cpp", ".cs", ".css", ".go",
-            ".java", ".js", ".json", ".php", ".py", ".rb", ".sh",
-            ".tex", ".ts", ".html",
+            ".txt", ".md", ".mdx", ".csv", ".c", ".cpp", ".cs", ".css", ".go",
+            ".h", ".hpp", ".java", ".js", ".jsx", ".json", ".php", ".py",
+            ".rb", ".rs", ".sh", ".sql", ".tex", ".ts", ".tsx",
+            ".html", ".htm", ".xml", ".yaml", ".yml",
         }:
             text = file_bytes.decode("utf-8", errors="ignore")
-            if file_ext == ".html":
+            if file_ext in {".html", ".htm"}:
                 from bs4 import BeautifulSoup
                 soup = BeautifulSoup(text, "html.parser")
                 text = soup.get_text(separator="\n")
@@ -272,6 +274,56 @@ async def _extract_pdf_with_ocr(file_bytes: bytes, display_name: str) -> str:
         # Genuinely empty or OCR-failed pages are skipped silently.
 
     return "\n\n".join(final_parts)
+
+
+class ScannedPdfError(Exception):
+    """Raised when a PDF appears to be image-only and OCR is disabled.
+
+    Chat attachments use the no-OCR extraction path (`extract_text_no_ocr`)
+    so the user gets a clear error instead of a silent empty extraction.
+    MiBuddy's `extract_text` keeps the OCR fallback for the doc-Q&A flow.
+    """
+
+
+# Minimum total chars across all pages before we treat a PDF as scanned.
+# A 10-page native PDF typically yields hundreds of chars; an image-only
+# PDF yields 0–10 (PyMuPDF picks up stray metadata).
+_PDF_MIN_TOTAL_NATIVE_CHARS = 20
+
+
+async def extract_text_no_ocr(file_path: str) -> str:
+    """Read a file from storage and extract text WITHOUT OCR fallback.
+
+    Used by chat file attachments. Raises `ScannedPdfError` for PDFs that
+    appear to be image-only (OCR is intentionally disabled in v1).
+
+    Args:
+        file_path: Storage-relative path (e.g. "{agent_id}/{filename}").
+
+    Returns:
+        Extracted text content. Empty string only when the file is genuinely
+        empty — scanned-PDF / corrupted cases raise instead.
+    """
+    ext = Path(file_path).suffix.lower()
+
+    if ext in IMAGE_EXTENSIONS:
+        return f"[Image file: {Path(file_path).name}]"
+
+    if ext not in SUPPORTED_DOC_EXTENSIONS:
+        raise ValueError(f"Unsupported file type: {ext}")
+
+    file_bytes = await read_file_bytes(file_path)
+
+    if ext == ".pdf":
+        text = _extract_pdf_native_only(file_bytes)
+        if len(text.strip()) < _PDF_MIN_TOTAL_NATIVE_CHARS:
+            raise ScannedPdfError(
+                f"PDF '{Path(file_path).name}' appears to be image-only; "
+                f"OCR is not enabled for chat attachments."
+            )
+        return text
+
+    return extract_text_from_bytes(file_bytes, ext)
 
 
 async def extract_text(file_path: str) -> str:

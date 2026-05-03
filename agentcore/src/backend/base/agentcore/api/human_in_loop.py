@@ -13,7 +13,7 @@ checkpointer, identified by thread_id (== session_id used in arun()).
 from __future__ import annotations
 
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import UUID
 
@@ -796,6 +796,14 @@ async def _execute_resume_locally(
         except (IndexError, AttributeError):
             pass
 
+        # Capture a pre-resume timestamp for the HITL confirmation message so
+        # it sorts BEFORE any AI/agent output produced during the resume.
+        # Subtract 1 second because conversation rows are serialized at second
+        # precision — without the offset, the confirmation and AI output can
+        # collapse onto the same second and the chat sort no longer reflects
+        # the intended "review completed → AI response" order.
+        confirmation_ts = datetime.now(timezone.utc) - timedelta(seconds=1)
+
         # Resume: pass Command(resume=decision) instead of initial_state.
         final_state = await graph.compiled_app.ainvoke(
             Command(resume=decision),
@@ -925,6 +933,7 @@ async def _execute_resume_locally(
                 action=body.action,
                 output_text=output_text if not output_stored_by_component else None,
                 orch_meta=orch_meta,
+                timestamp=confirmation_ts,
             )
 
         logger.info(f"[HITL] Run {thread_id!r} resumed and completed successfully.")
@@ -1247,6 +1256,7 @@ async def _store_hitl_confirmation(
     action: str,
     output_text: str | None = None,
     orch_meta: dict | None = None,
+    timestamp: datetime | None = None,
 ) -> None:
     """Store a confirmation chat message after HITL resume.
 
@@ -1257,6 +1267,10 @@ async def _store_hitl_confirmation(
     ``orch_meta`` is set by ``_persist_hitl_request`` in nodes.py when the graph
     was launched from the orchestrator.  It contains ``deployment_id``, ``user_id``,
     and ``session_id`` needed for the orch_conversation row.
+
+    ``timestamp`` lets the caller pin this row to a specific time so it sorts
+    correctly relative to AI output rows produced during the same resume — the
+    chat view sorts strictly by timestamp.
     """
     try:
         is_reject = "reject" in action.lower()
@@ -1272,20 +1286,25 @@ async def _store_hitl_confirmation(
             from agentcore.services.database.models.orch_conversation.crud import orch_add_message
             from agentcore.services.deps import session_scope
 
+            orch_kwargs: dict[str, Any] = dict(
+                sender="agent",
+                sender_name="Agent",
+                session_id=orch_meta.get("session_id") or thread_id,
+                text=text,
+                agent_id=_UUID(agent_id) if agent_id else None,
+                user_id=_UUID(orch_meta["user_id"]) if orch_meta.get("user_id") else None,
+                deployment_id=_UUID(orch_meta["deployment_id"]) if orch_meta.get("deployment_id") else None,
+                files=[],
+                properties={},
+                category="message",
+                content_blocks=[],
+            )
+            if timestamp is not None:
+                ts = timestamp.replace(tzinfo=None) if timestamp.tzinfo is not None else timestamp
+                orch_kwargs["timestamp"] = ts
+
             async with session_scope() as db:
-                orch_msg = OrchConversationTable(
-                    sender="agent",
-                    sender_name="Agent",
-                    session_id=orch_meta.get("session_id") or thread_id,
-                    text=text,
-                    agent_id=_UUID(agent_id) if agent_id else None,
-                    user_id=_UUID(orch_meta["user_id"]) if orch_meta.get("user_id") else None,
-                    deployment_id=_UUID(orch_meta["deployment_id"]) if orch_meta.get("deployment_id") else None,
-                    files=[],
-                    properties={},
-                    category="message",
-                    content_blocks=[],
-                )
+                orch_msg = OrchConversationTable(**orch_kwargs)
                 await orch_add_message(orch_msg, db)
             logger.info(f"[HITL] Stored orch confirmation for thread_id={thread_id!r}, action={action!r}")
         else:
@@ -1293,13 +1312,16 @@ async def _store_hitl_confirmation(
             from agentcore.memory import astore_message
             from agentcore.schema.message import Message
 
-            msg = Message(
+            msg_kwargs: dict[str, Any] = dict(
                 text=text,
                 sender="Machine",
                 sender_name="Agent",
                 session_id=thread_id,
                 agent_id=agent_id,
             )
+            if timestamp is not None:
+                msg_kwargs["timestamp"] = timestamp.strftime("%Y-%m-%d %H:%M:%S UTC")
+            msg = Message(**msg_kwargs)
             await astore_message(msg, agent_id=agent_id)
             logger.info(f"[HITL] Stored playground confirmation for thread_id={thread_id!r}, action={action!r}")
     except Exception as _err:

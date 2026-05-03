@@ -169,16 +169,24 @@ class Data(BaseModel):
         files = self.data.get("files", [])
         if sender == MESSAGE_SENDER_USER:
             if files:
-                from agentcore.schema.image import Image, is_image_file
+                from agentcore.schema.file_attachment import FileAttachment
+                from agentcore.schema.file_classifier import classify
+                from agentcore.schema.image import Image
 
                 contents = [{"type": "text", "text": text}]
                 for file in files:
                     try:
-                        if isinstance(file, Image):
+                        if isinstance(file, (Image, FileAttachment)):
                             contents.append(file.to_content_dict())
-                        elif is_image_file(file):
+                            continue
+                        kind = classify(file)
+                        if kind == "image":
                             img = Image(path=file if isinstance(file, str) else str(file))
                             contents.append(img.to_content_dict())
+                        # Document attachments require async resolve before
+                        # to_content_dict; Data.to_lc_message is sync, so we
+                        # skip raw doc paths here. Use Message.to_lc_message
+                        # (which awaits resolve_attachments) for docs.
                     except ValueError:
                         from loguru import logger
                         logger.warning(f"Could not resolve image file: {file}")

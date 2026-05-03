@@ -1216,7 +1216,48 @@ async def _route_request(
     """
     from agentcore.services.mibuddy.document_extractor import IMAGE_EXTENSIONS, SUPPORTED_DOC_EXTENSIONS
 
-    # Priority 0: Document files attached → document_qa mode (highest priority)
+    # Priority 0: Explicit @agent mention wins over everything else, including
+    # attached files. The agent's own ChatInput → resolve_attachments path
+    # handles file extraction, so we must NOT short-circuit into document_qa.
+    # (Previously document_qa had Priority 0 and beat @agent, which made
+    # @AgentName + file upload always land in MiBuddy's RAG flow.)
+    if body.agent_id or body.deployment_id:
+        agent_id, deployment_id, deployment = await _resolve_agent(session, current_user, body)
+        return {
+            "mode": "agent",
+            "agent_id": agent_id,
+            "deployment_id": deployment_id,
+            "deployment": deployment,
+            "model_id": None,
+            "intent": None,
+        }
+
+    # Priority 0.5: Sticky session continuation. If this session was already
+    # bound to an agent (i.e. a previous turn @-mentioned one and it ran),
+    # follow-ups stay with that agent — including follow-ups that attach
+    # files. Without this, message 2 in an agent session would silently fall
+    # into document_qa just because the user re-attached a doc.
+    # Fresh sessions (no prior agent run) are NOT caught here and continue
+    # to document_qa / intent classification below — that's intended.
+    sticky_active = await orch_get_active_agent(session, body.session_id)
+    if sticky_active:
+        sticky_deployment = await session.get(AgentDeploymentProd, sticky_active["deployment_id"])
+        if not sticky_deployment:
+            sticky_deployment = await session.get(AgentDeploymentUAT, sticky_active["deployment_id"])
+        if sticky_deployment and await _user_can_access_deployment(
+            session, current_user, sticky_deployment
+        ):
+            return {
+                "mode": "agent",
+                "agent_id": sticky_active["agent_id"],
+                "deployment_id": sticky_active["deployment_id"],
+                "deployment": sticky_deployment,
+                "model_id": None,
+                "intent": None,
+            }
+
+    # Priority 1: No @agent and no sticky agent, but document files attached
+    # → document_qa mode (fresh-session RAG flow, unchanged).
     if body.files:
         doc_files = [
             f for f in body.files
@@ -1257,18 +1298,6 @@ async def _route_request(
     # The dispatch-side "settings override" (web_search_model_name /
     # image_gen_model_name) swaps the responding model to the configured
     # specialist when the intent doesn't match the selected model.
-
-    # Mode 1: Explicit @agent mention
-    if body.agent_id or body.deployment_id:
-        agent_id, deployment_id, deployment = await _resolve_agent(session, current_user, body)
-        return {
-            "mode": "agent",
-            "agent_id": agent_id,
-            "deployment_id": deployment_id,
-            "deployment": deployment,
-            "model_id": None,
-            "intent": None,
-        }
 
     # Fast path: explicit image_mode flag from frontend — skip intent classification.
     # When the user has picked a specific image model (body.model_id set), mark

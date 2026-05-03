@@ -12,6 +12,7 @@ import { useVoiceStore } from "@/stores/voiceStore";
 import {
   ALLOWED_IMAGE_INPUT_EXTENSIONS,
   FS_ERROR_TEXT,
+  MAX_FILES_PER_CHAT_MESSAGE,
   SN_ERROR_TEXT,
 } from "../../../../../constants/constants";
 import useAgentsManagerStore from "../../../../../stores/agentsManagerStore";
@@ -91,6 +92,16 @@ export default function ChatInput({
       file = fileInput.files?.[0] ?? null;
     }
     if (file) {
+      if (files.length >= MAX_FILES_PER_CHAT_MESSAGE) {
+        setErrorData({
+          title: "Too many files",
+          list: [
+            `You can attach at most ${MAX_FILES_PER_CHAT_MESSAGE} files per message. Send the current message or remove a file before adding another.`,
+          ],
+        });
+        return;
+      }
+
       const fileExtension = file.name.split(".").pop()?.toLowerCase();
 
       try {

@@ -21,6 +21,8 @@ from agentcore.base.prompts.utils import dict_values_to_string
 from agentcore.schema.content_block import ContentBlock
 from agentcore.schema.content_types import ErrorContent
 from agentcore.schema.data import Data
+from agentcore.schema.file_attachment import FileAttachment
+from agentcore.schema.file_classifier import classify
 from agentcore.schema.image import Image, get_file_paths, is_image_file
 from agentcore.schema.properties import Properties, Source
 from agentcore.schema.validators import timestamp_to_str, timestamp_to_str_validator
@@ -43,7 +45,7 @@ class Message(Data):
     text: str | AsyncIterator | Iterator | None = Field(default="")
     sender: str | None = None
     sender_name: str | None = None
-    files: list[str | Image] | None = Field(default=[])
+    files: list[str | Image | FileAttachment] | None = Field(default=[])
     session_id: str | UUID | None = Field(default="")
     timestamp: Annotated[str, timestamp_to_str_validator] = Field(
         default_factory=lambda: datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S %Z")
@@ -111,23 +113,68 @@ class Message(Data):
         return value
 
     def model_post_init(self, /, _context: Any) -> None:
+        # Cap attachments per message. Mirror the frontend limit
+        # (MAX_FILES_PER_CHAT_MESSAGE) — defense-in-depth against direct
+        # API calls. Inline the env read; importing from base.data.utils
+        # would create a circular import via field_typing → dataframe.
+        import os as _os
+        max_files = int(_os.getenv("AGENTCORE_MAX_FILES_PER_MESSAGE", "5"))
+        if self.files and len(self.files) > max_files:
+            logger.warning(
+                f"[Message] {len(self.files)} files exceed the per-message "
+                f"cap of {max_files}; keeping the first {max_files}."
+            )
+            self.files = list(self.files[:max_files])
+
         new_files: list[Any] = []
         for file in self.files or []:
-            if isinstance(file, Image):
-                new_files.append(file)
-            elif is_image_file(file):
+            # Pydantic union resolution can pick the wrong type when both
+            # Image and FileAttachment share the same field shape (path+url).
+            # On every round-trip we re-classify by extension so the right
+            # subclass survives. Without this, a `.docx` deserialized as
+            # Image will be sent to the LLM as a fake image_url block.
+            if isinstance(file, (Image, FileAttachment)):
+                kind_for_existing = classify(file)
+                target_is_doc = kind_for_existing == "document"
+                target_is_img = kind_for_existing == "image"
+                if isinstance(file, Image) and target_is_doc:
+                    new_files.append(FileAttachment(path=file.path or ""))
+                elif isinstance(file, FileAttachment) and target_is_img:
+                    new_files.append(Image(path=file.path or ""))
+                else:
+                    new_files.append(file)
+                continue
+            kind = classify(file)
+            if kind == "image":
                 new_files.append(Image(path=file))
+            elif kind == "document":
+                new_files.append(FileAttachment(path=file))
             else:
+                # Unsupported — keep raw string so it surfaces in logs but
+                # downstream rendering will skip it via to_content_dict.
+                logger.warning(f"[Message] unsupported attachment kept as raw: {file}")
                 new_files.append(file)
         self.files = new_files
         if "timestamp" not in self.data:
             self.data["timestamp"] = self.timestamp
 
+    async def resolve_attachments(self) -> None:
+        """Pre-fetch attachment data (images + documents) so to_lc_message
+        can run synchronously. Resolves all attachments in parallel.
+        """
+        coros = [
+            f.resolve() for f in (self.files or [])
+            if isinstance(f, (Image, FileAttachment))
+        ]
+        if coros:
+            await asyncio.gather(*coros, return_exceptions=True)
+
     async def resolve_images(self) -> None:
-        """Pre-fetch image data from storage so to_lc_message works synchronously."""
-        for file in self.files or []:
-            if isinstance(file, Image):
-                await file.resolve()
+        """Back-compat alias for resolve_attachments. Kept so external
+        callers (and saved flows) keep working. Resolves both images and
+        document attachments — name retained for history only.
+        """
+        await self.resolve_attachments()
 
     def set_agent_id(self, agent_id: str) -> None:
         self.agent_id = agent_id
@@ -208,12 +255,19 @@ class Message(Data):
     def get_file_content_dicts(self):
         content_dicts = []
         for file in self.files or []:
-            if isinstance(file, Image):
+            if isinstance(file, (Image, FileAttachment)):
                 content_dicts.append(file.to_content_dict())
             else:
-                # Wrap string paths as Image objects so they go through
-                # the storage service (supports Azure blob, local, etc.)
-                content_dicts.append(Image(path=file).to_content_dict())
+                # Raw string survived classification (unsupported type) —
+                # surface as a visible error block instead of fake-wrapping
+                # as an Image. The previous fallback path is what produced
+                # the "Image not resolved" build crash for .docx uploads.
+                from pathlib import Path as _P
+                name = _P(str(file)).name if file else "unknown"
+                content_dicts.append({
+                    "type": "text",
+                    "text": f"<file name='{name}' error='unsupported-file-type'/>",
+                })
         return content_dicts
 
     def load_lc_prompt(self):
