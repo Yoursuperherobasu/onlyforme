@@ -727,6 +727,114 @@ function ImageGalleryView({
   );
 }
 
+/* ------------------ THINKING INDICATOR ------------------ */
+/**
+ * Renders the agent loading state. Two flavours:
+ *  - With files attached: progressive timed stages
+ *      0–600ms      "Resolving attachments…"
+ *      600–2500ms   "Reading <filename>…" (rotates if multiple)
+ *      2500ms+      "Generating response…"
+ *  - Without files: cycles generic phrases.
+ * Plus: animated dots, live elapsed counter, and skeleton lines.
+ *
+ * Stages here are TIME-BASED (frontend-only). For genuine backend-event
+ * stages, an SSE protocol upgrade is required (see chat history).
+ */
+function ThinkingIndicator({
+  fileNames,
+  routedMode,
+}: {
+  fileNames: string[];
+  routedMode: string | null;
+}) {
+  const { t } = useTranslation();
+  const [elapsed, setElapsed] = useState(0);
+
+  useEffect(() => {
+    const start = Date.now();
+    const id = setInterval(() => setElapsed(Date.now() - start), 200);
+    return () => clearInterval(id);
+  }, []);
+
+  const hasFiles = fileNames.length > 0;
+
+  // Stage durations: tuned slow so labels read like a deliberate UX, not a flicker.
+  const RESOLVE_MS = 1500;       // "Resolving attachments…"
+  const READ_PER_FILE_MS = 3000; // each file gets a full 3s of "Reading X…"
+  const PHRASE_DWELL_MS = 3000;  // each generic phrase shows for 3s
+
+  let label: string;
+  if (hasFiles) {
+    if (elapsed < RESOLVE_MS) {
+      label = t("Resolving attachments");
+    } else {
+      const readingPhaseTotal = READ_PER_FILE_MS * fileNames.length;
+      if (elapsed < RESOLVE_MS + readingPhaseTotal) {
+        const fileIdx = Math.floor((elapsed - RESOLVE_MS) / READ_PER_FILE_MS) % fileNames.length;
+        label = `${t("Reading")} ${fileNames[fileIdx]}`;
+      } else {
+        label = t("Generating response");
+      }
+    }
+  } else if (routedMode === "image_gen") {
+    const phrases = [
+      t("Understanding your prompt"),
+      t("Generating image"),
+      t("Adding final touches"),
+    ];
+    const idx = Math.floor(elapsed / PHRASE_DWELL_MS) % phrases.length;
+    label = phrases[idx];
+  } else if (routedMode === "web_search") {
+    const phrases = [
+      t("Searching the web"),
+      t("Reading top results"),
+      t("Summarizing findings"),
+    ];
+    const idx = Math.floor(elapsed / PHRASE_DWELL_MS) % phrases.length;
+    label = phrases[idx];
+  } else {
+    // No routing decision (covers agents — which never emit a routing event —
+    // and the pre-routing gap for models). Also catches routedMode === "chat".
+    const phrases = [
+      t("Reading your message"),
+      t("Thinking"),
+      t("Drafting a reply"),
+    ];
+    const idx = Math.floor(elapsed / PHRASE_DWELL_MS) % phrases.length;
+    label = phrases[idx];
+  }
+
+  // Animated dots — one dot fades in per 400ms cycle
+  const dotCount = (Math.floor(elapsed / 400) % 3) + 1;
+  const dots = ".".repeat(dotCount);
+
+  // Skeleton differs per output type. Image-gen → square placeholder
+  // (the actual image is what's coming), everything else → text bars.
+  const isImageOutput = routedMode === "image_gen";
+
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="flex items-baseline gap-2 text-sm text-muted-foreground">
+        <span className="font-medium">
+          {label}
+          <span className="inline-block w-4 text-left">{dots}</span>
+        </span>
+      </div>
+      {isImageOutput ? (
+        <div className="flex h-48 w-48 animate-pulse items-center justify-center rounded-lg bg-muted-foreground/20">
+          <Image size={32} className="text-muted-foreground/40" />
+        </div>
+      ) : (
+        <div className="flex flex-col gap-1.5">
+          <div className="h-2 w-3/4 animate-pulse rounded bg-muted-foreground/30" />
+          <div className="h-2 w-5/6 animate-pulse rounded bg-muted-foreground/30" style={{ animationDelay: "150ms" }} />
+          <div className="h-2 w-2/3 animate-pulse rounded bg-muted-foreground/30" style={{ animationDelay: "300ms" }} />
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ------------------ COMPONENT ------------------ */
 
 export default function AgentOrchestrator() {
@@ -742,6 +850,10 @@ export default function AgentOrchestrator() {
   const [currentSessionId, setCurrentSessionId] = useState<string>(crypto.randomUUID());
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [isSending, setIsSending] = useState(false);
+  // Tracks which session the in-flight request belongs to. When the user
+  // switches to a different chat while a response is streaming, only the
+  // sending session's input should be blocked — not the new one.
+  const [sendingSessionId, setSendingSessionId] = useState<string | null>(null);
   const [streamingAgentName, setStreamingAgentName] = useState<string>("");
   const [streamingMsgId, setStreamingMsgId] = useState<string | null>(null);
   // HITL state: track which message had its action clicked
@@ -800,6 +912,11 @@ export default function AgentOrchestrator() {
   const [isCanvasEnabled, setIsCanvasEnabled] = useState(false);
   // Addon: Image generation mode (sticky chip — stays until user clicks ×)
   const [imageMode, setImageMode] = useState(false);
+  // Per-send routing decision from backend SSE "routing" event. Drives the
+  // ThinkingIndicator's phrase set and skeleton shape ("image_gen" → image
+  // placeholder + "Generating image"; "web_search" → search phrases; etc.).
+  // Null = backend hasn't decided yet (gap between send and routing event).
+  const [routedMode, setRoutedMode] = useState<string | null>(null);
   // Addon: Per-message export menu (msg.id) and copy feedback
   const [exportMenuOpenId, setExportMenuOpenId] = useState<string | null>(null);
   const [copiedMsgId, setCopiedMsgId] = useState<string | null>(null);
@@ -1066,7 +1183,7 @@ export default function AgentOrchestrator() {
 
     const filesToUpload = Array.from(files).slice(0, available);
     if (files.length > available) {
-      alert(`Only ${available} more file(s) can be added. Maximum is ${MAX_FILES}.`);
+      alert(`Only ${available} file(s) can be added. Maximum is ${MAX_FILES}.`);
     }
 
     for (const file of filesToUpload) {
@@ -1158,6 +1275,10 @@ export default function AgentOrchestrator() {
     [agents, selectedModelId],
   );
   const canInteract = permissions?.includes("interact_agents") ?? false;
+  // Per-session send-in-progress flag. Lets the user start a NEW chat while
+  // an old one is still streaming a response, instead of being globally
+  // locked out of all chats.
+  const isSendingThisSession = isSending && sendingSessionId === currentSessionId;
 
   // Block typing/sending while an agent is waiting for an HITL approve/reject.
   // Why: once the agent pauses for human review, new user input must not be
@@ -1247,8 +1368,21 @@ export default function AgentOrchestrator() {
           // Also preserve contentBlocks (agent worker-node "Finished" blocks)
           // and reasoningContent (CoT thinking) if API didn't return them
           if (local) {
+            // Prefer local `content` when API returns empty or shorter text —
+            // this prevents the just-streamed bubble from going blank for a
+            // moment while the post-end refetch lands with a DB row whose
+            // persistence may briefly lag behind (read-replica delay, late
+            // commit, etc). Only override when local clearly has more text.
+            const apiContent = (merged.content as string | undefined) || "";
+            const localContent = (local.content as string | undefined) || "";
+            const preferredContent =
+              localContent && (!apiContent || localContent.length > apiContent.length)
+                ? localContent
+                : apiContent;
+
             merged = {
               ...merged,
+              content: preferredContent,
               contentBlocks: merged.contentBlocks ?? local.contentBlocks,
               blocksState: merged.contentBlocks ? merged.blocksState : (local.blocksState ?? merged.blocksState),
               reasoningContent: merged.reasoningContent ?? local.reasoningContent,
@@ -1277,7 +1411,39 @@ export default function AgentOrchestrator() {
         if (hint?.mode === "model") {
           setSelectedModelId("");
           setNoAgentMode(true);
-          setSelectedAiModel(hint.modelId);
+          // Don't restore the dropdown to an image-gen model. After auto-
+          // routing (MiBuddy AI → Nano Banana for "draw a dog"), the latest
+          // message's model_id is Nano Banana — restoring that would auto-
+          // enable imageMode and force every followup through the image_mode
+          // fast-path. Walk back to the most recent non-image model in the
+          // session, or fall back to MiBuddy AI / the page default.
+          const isImageModelName = (n: string) =>
+            /nano[\s_-]?banana|dall[\s_-]?e|flash[\s_-]?image|image[\s_-]?gen/i.test(n);
+          const hintedModel = aiModels.find((m) => m.id === hint.modelId);
+          let resolvedModelId = hint.modelId;
+          if (hintedModel && isImageModelName(hintedModel.name)) {
+            let found: string | null = null;
+            for (let i = apiSessionMessages.length - 1; i >= 0; i -= 1) {
+              const mid = (apiSessionMessages[i] as any)?.model_id;
+              if (!mid || mid === hint.modelId) continue;
+              const m = aiModels.find((mm) => mm.id === mid);
+              if (m && !isImageModelName(m.name)) {
+                found = mid;
+                break;
+              }
+            }
+            if (found) {
+              resolvedModelId = found;
+            } else {
+              const mibuddy = aiModels.find((m) => /mibuddy[\s_-]?ai/i.test(m.name));
+              const fallback =
+                mibuddy ||
+                aiModels.find((m) => m.is_default && !isImageModelName(m.name)) ||
+                aiModels.find((m) => !isImageModelName(m.name));
+              if (fallback) resolvedModelId = fallback.id;
+            }
+          }
+          setSelectedAiModel(resolvedModelId);
           setHeaderModelOverride(null);
           sessionSelectionSyncRef.current = effectiveSessionId;
           return;
@@ -1559,6 +1725,24 @@ export default function AgentOrchestrator() {
   useEffect(() => {
     setFilteredAgents(agents);
   }, [agents]);
+
+  // After a response finishes streaming in THIS session, return focus to the
+  // textarea so the user can type the next question without clicking. We
+  // gate on isSendingThisSession (not the global isSending) so a response
+  // landing in another tab/session doesn't yank focus from a chat the user
+  // is currently typing in.
+  const wasSendingThisSessionRef = useRef(false);
+  useEffect(() => {
+    if (wasSendingThisSessionRef.current && !isSendingThisSession) {
+      // Defer one tick so the textarea isn't disabled when we focus it.
+      setTimeout(() => {
+        if (!textareaRef.current?.disabled) {
+          textareaRef.current?.focus();
+        }
+      }, 0);
+    }
+    wasSendingThisSessionRef.current = isSendingThisSession;
+  }, [isSendingThisSession]);
 
   useEffect(() => {
     // Use instant scroll while streaming so it keeps up with fast tokens;
@@ -2032,7 +2216,13 @@ export default function AgentOrchestrator() {
 
     // 2. Call PUT endpoint to do the in-place update on the backend
     try {
+      // Mark THIS session as sending so isSendingThisSession (and therefore
+      // ThinkingIndicator) becomes true while the edit's PUT is in flight.
+      // Without sendingSessionId, the optimistically-cleared agent bubble
+      // would render "Message empty." via MarkdownField's empty fallback.
       setIsSending(true);
+      setSendingSessionId(currentSessionId);
+      setRoutedMode(null);
       const headers: Record<string, string> = { "Content-Type": "application/json" };
       const tokenMatch = document.cookie.match(/(?:^|;\s*)access_token_ag=([^;]*)/);
       if (tokenMatch?.[1]) headers["Authorization"] = `Bearer ${decodeURIComponent(tokenMatch[1])}`;
@@ -2061,10 +2251,30 @@ export default function AgentOrchestrator() {
             return { ...m, content: data.user_message.text };
           }
           if (data.agent_message && m.id === data.agent_message.id) {
+            // Filter content_blocks the same way the initial-fetch path does
+            // (line ~281) — only keep tool-call blocks; the rest is noise.
+            const rawBlocks = (data.agent_message.content_blocks ?? []) as any[];
+            const toolBlocks = rawBlocks.filter((block: any) =>
+              block?.contents?.some((c: any) =>
+                ["tool_use", "tool_result", "media", "code"].includes(c?.type),
+              ),
+            );
             return {
               ...m,
               content: data.agent_message.text,
               reasoningContent: data.agent_message.reasoning_content || undefined,
+              // Sync server-side block state — image-gen edits keep this
+              // empty, but mode-flip edits (e.g. agent → model_direct) need
+              // the old tool cards cleared. Without this, the optimistic
+              // `undefined` would be the only thing keeping stale tool
+              // cards from re-appearing on the next React reconciliation.
+              contentBlocks: toolBlocks.length > 0 ? toolBlocks : undefined,
+              // Sync files so newly-attached images on a regenerated reply
+              // (or cleared files when the mode flips away from image_gen)
+              // are reflected without a page reload.
+              files: data.agent_message.files && data.agent_message.files.length > 0
+                ? data.agent_message.files
+                : undefined,
               agentName: data.agent_message.sender_name,
             };
           }
@@ -2094,6 +2304,8 @@ export default function AgentOrchestrator() {
       });
     } finally {
       setIsSending(false);
+      setSendingSessionId(null);
+      setRoutedMode(null);
     }
   }, [editDraft, editingMsgId, cotReasoning, imageMode]);
 
@@ -2101,10 +2313,32 @@ export default function AgentOrchestrator() {
 
   const handleSend = useCallback(async (overrideText?: string) => {
     const hasFiles = uploadFiles.some((f) => f.path && !f.loading && !f.error);
+    // Block send if any file is still uploading — otherwise it gets silently
+    // dropped (the previous behavior caused agents to reply "no document
+    // attached" because the user clicked send before upload completed).
+    const hasPendingUploads = uploadFiles.some((f) => f.loading);
+    const hasFailedUploads = uploadFiles.some((f) => f.error);
+    if (hasPendingUploads) {
+      useAlertStore.getState().setErrorData?.({
+        title: "Upload still in progress",
+        list: ["Wait for the file upload to finish before sending, or remove the file."],
+      });
+      return;
+    }
+    if (hasFailedUploads && !hasFiles) {
+      useAlertStore.getState().setErrorData?.({
+        title: "Upload failed",
+        list: ["The file failed to upload. Remove it and try again."],
+      });
+      return;
+    }
     // Accept an optional override text (used by the edit-and-send flow where
     // React state flush timing is tricky). Falls back to the live `input` state.
     const effectiveInput = (typeof overrideText === "string" ? overrideText : input);
-    if (!canInteract || (!effectiveInput.trim() && !hasFiles) || isSending || hasPendingHitl) return;
+    // Only block re-sending in THIS session — let the user send in a different
+    // session even while another is streaming (each gets its own SSE stream).
+    const sendingThisSession = isSending && sendingSessionId === currentSessionId;
+    if (!canInteract || (!effectiveInput.trim() && !hasFiles) || sendingThisSession || hasPendingHitl) return;
     // New turn starts: clear prior routed label override.
     setHeaderModelOverride(null);
     // Hide autocomplete suggestions the moment the user submits, AND cancel any
@@ -2235,7 +2469,9 @@ export default function AgentOrchestrator() {
       setInput("");
       setShowMentions(false);
       setIsSending(true);
+      setSendingSessionId(currentSessionId);
       setStreamingAgentName(responderName);
+      setRoutedMode(null);
     });
 
     // Wait for the browser to actually paint the thinking state.
@@ -2358,6 +2594,10 @@ export default function AgentOrchestrator() {
           if (eventType === "routing") {
             console.warn("[Orch][routing event]", data);
             const routedMode = String(data?.mode || "").toLowerCase();
+            // Drive the ThinkingIndicator's phrase set + skeleton shape.
+            // Falsy mode → leave as null so indicator keeps the neutral
+            // pre-routing label instead of falling into the "chat" branch.
+            setRoutedMode(routedMode || null);
             if (noAgentMode && routedMode === "web_search" && data?.routed_model_name) {
               const nameStr = String(data.routed_model_name);
               const byName = aiModels.find(
@@ -2371,18 +2611,25 @@ export default function AgentOrchestrator() {
               setHeaderModelOverride(null);
             }
             let routedDisplayName: string | null = null;
+            // For image_gen routing, only update the message label (agentName) —
+            // do NOT switch the dropdown. Promoting selectedAiModel to nano-banana
+            // would auto-enable imageMode (see useEffect at ~line 1542) and force
+            // every followup through the image_mode fast-path on the backend, even
+            // for plain text questions. Users who want successive image generations
+            // can pick the image model explicitly via the dropdown or + → Create image.
+            const skipDropdownSwitch = routedMode === "image_gen";
             if (noAgentMode && data?.routed_model_id) {
               const routedId = String(data.routed_model_id);
               const match = aiModels.find((m) => m.id === routedId);
               if (match) {
                 routedDisplayName = match.name;
-                if (routedId !== selectedAiModel) setSelectedAiModel(routedId);
+                if (!skipDropdownSwitch && routedId !== selectedAiModel) setSelectedAiModel(routedId);
               }
             }
             if (!routedDisplayName && data?.routed_model_name) {
               const nameStr = String(data.routed_model_name);
               routedDisplayName = nameStr;
-              if (noAgentMode) {
+              if (noAgentMode && !skipDropdownSwitch) {
                 const byName = aiModels.find(
                   (m) => m.name.toLowerCase() === nameStr.toLowerCase(),
                 );
@@ -2514,30 +2761,51 @@ export default function AgentOrchestrator() {
             // to a different model than the one the user selected (e.g. user picked
             // "MiBuddy AI" → router picked "gpt-5.1-chat" → dropdown updates to
             // "gpt-5.1-chat" so the user knows subsequent messages will use it).
+            //
+            // Exception: don't promote to image-gen models. Doing so would auto-
+            // enable imageMode and force all followup messages through the
+            // image_mode fast-path on the backend, even plain-text queries.
+            const isImageModelName = (n: string) =>
+              /nano[\s_-]?banana|dall[\s_-]?e|flash[\s_-]?image|image[\s_-]?gen/i.test(n);
             if (noAgentMode && data?.routed_model_id) {
               const routedId = data.routed_model_id;
               if (routedId !== selectedAiModel) {
                 const match = aiModels.find((m) => m.id === routedId);
-                if (match) setSelectedAiModel(routedId);
+                if (match && !isImageModelName(match.name)) setSelectedAiModel(routedId);
               }
             } else if (noAgentMode && data?.routed_model_name) {
               // Fallback: match by display name if no id is present
+              const nameStr = String(data.routed_model_name);
               const byName = aiModels.find(
-                (m) => m.name.toLowerCase() === String(data.routed_model_name).toLowerCase(),
+                (m) => m.name.toLowerCase() === nameStr.toLowerCase(),
               );
-              if (byName && byName.id !== selectedAiModel) setSelectedAiModel(byName.id);
+              if (byName && byName.id !== selectedAiModel && !isImageModelName(byName.name)) {
+                setSelectedAiModel(byName.id);
+              }
             }
 
-            // Also auto-enable image mode if an image was returned
+            // After a successful image generation, always revert the dropdown
+            // back to MiBuddy AI (or the default chat model) so the next
+            // message goes through normal intent classification. Applies to
+            // both auto-routed image gens (MiBuddy AI → Nano Banana for one
+            // turn) and explicit image-model picks — users who want
+            // successive images can re-select Nano Banana or use + → Create
+            // image. The imageMode useEffect will auto-clear the red chip
+            // when the dropdown leaves the image model.
             const finalText = data?.agent_text || "";
             const hasGeneratedImage = /!\[[^\]]*\]\([^)]+\)/.test(finalText);
             if (hasGeneratedImage && noAgentMode) {
-              const imageModel = aiModels.find((m) =>
-                /nano[\s_-]?banana|dall[\s_-]?e|flash[\s_-]?image|image[\s_-]?gen/i.test(m.name)
-              );
-              if (imageModel && imageModel.id !== selectedAiModel) {
-                setSelectedAiModel(imageModel.id);
-                // image_mode useEffect will auto-enable the chip
+              const currentModel = aiModels.find((m) => m.id === selectedAiModel);
+              const userOnImageModel = currentModel ? isImageModelName(currentModel.name) : false;
+              if (userOnImageModel) {
+                const mibuddy = aiModels.find((m) => /mibuddy[\s_-]?ai/i.test(m.name));
+                const fallback =
+                  mibuddy ||
+                  aiModels.find((m) => m.is_default && !isImageModelName(m.name)) ||
+                  aiModels.find((m) => !isImageModelName(m.name));
+                if (fallback && fallback.id !== selectedAiModel) {
+                  setSelectedAiModel(fallback.id);
+                }
               }
             }
             // End event carries the final complete text — flush immediately.
@@ -2616,10 +2884,12 @@ export default function AgentOrchestrator() {
         );
       }
       setIsSending(false);
+      setSendingSessionId(null);
       setStreamingAgentName("");
       setStreamingMsgId(null);
+      setRoutedMode(null);
     }
-  }, [canInteract, input, isSending, hasPendingHitl, agents, selectedAgent, selectedModelId, noAgentMode, selectedAiModel, currentSessionId, effectiveSessionId, refetchSessions, refetchMessages, imageMode, cotReasoning]);
+  }, [canInteract, input, isSending, sendingSessionId, hasPendingHitl, agents, selectedAgent, selectedModelId, noAgentMode, selectedAiModel, currentSessionId, effectiveSessionId, refetchSessions, refetchMessages, imageMode, cotReasoning, uploadFiles, isCanvasEnabled, isSharedReadOnly]);
 
   // Keep the ref updated so handleSaveEdit can call the latest handleSend
   useEffect(() => {
@@ -3485,22 +3755,61 @@ export default function AgentOrchestrator() {
             // Restrict COT to Gemini models only (the only provider with reliable
             // visible thinking support in our current setup). Matches names like
             // "Gemini 3 Pro", "gemini-3.1-pro-preview", "Google 3.1 Pro", "Gemini 2.5 Flash".
-            const modelName = `${selectedModel?.name || ""}`.toLowerCase();
-            const isGeminiModel = /\b(gemini|google)\b/.test(modelName) && /\b(2\.5|3|3\.\d+)\b/.test(modelName);
-            const cotDisabled = noAgentMode && !isGeminiModel;
+            const isGeminiName = (n: string) => {
+              const ln = (n || "").toLowerCase();
+              return /\b(gemini|google)\b/.test(ln) && /\b(2\.5|3|3\.\d+)\b/.test(ln);
+            };
+            const isGeminiModel = isGeminiName(selectedModel?.name || "");
+            // Find the best Gemini reasoning model in the registry — Option A:
+            // Pro + is_default → Pro → default → first available.
+            const geminiCandidates = aiModels.filter((m) => isGeminiName(m.name));
+            const bestGemini =
+              geminiCandidates.find((m) => /\bpro\b/i.test(m.name) && m.is_default) ||
+              geminiCandidates.find((m) => /\bpro\b/i.test(m.name)) ||
+              geminiCandidates.find((m) => m.is_default) ||
+              geminiCandidates[0] ||
+              null;
+            // Disabled only if not in model mode, or no Gemini model exists
+            // in the registry to switch to. Otherwise the button is always
+            // clickable: toggling on auto-switches to the best Gemini, mirror-
+            // ing how "Create image" auto-switches to an image-gen model.
+            const cotDisabled = !noAgentMode || !bestGemini;
+            const willAutoSwitch = !cotDisabled && !cotReasoning && !isGeminiModel && !!bestGemini;
             return (
           <button
-            onClick={() => { if (!cotDisabled) setCotReasoning(!cotReasoning); }}
+            onClick={() => {
+              if (cotDisabled) return;
+              const turningOn = !cotReasoning;
+              if (turningOn && !isGeminiModel && bestGemini) {
+                // Switch to a reasoning-capable Gemini first, then enable COT.
+                setSelectedAiModel(bestGemini.id);
+                setNoAgentMode(true);
+              }
+              setCotReasoning(turningOn);
+            }}
             className={`flex w-full items-center justify-between rounded-lg px-3 py-2.5 text-left text-sm ${
               cotDisabled ? "cursor-not-allowed text-muted-foreground/50" : "text-foreground hover:bg-accent"
             }`}
-            title={cotDisabled ? "Selected model does not support reasoning" : undefined}
+            title={
+              cotDisabled
+                ? (!noAgentMode
+                    ? "COT reasoning is only available in model (No Agent) mode"
+                    : "No Gemini reasoning model is registered")
+                : willAutoSwitch && bestGemini
+                  ? `Will switch to ${bestGemini.name} (Gemini reasoning)`
+                  : undefined
+            }
           >
             <div className="flex items-center gap-3">
               <Lightbulb size={16} className={cotDisabled ? "text-muted-foreground/30" : "text-muted-foreground"} />
               <span>{t("COT reasoning")}</span>
-              {cotDisabled && noAgentMode && selectedModel && (
-                <span className="text-xxs text-muted-foreground/50">({t("not supported")})</span>
+              {willAutoSwitch && bestGemini && (
+                <span className="text-xxs text-muted-foreground/70">
+                  ({t("switches to")} {bestGemini.name})
+                </span>
+              )}
+              {cotDisabled && noAgentMode && (
+                <span className="text-xxs text-muted-foreground/50">({t("no Gemini model")})</span>
               )}
             </div>
             <div
@@ -3742,7 +4051,7 @@ export default function AgentOrchestrator() {
             </button>
 
             {showModelPicker && (
-              <div className="absolute left-0 top-full z-50 mt-1 min-w-[240px] rounded-xl border border-border bg-popover p-1 shadow-lg">
+              <div className="absolute left-0 top-full z-50 mt-1 flex max-h-[60vh] min-w-[240px] flex-col overflow-hidden rounded-xl border border-border bg-popover p-1 shadow-lg">
                 {/* No Agent option */}
                 <button
                   onClick={() => {
@@ -3770,42 +4079,45 @@ export default function AgentOrchestrator() {
                   )}
                 </button>
                 <div className="my-1 h-px bg-border" />
-                {agents.map((agent) => (
-                  <button
-                    key={agent.id}
-                    onClick={() => {
-                      setSelectedModelId(agent.id);
-                      setNoAgentMode(false);
-                      setSelectedAiModel(null);
-                      setShowModelPicker(false);
-                    }}
-                    className={`flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-left text-sm text-foreground hover:bg-accent ${
-                      !noAgentMode && selectedModelId === agent.id ? "bg-accent" : ""
-                    }`}
-                  >
-                    <span
-                      className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md"
-                      style={{ background: agent.color }}
+                {/* Scrollable agent list — keeps "No Agent" pinned above */}
+                <div className="flex-1 overflow-y-auto">
+                  {agents.map((agent) => (
+                    <button
+                      key={agent.id}
+                      onClick={() => {
+                        setSelectedModelId(agent.id);
+                        setNoAgentMode(false);
+                        setSelectedAiModel(null);
+                        setShowModelPicker(false);
+                      }}
+                      className={`flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-left text-sm text-foreground hover:bg-accent ${
+                        !noAgentMode && selectedModelId === agent.id ? "bg-accent" : ""
+                      }`}
                     >
-                      <Sparkles size={14} color="white" />
-                    </span>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center font-medium">
-                        <span>{agent.name}</span>
-                        {versionBadge(agent.version_label)}
-                        {uatBadge(agent.environment)}
-                      </div>
-                      <div className="text-xs text-muted-foreground">
-                        {agent.description}
-                      </div>
-                    </div>
-                    {!noAgentMode && selectedModelId === agent.id && (
-                      <span className="ml-auto text-primary">
-                        <Check size={14} />
+                      <span
+                        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md"
+                        style={{ background: agent.color }}
+                      >
+                        <Sparkles size={14} color="white" />
                       </span>
-                    )}
-                  </button>
-                ))}
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center font-medium">
+                          <span>{agent.name}</span>
+                          {versionBadge(agent.version_label)}
+                          {uatBadge(agent.environment)}
+                        </div>
+                        <div className="text-xs text-muted-foreground">
+                          {agent.description}
+                        </div>
+                      </div>
+                      {!noAgentMode && selectedModelId === agent.id && (
+                        <span className="ml-auto text-primary">
+                          <Check size={14} />
+                        </span>
+                      )}
+                    </button>
+                  ))}
+                </div>
               </div>
             )}
           </div>
@@ -3977,7 +4289,27 @@ export default function AgentOrchestrator() {
               }
 
               const isUser = msg.sender === "user";
-              const isThinking = msg.sender === "agent" && msg.content === "" && isSending;
+              // Show ThinkingIndicator only when there is NOTHING to display yet —
+              // no text content, no tool-call cards, and no reasoning tokens yet.
+              // Once any of those arrive (Gemini/Anthropic emit reasoning before
+              // the user-facing answer; tool agents emit content_blocks during
+              // tool calls), render the body so the streaming UX is visible.
+              const hasContentBlocks = !!(msg.contentBlocks && msg.contentBlocks.length > 0);
+              const hasReasoning = !!(msg.reasoningContent && msg.reasoningContent.length > 0);
+              // Image-gen path: backend streams "Generating image..." as a token
+              // BEFORE the actual image markdown arrives. Without this carve-out,
+              // that placeholder text would unmount the ThinkingIndicator (and its
+              // image skeleton) the instant streaming begins. Keep showing the
+              // indicator until real image markdown ("![...](...)") appears.
+              const hasImageMarkdown = !!msg.content && msg.content.includes("![");
+              const isImageGenStreaming =
+                routedMode === "image_gen" && !hasImageMarkdown;
+              const isThinking =
+                msg.sender === "agent" &&
+                (msg.content === "" || isImageGenStreaming) &&
+                !hasContentBlocks &&
+                !hasReasoning &&
+                isSendingThisSession;
               const isInlineEditingUserMessage =
                 isUser && editingMsgId === msg.id && noAgentMode;
 
@@ -4058,10 +4390,15 @@ export default function AgentOrchestrator() {
                     </div>
                     )}
                     {isThinking ? (
-                      <div className="flex items-center gap-2">
-                        <Loader2 size={16} className="animate-spin text-muted-foreground" />
-                        <span className="text-sm text-muted-foreground">{t("Thinking...")}</span>
-                      </div>
+                      // Look up the user message that triggered this agent
+                      // placeholder so we can show file-aware stages.
+                      (() => {
+                        const prevUser = idx > 0 ? messages[idx - 1] : null;
+                        const triggerFiles = (prevUser?.files || []).map(
+                          (p: string) => p.split(/[/\\]/).pop() || p,
+                        );
+                        return <ThinkingIndicator fileNames={triggerFiles} routedMode={routedMode} />;
+                      })()
                     ) : isUser ? (
                       <>
                       <div
@@ -4113,7 +4450,9 @@ export default function AgentOrchestrator() {
                                 {msg.files.map((filePath, idx) => {
                                   const ext = filePath.split(".").pop()?.toLowerCase() || "";
                                   const isImage = ["png", "jpg", "jpeg", "gif", "webp", "bmp"].includes(ext);
-                                  const fileName = filePath.split("/").pop() || filePath;
+                                  // Split on either separator — Windows Path
+                                  // stringifies with backslashes on the backend.
+                                  const fileName = filePath.split(/[/\\]/).pop() || filePath;
                                   return isImage ? (
                                     <img
                                       key={idx}
@@ -4136,9 +4475,16 @@ export default function AgentOrchestrator() {
                           </>
                         )}
                       </div>
-                      {/* Prompt action buttons — Copy and Edit (outside bubble) */}
-                      {msg.content && !isSending && noAgentMode && (
-                        <div className="mt-1 flex items-center justify-end gap-1">
+                      {/* Prompt action buttons — Copy (always) + Edit (no-agent mode only).
+                          Edit stays gated because re-sending in agent mode would
+                          re-trigger the agent run; copy is harmless in any mode. */}
+                      {msg.content && !isSending && (
+                        <div className="mt-1 flex items-center justify-end gap-2">
+                          {msg.timestamp && (
+                            <span className="text-xs font-normal text-muted-foreground">
+                              {msg.timestamp}
+                            </span>
+                          )}
                           <button
                             onClick={() => handleCopyMessage(msg.content, msg.id)}
                             className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
@@ -4146,13 +4492,15 @@ export default function AgentOrchestrator() {
                           >
                             {copiedMsgId === msg.id ? <Check size={13} className="text-green-600" /> : <Copy size={13} />}
                           </button>
-                          <button
-                            onClick={() => handleStartEdit(msg.id, msg.content)}
-                            className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
-                            title={t("Edit prompt")}
-                          >
-                            <Pencil size={13} />
-                          </button>
+                          {noAgentMode && (
+                            <button
+                              onClick={() => handleStartEdit(msg.id, msg.content)}
+                              className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
+                              title={t("Edit prompt")}
+                            >
+                              <Pencil size={13} />
+                            </button>
+                          )}
                         </div>
                       )}
                       </>
@@ -4188,14 +4536,21 @@ export default function AgentOrchestrator() {
                               );
                             }}
                           />
-                        ) : (
+                        ) : msg.content || (!hasContentBlocks && !hasReasoning) ? (
+                          // Render the markdown body if there is text to show, or
+                          // (as a fallback) when there are no tool cards AND no
+                          // reasoning panel either — that fallback case is what
+                          // the "Message empty." string covers. While tool blocks
+                          // or reasoning are streaming with no answer text yet,
+                          // render nothing so the empty placeholder doesn't flash
+                          // between them and the first answer token.
                           <MarkdownField
                             chat={{}}
                             isEmpty={!msg.content}
                             chatMessage={msg.content}
                             editedFlag={null}
                           />
-                        )}
+                        ) : null}
                         {/* Action buttons row — show on every assistant message,
                             including image-generation replies. Thumbs/copy/share
                             all operate on the accompanying text (captions like
@@ -4585,8 +4940,8 @@ export default function AgentOrchestrator() {
                       }
                       setShowPlusMenu(!showPlusMenu);
                     }}
-                    disabled={isSending || !canInteract || isSharedReadOnly || hasPendingHitl}
-                    className={`flex h-9 w-9 items-center justify-center rounded-full text-muted-foreground transition-colors ${(isSending || !canInteract || isSharedReadOnly || hasPendingHitl) ? "cursor-not-allowed opacity-50" : "hover:bg-accent hover:text-foreground"}`}
+                    disabled={isSendingThisSession || !canInteract || isSharedReadOnly || hasPendingHitl}
+                    className={`flex h-9 w-9 items-center justify-center rounded-full text-muted-foreground transition-colors ${(isSendingThisSession || !canInteract || isSharedReadOnly || hasPendingHitl) ? "cursor-not-allowed opacity-50" : "hover:bg-accent hover:text-foreground"}`}
                     title={noAgentMode ? t("More options") : t("Upload files")}
                   >
                     <Plus size={18} />
@@ -4598,8 +4953,8 @@ export default function AgentOrchestrator() {
                 {!((noAgentMode && selectedAiModel) || (!noAgentMode && selectedModelId)) && (
                   <button
                     onClick={() => fileInputRef.current?.click()}
-                    disabled={isSending || !canInteract || isSharedReadOnly || hasPendingHitl}
-                    className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors ${(isSending || !canInteract || isSharedReadOnly || hasPendingHitl) ? "cursor-not-allowed opacity-50" : "hover:bg-accent hover:text-foreground"}`}
+                    disabled={isSendingThisSession || !canInteract || isSharedReadOnly || hasPendingHitl}
+                    className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors ${(isSendingThisSession || !canInteract || isSharedReadOnly || hasPendingHitl) ? "cursor-not-allowed opacity-50" : "hover:bg-accent hover:text-foreground"}`}
                     title={t("Upload image")}
                   >
                     <ImagePlus size={18} />
@@ -4611,7 +4966,7 @@ export default function AgentOrchestrator() {
                   value={input}
                   onChange={(e) => handleInputChange(e.target.value)}
                   onPaste={handlePaste}
-                  disabled={isSending || !canInteract || isSharedReadOnly || hasPendingHitl}
+                  disabled={isSendingThisSession || !canInteract || isSharedReadOnly || hasPendingHitl}
                   onKeyDown={(e) => {
                     if (showSuggestions && suggestions.length > 0) {
                       if (e.key === "ArrowDown") {
@@ -4648,7 +5003,7 @@ export default function AgentOrchestrator() {
                         ? t("You do not have permission to interact with agents.")
                         : hasPendingHitl
                           ? t("Waiting for human review — approve or reject to continue")
-                          : isSending
+                          : isSendingThisSession
                             ? t("Waiting for response...")
                             : noAgentMode && messages.length > 0
                               ? t("Start typing to chat with the Model")
@@ -4656,7 +5011,7 @@ export default function AgentOrchestrator() {
                   }
                   rows={1}
                   style={{ maxHeight: TEXTAREA_MAX_HEIGHT }}
-                  className={`min-w-0 flex-1 resize-none overflow-y-hidden border-none bg-transparent px-2 py-1.5 text-[15px] leading-6 text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-0 ${(isSending || !canInteract || isSharedReadOnly || hasPendingHitl) ? "cursor-not-allowed opacity-50" : ""}`}
+                  className={`min-w-0 flex-1 resize-none overflow-y-hidden border-none bg-transparent px-2 py-1.5 text-[15px] leading-6 text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-0 ${(isSendingThisSession || !canInteract || isSharedReadOnly || hasPendingHitl) ? "cursor-not-allowed opacity-50" : ""}`}
                 />
 
                 <input
@@ -4671,11 +5026,11 @@ export default function AgentOrchestrator() {
                 {/* Mic */}
                 <button
                   onClick={handleMicClick}
-                  disabled={isSending || !canInteract || isSharedReadOnly || hasPendingHitl}
+                  disabled={isSendingThisSession || !canInteract || isSharedReadOnly || hasPendingHitl}
                   className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full transition-colors ${
                     isListening
                       ? "bg-red-500 text-white animate-pulse"
-                      : (isSending || !canInteract || isSharedReadOnly || hasPendingHitl)
+                      : (isSendingThisSession || !canInteract || isSharedReadOnly || hasPendingHitl)
                         ? "cursor-not-allowed text-muted-foreground opacity-50"
                         : "text-muted-foreground hover:bg-accent hover:text-foreground"
                   }`}
@@ -4684,18 +5039,44 @@ export default function AgentOrchestrator() {
                   {isListening ? <AudioLines size={18} /> : <Mic size={18} />}
                 </button>
 
-                {/* Send — wrap in arrow fn so React's MouseEvent isn't passed as the override text */}
-                <button
-                  onClick={() => handleSend()}
-                  disabled={(!input.trim() && !uploadFiles.some((f) => f.path)) || isSending || !canInteract || isSharedReadOnly || hasPendingHitl}
-                  className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full transition-colors ${
-                    (input.trim() || uploadFiles.some((f) => f.path)) && !isSending && canInteract && !isSharedReadOnly && !hasPendingHitl
-                      ? "bg-foreground text-background hover:opacity-90"
-                      : "bg-muted text-muted-foreground"
-                  }`}
-                >
-                  <Send size={16} className="-ml-px -mt-px" />
-                </button>
+                {/* Send — wrap in arrow fn so React's MouseEvent isn't passed as the override text.
+                    Disabled while any file is still uploading so the user can't accidentally send
+                    a message before the file is attached (causing "no document" agent replies). */}
+                {(() => {
+                  const anyUploading = uploadFiles.some((f) => f.loading);
+                  const sendDisabled =
+                    (!input.trim() && !uploadFiles.some((f) => f.path)) ||
+                    isSendingThisSession ||
+                    !canInteract ||
+                    isSharedReadOnly ||
+                    hasPendingHitl ||
+                    anyUploading;
+                  const sendActive =
+                    (input.trim() || uploadFiles.some((f) => f.path)) &&
+                    !isSendingThisSession &&
+                    canInteract &&
+                    !isSharedReadOnly &&
+                    !hasPendingHitl &&
+                    !anyUploading;
+                  return (
+                    <button
+                      onClick={() => handleSend()}
+                      disabled={sendDisabled}
+                      title={anyUploading ? t("Waiting for upload to finish…") : undefined}
+                      className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full transition-colors ${
+                        sendActive
+                          ? "bg-foreground text-background hover:opacity-90"
+                          : "bg-muted text-muted-foreground"
+                      }`}
+                    >
+                      {anyUploading ? (
+                        <Loader2 size={16} className="animate-spin" />
+                      ) : (
+                        <Send size={16} className="-ml-px -mt-px" />
+                      )}
+                    </button>
+                  );
+                })()}
               </div>
             </div>
 

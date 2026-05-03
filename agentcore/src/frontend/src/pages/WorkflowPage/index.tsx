@@ -31,6 +31,7 @@ import {
   usePutControlPanelAgentSharing,
   useToggleControlPanelAgent,
 } from "@/controllers/API/queries/control-panel";
+import { useGetAllTriggers } from "@/controllers/API/queries/triggers/use-get-all-triggers";
 import CustomLoader from "@/customization/components/custom-loader";
 import { useCustomNavigate } from "@/customization/hooks/use-custom-navigate";
 import EmbedModal from "@/modals/EmbedModal/embed-modal";
@@ -201,6 +202,36 @@ export default function WorkflowsView({
       refetchInterval: 30000,
     },
   );
+
+  // Pull active triggers so the Schedule column can flag agents that already
+  // have automation configured — without this, users have to click into the
+  // Scheduler dialog one agent at a time to find out.
+  const { data: allTriggers = [] } = useGetAllTriggers(
+    {},
+    { enabled: canViewScheduler, refetchInterval: 30_000 },
+  );
+  // Triggers can be scoped to a specific deployment (deployment_id set) or to
+  // an agent generally (deployment_id null — applies across UAT/PROD). We
+  // bucket them separately so a UAT-only schedule doesn't mark the agent's
+  // PROD row as scheduled.
+  const { scheduledDeploymentIds, scheduledAgentIds } = useMemo(() => {
+    const deps = new Set<string>();
+    const agents = new Set<string>();
+    for (const trig of allTriggers) {
+      if (!trig.is_active) continue;
+      if (trig.deployment_id) {
+        deps.add(trig.deployment_id);
+      } else if (trig.agent_id) {
+        agents.add(trig.agent_id);
+      }
+    }
+    return { scheduledDeploymentIds: deps, scheduledAgentIds: agents };
+  }, [allTriggers]);
+  const isWorkagentScheduled = (workflow: WorkagentType): boolean => {
+    if (scheduledDeploymentIds.has(workflow.id)) return true;
+    if (workflow.agentId && scheduledAgentIds.has(workflow.agentId)) return true;
+    return false;
+  };
   const displayworkflows = useMemo(() => {
     if (workflows?.length) {
       return workflows;
@@ -1601,13 +1632,16 @@ export default function WorkflowsView({
                           const disabledReason = isChat
                             ? "Chat agents cannot be scheduled."
                             : undefined;
+                          const isScheduled = !isChat && isWorkagentScheduled(workflow);
                           const button = (
                             <button
                               type="button"
                               className={`inline-flex items-center gap-1 rounded-md border px-2.5 py-1 text-xs transition-colors ${
                                 isChat
                                   ? "cursor-not-allowed border-muted-foreground/30 text-muted-foreground"
-                                  : "hover:bg-muted"
+                                  : isScheduled
+                                    ? "border-green-600 bg-green-50 font-medium text-green-700 hover:bg-green-100 dark:bg-green-950/30 dark:text-green-400 dark:hover:bg-green-950/50"
+                                    : "hover:bg-muted"
                               }`}
                               onClick={(e) => {
                                 e.stopPropagation();
@@ -1616,13 +1650,21 @@ export default function WorkflowsView({
                               }}
                               aria-disabled={isChat}
                             >
-                              {t("Schedule")}
+                              {isScheduled ? t("Scheduled") : t("Schedule")}
                             </button>
                           );
 
                           if (disabledReason) {
                             return (
                               <ShadTooltip content={disabledReason}>
+                                <span>{button}</span>
+                              </ShadTooltip>
+                            );
+                          }
+
+                          if (isScheduled) {
+                            return (
+                              <ShadTooltip content={t("This agent has an active schedule. Click to view or edit.")}>
                                 <span>{button}</span>
                               </ShadTooltip>
                             );

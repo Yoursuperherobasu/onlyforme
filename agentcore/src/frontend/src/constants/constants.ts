@@ -923,17 +923,20 @@ export const MAX_BATCH_SIZE = 50;
 export const MODAL_CLASSES =
   "nopan nodelete nodrag  noflow fixed inset-0 bottom-0 left-0 right-0 top-0 z-50 overflow-auto bg-black/50 backdrop-blur-sm data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0";
 
-// Playground file upload: allow images + documents (parity with OrchestratorChat).
-// Previously restricted to images only — agents can now accept docs for RAG /
-// summarization / analysis.
+// Playground file upload: allow images + documents. Must stay in sync with
+// the backend white-list in `agentcore/schema/file_classifier.py`
+// (IMAGE_EXTS + EXTRACTABLE_EXTS); files outside this list are rejected
+// at the upload endpoint with HTTP 415.
 export const ALLOWED_IMAGE_INPUT_EXTENSIONS = [
   // Images
-  "png", "jpg", "jpeg", "gif", "webp", "bmp", "svg",
+  "png", "jpg", "jpeg", "gif", "webp", "bmp", "svg", "tiff",
   // Documents
-  "pdf", "docx", "xlsx", "pptx", "txt", "md", "csv",
-  // Code / markup
-  "json", "html", "css", "php", "rb", "sh", "tex", "py", "js", "ts", "tsx", "jsx",
-  "yml", "yaml", "xml", "sql", "c", "cpp", "h", "hpp", "java", "go", "rs",
+  "pdf", "docx", "xlsx", "xls", "xlsm", "pptx", "txt", "md", "mdx", "csv",
+  // Markup
+  "html", "htm", "json", "yaml", "yml", "xml", "tex",
+  // Code
+  "py", "js", "ts", "tsx", "jsx", "java", "cpp", "c", "cs", "h", "hpp",
+  "go", "rs", "sh", "sql", "rb", "php", "css",
 ];
 
 export const componentsToIgnoreUpdate = ["CustomComponent"];
@@ -941,6 +944,11 @@ export const componentsToIgnoreUpdate = ["CustomComponent"];
 export const FS_ERROR_TEXT =
   "Please ensure your file has one of the following extensions:";
 export const SN_ERROR_TEXT = ALLOWED_IMAGE_INPUT_EXTENSIONS.join(", ");
+
+// Per-message attachment cap for the Playground chat input.
+// Mirrored on the backend in Message.model_post_init — keep in sync if
+// changed (env override: AGENTCORE_MAX_FILES_PER_MESSAGE).
+export const MAX_FILES_PER_CHAT_MESSAGE = 5;
 
 export const ERROR_UPDATING_COMPONENT =
   "An unexpected error occurred while updating the Component. Please try again.";

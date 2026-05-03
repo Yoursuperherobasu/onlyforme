@@ -30,7 +30,12 @@ from agentcore.services.database.models.approval_request.model import (
 from agentcore.services.database.models.approval_notification.model import ApprovalNotification
 from agentcore.services.database.models.department.model import Department
 from agentcore.services.database.models.folder.model import Folder
-from agentcore.services.database.models.mcp_registry.model import McpRegistry, McpRegistryRead, McpRegistryUpdate
+from agentcore.services.database.models.mcp_registry.model import (
+    McpProbeResponse,
+    McpRegistry,
+    McpRegistryRead,
+    McpRegistryUpdate,
+)
 from agentcore.services.database.models.mcp_approval_request.model import McpApprovalRequest
 from agentcore.services.database.models.model_approval_request.model import (
     ModelApprovalRequest,
@@ -46,7 +51,10 @@ from agentcore.services.database.models.model_registry.model import (
 from agentcore.services.database.models.role.model import Role
 from agentcore.services.database.models.user_department_membership.model import UserDepartmentMembership
 from agentcore.services.database.models.user_organization_membership.model import UserOrganizationMembership
-from agentcore.services.mcp_service_client import update_mcp_server_via_service
+from agentcore.services.mcp_service_client import (
+    probe_mcp_server_via_service,
+    update_mcp_server_via_service,
+)
 from agentcore.services.database.models.user.model import User
 from agentcore.services.database.models.agent_api_key.model import AgentApiKey
 from agentcore.services.database.registry_service import sync_agent_registry
@@ -2557,6 +2565,47 @@ async def update_mcp_config_for_approval(
     await session.commit()
     await session.refresh(row)
     return McpRegistryRead.from_orm_model(row)
+
+
+@router.post("/{approval_id}/mcp-probe", response_model=McpProbeResponse)
+async def probe_mcp_config_for_approval(
+    approval_id: str,
+    *,
+    session: DbSession,
+    current_user: CurrentActiveUser,
+) -> McpProbeResponse:
+    """Probe the MCP server linked to a pending approval request.
+
+    Lets the assigned reviewer Test Connection from inside the review modal,
+    *before* approving. The microservice resolves env_vars/headers from Key
+    Vault and runs the same probe flow used for approved servers - so the
+    test reflects exactly what would happen post-approval.
+
+    Access is gated to the assigned reviewer only (matches the security model
+    of the approve/reject actions). The requester cannot probe their own
+    pending request.
+    """
+    mcp_req = await _get_mcp_approval_for_action(
+        session=session,
+        approval_or_mcp_id=approval_id,
+        current_user=current_user,
+    )
+    if mcp_req.decision is not None:
+        raise HTTPException(status_code=400, detail="MCP approval request already finalized")
+
+    row = await session.get(McpRegistry, mcp_req.mcp_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Linked MCP server not found")
+
+    try:
+        result = await probe_mcp_server_via_service(str(row.id))
+    except Exception as e:
+        logger.warning("MCP review-time probe failed for approval %s: %s", approval_id, e)
+        return McpProbeResponse(success=False, message=str(e))
+
+    if isinstance(result, dict):
+        return McpProbeResponse(**result)
+    return McpProbeResponse(success=False, message="Probe returned an unexpected response shape")
 
 
 @router.get("/{agent_id}/preview", response_model=ApprovalPreviewResponse)

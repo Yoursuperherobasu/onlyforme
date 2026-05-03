@@ -594,7 +594,9 @@ async def upload_user_file(
             detail=_safe_upload_error_detail(e, "Unable to complete the upload."),
         ) from e
 
-    return UserUploadFileResponse(user_id=str(current_user.id), file_path=Path(new_file.path))
+    # Force forward-slash separators — on Windows, Path() stringifies with
+    # backslashes, which breaks frontend filename extraction (split("/")).
+    return UserUploadFileResponse(user_id=str(current_user.id), file_path=Path(str(new_file.path).replace("\\", "/")))
 
 
 async def get_file_by_name(
@@ -881,7 +883,7 @@ async def edit_file_name(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error editing file: {e}") from e
 
-    return UserUploadFileResponse(user_id=str(current_user.id), file_path=Path(file.path))
+    return UserUploadFileResponse(user_id=str(current_user.id), file_path=Path(str(file.path).replace("\\", "/")))
 
 
 @router.delete("/{file_id}")

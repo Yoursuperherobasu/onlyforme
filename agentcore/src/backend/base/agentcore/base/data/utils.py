@@ -1,3 +1,4 @@
+import os
 import unicodedata
 from collections.abc import Callable
 from concurrent import futures
@@ -9,6 +10,15 @@ import yaml
 from defusedxml import ElementTree
 
 from agentcore.schema.data import Data
+
+# Per-file char cap for inlined file content. Tunable via env without code change.
+MAX_INLINE_FILE_CHARS = int(os.getenv("AGENTCORE_MAX_INLINE_FILE_CHARS", "50000"))
+# Hard upload byte cap for chat attachments (defense in depth on top of
+# `settings.max_file_size_upload`).
+MAX_UPLOAD_SIZE_BYTES = int(os.getenv("AGENTCORE_MAX_UPLOAD_BYTES", str(25 * 1024 * 1024)))
+# Per-file extraction timeout — long enough for a 100-page PDF, short enough
+# that a wedged parser does not hold the request open indefinitely.
+FILE_EXTRACTION_TIMEOUT_SEC = int(os.getenv("AGENTCORE_FILE_EXTRACTION_TIMEOUT", "30"))
 
 # Types of files that can be read simply by file.read()
 # and have 100% to be completely readable
@@ -25,6 +35,8 @@ TEXT_FILE_TYPES = [
     "htm",
     "pdf",
     "docx",
+    "xlsx",
+    "xls",
     "py",
     "sh",
     "sql",

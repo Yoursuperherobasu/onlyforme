@@ -57,6 +57,19 @@ async def upload_file(
             status_code=413, detail=f"File size is larger than the maximum file size {max_file_size_upload}MB."
         )
 
+    # White-list extensions to match what the chat pipeline can actually
+    # consume. Without this, unsupported types upload successfully but then
+    # fail downstream when the LLM tries to read them.
+    from agentcore.schema.file_classifier import classify, supported_extensions
+    if file.filename and classify(file.filename) == "unsupported":
+        raise HTTPException(
+            status_code=415,
+            detail=(
+                f"Unsupported file type. Supported extensions: "
+                f"{', '.join(supported_extensions())}."
+            ),
+        )
+
     if agent.user_id != current_user.id:
         raise HTTPException(status_code=403, detail="You don't have access to this agent")
 

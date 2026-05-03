@@ -1,8 +1,19 @@
 import { useEffect, useState } from "react";
-import { Loader2, X } from "lucide-react";
+import { CheckCircle2, Loader2, Plug, X, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
-import { useGetMcpApprovalConfig } from "@/controllers/API/queries/approvals";
+import {
+  useGetMcpApprovalConfig,
+  useProbeMcpApproval,
+} from "@/controllers/API/queries/approvals";
+import { useAnalyzeMCPRisk } from "@/controllers/API/queries/mcp/use-analyze-mcp-risk";
+import RiskAssessmentPanel from "@/components/RiskAssessmentPanel";
+import HighRiskConfirmDialog from "@/components/HighRiskConfirmDialog";
+import type {
+  McpProbeResponse,
+  McpRiskAnalysisResponse,
+  McpRiskFinding,
+} from "@/types/mcp";
 
 interface McpConfigModalProps {
   open: boolean;
@@ -21,6 +32,11 @@ export default function McpConfigModal({
   );
   const [environmentLabel, setEnvironmentLabel] = useState("");
   const [visibilityLabel, setVisibilityLabel] = useState("");
+  const [riskAnalysis, setRiskAnalysis] = useState<McpRiskAnalysisResponse | null>(null);
+  const analyzeRiskMutation = useAnalyzeMCPRisk();
+  const probeMutation = useProbeMcpApproval();
+  const [probeResult, setProbeResult] = useState<McpProbeResponse | null>(null);
+  const [pendingProbeAck, setPendingProbeAck] = useState<McpRiskFinding[] | null>(null);
 
   useEffect(() => {
     if (!data) return;
@@ -39,6 +55,54 @@ export default function McpConfigModal({
       setVisibilityLabel("Private");
     }
   }, [data]);
+
+  useEffect(() => {
+    if (!data) {
+      setRiskAnalysis(null);
+      return;
+    }
+    const payload =
+      data.mode === "stdio"
+        ? {
+            mode: "stdio" as const,
+            command: data.command || undefined,
+            args: data.args || undefined,
+          }
+        : { mode: "sse" as const, url: data.url || undefined };
+    analyzeRiskMutation
+      .mutateAsync(payload)
+      .then((res) => setRiskAnalysis(res))
+      .catch(() => setRiskAnalysis(null));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data?.id, data?.mode, data?.command, data?.url, JSON.stringify(data?.args)]);
+
+  useEffect(() => {
+    if (!open) {
+      setProbeResult(null);
+      setPendingProbeAck(null);
+    }
+  }, [open, approvalId]);
+
+  const runProbeNow = async () => {
+    if (!approvalId) return;
+    setProbeResult(null);
+    try {
+      const res = await probeMutation.mutateAsync({ approval_id: approvalId });
+      setProbeResult(res);
+    } catch (e: any) {
+      setProbeResult({ success: false, message: e?.message ?? "Probe failed" });
+    }
+  };
+
+  const handleTestConnection = async () => {
+    if (!approvalId) return;
+    const highs = (riskAnalysis?.findings ?? []).filter((f) => f.severity === "high");
+    if (highs.length > 0) {
+      setPendingProbeAck(highs);
+      return;
+    }
+    await runProbeNow();
+  };
 
   if (!open) return null;
 
@@ -122,15 +186,79 @@ export default function McpConfigModal({
                   </div>
                 </>
               )}
+              <div className="space-y-2">
+                <Label>Risk Assessment</Label>
+                <RiskAssessmentPanel
+                  analysis={riskAnalysis}
+                  isLoading={analyzeRiskMutation.isPending && !riskAnalysis}
+                  emptyMessage="Risk advisor could not analyse this configuration."
+                />
+                {probeResult && (
+                  <div
+                    className={`mt-2 flex items-start gap-2 rounded-md border p-3 text-sm ${
+                      probeResult.success
+                        ? "border-green-300 bg-green-50 text-green-800 dark:border-green-800 dark:bg-green-950/40 dark:text-green-300"
+                        : "border-red-300 bg-red-50 text-red-800 dark:border-red-800 dark:bg-red-950/40 dark:text-red-300"
+                    }`}
+                  >
+                    {probeResult.success ? (
+                      <CheckCircle2 className="mt-0.5 h-4 w-4 flex-shrink-0" />
+                    ) : (
+                      <XCircle className="mt-0.5 h-4 w-4 flex-shrink-0" />
+                    )}
+                    <div className="min-w-0 flex-1">
+                      <div className="font-medium">
+                        {probeResult.success
+                          ? `Connected - ${probeResult.tools_count ?? 0} tool(s) discovered`
+                          : "Connection failed"}
+                      </div>
+                      {probeResult.message && (
+                        <div className="mt-1 text-xs opacity-90">{probeResult.message}</div>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
             </>
           )}
         </div>
-        <div className="flex items-center justify-end gap-2 border-t p-5">
+        <div className="flex items-center justify-between gap-2 border-t p-5">
+          {data?.approval_status === "pending" ? (
+            <Button
+              variant="outline"
+              onClick={handleTestConnection}
+              disabled={!data || probeMutation.isPending}
+            >
+              {probeMutation.isPending ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Testing...
+                </>
+              ) : (
+                <>
+                  <Plug className="mr-2 h-4 w-4" />
+                  Test Connection
+                </>
+              )}
+            </Button>
+          ) : (
+            <span />
+          )}
           <Button variant="outline" onClick={() => setOpen(false)}>
             Close
           </Button>
         </div>
       </div>
+      <HighRiskConfirmDialog
+        open={!!pendingProbeAck}
+        highFindings={pendingProbeAck ?? []}
+        actionLabel="Test Connection"
+        onCancel={() => setPendingProbeAck(null)}
+        onConfirm={() => {
+          setPendingProbeAck(null);
+          void runProbeNow();
+        }}
+      />
     </>
   );
 }

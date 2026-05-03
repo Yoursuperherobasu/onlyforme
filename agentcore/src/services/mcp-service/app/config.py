@@ -79,6 +79,14 @@ class Settings(BaseSettings):
     session_idle_timeout: int = 400
     session_cleanup_interval: int = 120
 
+    # Security: when true (default), STDIO MCP subprocesses are launched WITHOUT
+    # a shell wrapper. The executable + args are passed directly to subprocess,
+    # so shell metacharacters (;, |, &, $(...), backticks) become literal
+    # arguments instead of being interpreted by bash/cmd. This closes the
+    # shell-injection class of attacks. Set to false ONLY as an emergency
+    # rollback if a legitimate config relies on shell features.
+    stdio_safe_spawn: bool = True
+
     model_config = SettingsConfigDict(
         env_prefix="MCP_SERVICE_",
         env_file=".env",
