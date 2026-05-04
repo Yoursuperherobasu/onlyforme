@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from typing import Annotated
-from datetime import datetime, timezone
+import hashlib
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.security import OAuth2PasswordRequestForm
@@ -25,6 +26,7 @@ from agentcore.services.auth.utils import (
 from agentcore.services.database.models.user.crud import get_user_by_id
 from agentcore.services.deps import get_settings_service
 from agentcore.services.database.models.user.model import User
+from agentcore.services.database.models.password_reset_token.model import PasswordResetToken
 from agentcore.services.auth.permissions import get_permissions_for_role, normalize_role
 from agentcore.services.cache.user_cache import UserCacheService
 
@@ -35,6 +37,19 @@ class AzureSSORequest(BaseModel):
 class AzureSSOResponse(Token):
     role: str
     permissions: list[str]
+
+class PasswordResetRequest(BaseModel):
+    email: str
+
+class PasswordResetConfirm(BaseModel):
+    token: str
+    new_password: str
+
+# ---- DIRECT RESET FALLBACK MODELS (remove when SMTP is ready on client) ----
+class DirectPasswordResetRequest(BaseModel):
+    email: str
+    new_password: str
+# ---- END DIRECT RESET FALLBACK MODELS ----
 
 router = APIRouter(tags=["Login"])
 
@@ -379,6 +394,133 @@ async def logout(response: Response):
     response.delete_cookie("access_token_ag")
     response.delete_cookie("apikey_tkn_ag")
     return {"message": "Logout successful"}
+
+
+@router.post("/request-password-reset")
+async def request_password_reset(body: PasswordResetRequest, request: Request, db: DbSession):
+    auth_settings = get_settings_service().auth_settings
+    settings = get_settings_service().settings
+    email = _normalize_login_identity(body.email)
+
+    user = (
+        await db.exec(
+            select(User).where(
+                User.deleted_at.is_(None),
+                or_(func.lower(User.username) == email, func.lower(User.email) == email),
+            )
+        )
+    ).first()
+
+    # Return "email" for unknown/inactive users — don't reveal whether the address is registered
+    if not user or not user.is_active:
+        return {"method": "email"}
+
+    # Invalidate any existing unused tokens for this user before issuing a new one
+    old_tokens = (
+        await db.exec(
+            select(PasswordResetToken).where(
+                PasswordResetToken.user_id == user.id,
+                PasswordResetToken.used_at.is_(None),
+            )
+        )
+    ).all()
+    for old in old_tokens:
+        old.used_at = datetime.now(timezone.utc)
+        db.add(old)
+
+    # Generate a cryptographically random raw token; store only its SHA-256 hash
+    raw_token = secrets.token_urlsafe(32)
+    token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
+    expires_at = datetime.now(timezone.utc) + timedelta(minutes=30)
+
+    db.add(PasswordResetToken(token_hash=token_hash, user_id=user.id, expires_at=expires_at))
+    await db.commit()
+
+    frontend_url = (getattr(auth_settings, "FRONTEND_URL", "") or "").rstrip("/")
+    if not frontend_url:
+        frontend_url = str(request.base_url).rstrip("/")
+    reset_link = f"{frontend_url}/reset-password?token={raw_token}"
+
+    # --- SMTP PATH ---
+    from agentcore.services.notifications.password_reset import send_password_reset_email
+    email_sent, smtp_error = await send_password_reset_email(
+        settings=settings,
+        recipient_email=user.email or email,
+        recipient_name=user.display_name or "",
+        reset_link=reset_link,
+    )
+    if email_sent:
+        return {"method": "email"}
+    # --- END SMTP PATH ---
+
+    # --- DIRECT RESET FALLBACK (remove this block when SMTP is ready on client) ---
+    if getattr(auth_settings, "ALLOW_DIRECT_PASSWORD_RESET", False):
+        return {"method": "direct"}
+    # --- END DIRECT RESET FALLBACK ---
+
+    raise HTTPException(status_code=500, detail=f"Could not send reset email: {smtp_error}")
+
+
+@router.post("/reset-password")
+async def reset_password_with_token(body: PasswordResetConfirm, db: DbSession):
+    now = datetime.now(timezone.utc)
+    token_hash = hashlib.sha256(body.token.encode()).hexdigest()
+
+    reset_record = (
+        await db.exec(
+            select(PasswordResetToken).where(
+                PasswordResetToken.token_hash == token_hash,
+                PasswordResetToken.used_at.is_(None),
+                PasswordResetToken.expires_at > now,
+            )
+        )
+    ).first()
+
+    if not reset_record:
+        raise HTTPException(status_code=400, detail="Invalid or expired reset link")
+
+    user = await get_user_by_id(db, reset_record.user_id)
+    if not user or not user.is_active or user.deleted_at:
+        raise HTTPException(status_code=400, detail="User not found or inactive")
+
+    # Mark token as used (single-use enforcement)
+    reset_record.used_at = now
+    db.add(reset_record)
+
+    user.password = get_password_hash(body.new_password)
+    user.updated_at = now
+    db.add(user)
+    await db.commit()
+    return {"message": "Password updated successfully"}
+
+
+# ---- DIRECT RESET ENDPOINT (remove when SMTP is ready on client) ----
+@router.post("/direct-password-reset")
+async def direct_password_reset(body: DirectPasswordResetRequest, db: DbSession):
+    auth_settings = get_settings_service().auth_settings
+
+    if not getattr(auth_settings, "ALLOW_DIRECT_PASSWORD_RESET", False):
+        raise HTTPException(status_code=403, detail="Direct password reset is not enabled")
+
+    email = _normalize_login_identity(body.email)
+    user = (
+        await db.exec(
+            select(User).where(
+                User.deleted_at.is_(None),
+                or_(func.lower(User.username) == email, func.lower(User.email) == email),
+            )
+        )
+    ).first()
+
+    if not user or not user.is_active:
+        raise HTTPException(status_code=400, detail="User not found")
+
+    user.password = get_password_hash(body.new_password)
+    user.updated_at = datetime.now(timezone.utc)
+    db.add(user)
+    await db.commit()
+    return {"message": "Password updated successfully"}
+# ---- END DIRECT RESET ENDPOINT ----
 
 # @router.post("/logout")
 # async def logout(response: Response):

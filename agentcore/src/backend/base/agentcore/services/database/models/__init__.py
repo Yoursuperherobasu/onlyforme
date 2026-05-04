@@ -59,6 +59,7 @@ from .tag import Tag, ProjectTag, AgentTag
 from .cost_limit import CostLimit
 from .cost_limit_notification import CostLimitNotification
 from .guardrail_execution_log import GuardrailExecutionLog
+from .password_reset_token import PasswordResetToken
 
 __all__ = [
     "Agent",
@@ -137,4 +138,5 @@ __all__ = [
     "CostLimit",
     "CostLimitNotification",
     "GuardrailExecutionLog",
+    "PasswordResetToken",
 ]

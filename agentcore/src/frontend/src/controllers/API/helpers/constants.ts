@@ -49,6 +49,9 @@ export const URLs = {
   TAGS: `tags`,
   COST_LIMITS: `cost-limits`,
   SEMANTIC_SEARCH: `semantic-search/search`,
+  REQUEST_PASSWORD_RESET: `request-password-reset`,
+  RESET_PASSWORD: `reset-password`,
+  DIRECT_PASSWORD_RESET: `direct-password-reset`,
 } as const;
 
 // IMPORTANT: FOLDERS endpoint now points to 'projects' for backward compatibility
