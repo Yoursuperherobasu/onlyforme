@@ -1,5 +1,6 @@
-import { ChevronDown, Play, Plus } from "lucide-react";
+import { Check, ChevronDown, ChevronsUpDown, Play, Plus } from "lucide-react";
 import React, { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import sampleDatasetCsvUrl from "@/data/dataset_sample/dataset_sample.csv?url";
 import { AuthContext } from "@/contexts/authContext";
 import type { LangfuseEnvironment } from "../ObservabilityPage/types";
 import { TraceDetailDialog } from "../ObservabilityPage/components/DetailDialogs";
@@ -24,6 +25,19 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import {
+  Command,
+  CommandEmpty,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
+import { cn } from "@/utils/utils";
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
@@ -204,6 +218,7 @@ export default function EvaluationPage() {
   const fetchSeqRef = useRef(0);
 
   const [agentList, setAgentList] = useState<any[]>([]);
+  const [judgeAgentSearch, setJudgeAgentSearch] = useState("");
   const { data: registryModels = [] } = useGetRegistryModels({ model_type: "llm", active_only: true });
 
   // Trace detail dialog state (for viewing trace from scores table)
@@ -465,6 +480,7 @@ export default function EvaluationPage() {
     });
     setGroundTruth("");
     setSelectedAgentIds([]);
+    setJudgeAgentSearch("");
     setFilterSessionId("");
     setFilterTraceId("");
     setRunOnNew(true);
@@ -1528,6 +1544,11 @@ export default function EvaluationPage() {
     );
   };
 
+  const [agentPopoverOpen, setAgentPopoverOpen] = useState(false);
+  const [datasetJudgeModelPopoverOpen, setDatasetJudgeModelPopoverOpen] =
+    useState(false);
+  const [judgeModelPopoverOpen, setJudgeModelPopoverOpen] = useState(false);
+
   const renderDatasets = () => {
     const agentOptions = Array.from(
       new Map(
@@ -1895,16 +1916,20 @@ export default function EvaluationPage() {
             </div>
             <div className="space-y-2">
               <label className="text-sm font-medium">{t("Agent")}</label>
-              <Select
-                value={datasetExperimentForm.agent_id || "__none__"}
-                onValueChange={(value) => {
-                  const nextAgentId = value === "__none__" ? "" : value;
-                  const selectedAgent = agentOptions.find(
+              {(() => {
+                const selectedAgent = agentOptions.find(
+                  (a) => a.id === datasetExperimentForm.agent_id,
+                );
+                const triggerLabel = datasetExperimentForm.agent_id
+                  ? selectedAgent?.label ||
+                    datasetExperimentForm.agent_id
+                  : t("Choose agent (optional)");
+                const selectAgent = (nextAgentId: string) => {
+                  const next = agentOptions.find(
                     (agent) => agent.id === nextAgentId,
                   );
                   const nextExperimentName =
-                    selectedAgent?.label ||
-                    datasetExperimentForm.experiment_name;
+                    next?.label || datasetExperimentForm.experiment_name;
                   setDatasetExperimentForm({
                     ...datasetExperimentForm,
                     agent_id: nextAgentId,
@@ -1912,22 +1937,74 @@ export default function EvaluationPage() {
                       ? nextExperimentName
                       : datasetExperimentForm.experiment_name,
                   });
-                }}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder={t("Choose agent (optional)")} />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__none__">
-                    No agent (use generation model)
-                  </SelectItem>
-                  {agentOptions.map((agent) => (
-                    <SelectItem key={agent.id} value={agent.id}>
-                      {agent.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+                  setAgentPopoverOpen(false);
+                };
+                return (
+                  <Popover
+                    open={agentPopoverOpen}
+                    onOpenChange={setAgentPopoverOpen}
+                  >
+                    <PopoverTrigger asChild>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        role="combobox"
+                        aria-expanded={agentPopoverOpen}
+                        className={cn(
+                          "w-full justify-between font-normal",
+                          !datasetExperimentForm.agent_id &&
+                            "text-muted-foreground",
+                        )}
+                      >
+                        <span className="truncate">{triggerLabel}</span>
+                        <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent
+                      className="w-[var(--radix-popover-trigger-width)] p-0"
+                      align="start"
+                    >
+                      <Command>
+                        <CommandInput placeholder={t("Search agents...")} />
+                        <CommandList>
+                          <CommandEmpty>{t("No agents match")}</CommandEmpty>
+                          <CommandItem
+                            value="__none__ no agent use generation model"
+                            onSelect={() => selectAgent("")}
+                          >
+                            <Check
+                              className={cn(
+                                "mr-2 h-4 w-4",
+                                !datasetExperimentForm.agent_id
+                                  ? "opacity-100"
+                                  : "opacity-0",
+                              )}
+                            />
+                            {t("No agent (use generation model)")}
+                          </CommandItem>
+                          {agentOptions.map((agent) => (
+                            <CommandItem
+                              key={agent.id}
+                              value={agent.label}
+                              onSelect={() => selectAgent(agent.id)}
+                            >
+                              <Check
+                                className={cn(
+                                  "mr-2 h-4 w-4",
+                                  datasetExperimentForm.agent_id === agent.id
+                                    ? "opacity-100"
+                                    : "opacity-0",
+                                )}
+                              />
+                              {agent.label}
+                            </CommandItem>
+                          ))}
+                        </CommandList>
+                      </Command>
+                    </PopoverContent>
+                  </Popover>
+                );
+              })()}
             </div>
             {!datasetExperimentForm.agent_id ? (
               <div className="space-y-2">
@@ -2060,28 +2137,74 @@ export default function EvaluationPage() {
               <label className="text-sm font-medium">
                 {t("Judge Model (Optional)")}
               </label>
-              <Select
-                value={datasetExperimentForm.judge_model_registry_id || ""}
-                onValueChange={(val) => {
-                  const selected = filteredModels.find((m) => m.id === val);
+              {(() => {
+                const selectedModel = filteredModels.find(
+                  (m) => m.id === datasetExperimentForm.judge_model_registry_id,
+                );
+                const triggerLabel = selectedModel
+                  ? `${selectedModel.display_name} (${selectedModel.provider}/${selectedModel.model_name})`
+                  : t("Select from registry");
+                const selectModel = (id: string) => {
+                  const selected = filteredModels.find((m) => m.id === id);
                   setDatasetExperimentForm({
                     ...datasetExperimentForm,
-                    judge_model_registry_id: val,
+                    judge_model_registry_id: id,
                     judge_model: selected ? selected.model_name : "",
                   });
-                }}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder={t("Select from registry")} />
-                </SelectTrigger>
-                <SelectContent>
-                  {filteredModels.map((m) => (
-                    <SelectItem key={m.id} value={m.id}>
-                      {m.display_name} ({m.provider}/{m.model_name})
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+                  setDatasetJudgeModelPopoverOpen(false);
+                };
+                return (
+                  <Popover
+                    open={datasetJudgeModelPopoverOpen}
+                    onOpenChange={setDatasetJudgeModelPopoverOpen}
+                  >
+                    <PopoverTrigger asChild>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        role="combobox"
+                        aria-expanded={datasetJudgeModelPopoverOpen}
+                        className={cn(
+                          "w-full justify-between font-normal",
+                          !selectedModel && "text-muted-foreground",
+                        )}
+                      >
+                        <span className="truncate">{triggerLabel}</span>
+                        <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent
+                      className="w-[var(--radix-popover-trigger-width)] p-0"
+                      align="start"
+                    >
+                      <Command>
+                        <CommandInput placeholder={t("Search models...")} />
+                        <CommandList>
+                          <CommandEmpty>{t("No models match")}</CommandEmpty>
+                          {filteredModels.map((m) => (
+                            <CommandItem
+                              key={m.id}
+                              value={`${m.display_name} ${m.provider} ${m.model_name}`}
+                              onSelect={() => selectModel(m.id)}
+                            >
+                              <Check
+                                className={cn(
+                                  "mr-2 h-4 w-4",
+                                  datasetExperimentForm.judge_model_registry_id ===
+                                    m.id
+                                    ? "opacity-100"
+                                    : "opacity-0",
+                                )}
+                              />
+                              {m.display_name} ({m.provider}/{m.model_name})
+                            </CommandItem>
+                          ))}
+                        </CommandList>
+                      </Command>
+                    </PopoverContent>
+                  </Popover>
+                );
+              })()}
             </div>
             <div className="space-y-2 md:col-span-2">
               <label className="text-sm font-medium">
@@ -2551,21 +2674,56 @@ export default function EvaluationPage() {
 
               <div className="space-y-2">
                 <label className="text-sm font-medium">{t("Agents")}</label>
+                <Input
+                  placeholder={t("Search agents...")}
+                  value={judgeAgentSearch}
+                  onChange={(e) => setJudgeAgentSearch(e.target.value)}
+                  className="mb-2"
+                />
                 <div className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm max-h-44 overflow-y-auto">
-                  {agentList && agentList.length > 0 ? (
-                    agentList.map((f: any) => {
-                      const fid =
-                        f.metadata?.agent_id ||
-                        f.id ||
-                        f.metadata?.endpoint_name ||
-                        "";
-                      if (!fid) return null;
-                      const label =
-                        f.metadata?.display_name ||
-                        f.name ||
-                        f.metadata?.endpoint_name ||
-                        f.id ||
-                        fid;
+                  {(() => {
+                    if (!agentList || agentList.length === 0) {
+                      return (
+                        <div className="text-sm text-muted-foreground py-2">
+                          {t("No agents available")}
+                        </div>
+                      );
+                    }
+                    const query = judgeAgentSearch.trim().toLowerCase();
+                    const rows = agentList
+                      .map((f: any) => {
+                        const fid =
+                          f.metadata?.agent_id ||
+                          f.id ||
+                          f.metadata?.endpoint_name ||
+                          "";
+                        if (!fid) return null;
+                        const label =
+                          f.metadata?.display_name ||
+                          f.name ||
+                          f.metadata?.endpoint_name ||
+                          f.id ||
+                          fid;
+                        return { fid, label: String(label) };
+                      })
+                      .filter(
+                        (
+                          r,
+                        ): r is { fid: string; label: string } => r !== null,
+                      )
+                      .filter((r) =>
+                        query ? r.label.toLowerCase().includes(query) : true,
+                      );
+                    if (rows.length === 0) {
+                      return (
+                        <div className="text-sm text-muted-foreground py-2">
+                          {t('No agents match "{{query}}"', {
+                            query: judgeAgentSearch,
+                          })}
+                        </div>
+                      );
+                    }
+                    return rows.map(({ fid, label }) => {
                       const checked = selectedAgentIds.includes(fid);
                       return (
                         <label
@@ -2590,12 +2748,8 @@ export default function EvaluationPage() {
                           <span className="text-sm">{label}</span>
                         </label>
                       );
-                    })
-                  ) : (
-                    <div className="text-sm text-muted-foreground py-2">
-                      {t("No agents available")}
-                    </div>
-                  )}
+                    });
+                  })()}
                 </div>
                 <p className="text-xs text-muted-foreground">
                   {t("Select one or more agents (agents) to target.")}
@@ -2605,28 +2759,73 @@ export default function EvaluationPage() {
 
             <div className="space-y-2">
               <label className="text-sm font-medium">{t("Judge Model")}</label>
-              <Select
-                value={judgeForm.model_registry_id || ""}
-                onValueChange={(val) => {
-                  const selected = filteredModels.find((m) => m.id === val);
+              {(() => {
+                const selectedModel = filteredModels.find(
+                  (m) => m.id === judgeForm.model_registry_id,
+                );
+                const triggerLabel = selectedModel
+                  ? `${selectedModel.display_name} (${selectedModel.provider}/${selectedModel.model_name})`
+                  : t("Select a model from registry");
+                const selectModel = (id: string) => {
+                  const selected = filteredModels.find((m) => m.id === id);
                   setJudgeForm({
                     ...judgeForm,
-                    model_registry_id: val,
+                    model_registry_id: id,
                     model: selected ? selected.model_name : judgeForm.model,
                   });
-                }}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder={t("Select a model from registry")} />
-                </SelectTrigger>
-                <SelectContent>
-                  {filteredModels.map((m) => (
-                    <SelectItem key={m.id} value={m.id}>
-                      {m.display_name} ({m.provider}/{m.model_name})
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+                  setJudgeModelPopoverOpen(false);
+                };
+                return (
+                  <Popover
+                    open={judgeModelPopoverOpen}
+                    onOpenChange={setJudgeModelPopoverOpen}
+                  >
+                    <PopoverTrigger asChild>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        role="combobox"
+                        aria-expanded={judgeModelPopoverOpen}
+                        className={cn(
+                          "w-full justify-between font-normal",
+                          !selectedModel && "text-muted-foreground",
+                        )}
+                      >
+                        <span className="truncate">{triggerLabel}</span>
+                        <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent
+                      className="w-[var(--radix-popover-trigger-width)] p-0"
+                      align="start"
+                    >
+                      <Command>
+                        <CommandInput placeholder={t("Search models...")} />
+                        <CommandList>
+                          <CommandEmpty>{t("No models match")}</CommandEmpty>
+                          {filteredModels.map((m) => (
+                            <CommandItem
+                              key={m.id}
+                              value={`${m.display_name} ${m.provider} ${m.model_name}`}
+                              onSelect={() => selectModel(m.id)}
+                            >
+                              <Check
+                                className={cn(
+                                  "mr-2 h-4 w-4",
+                                  judgeForm.model_registry_id === m.id
+                                    ? "opacity-100"
+                                    : "opacity-0",
+                                )}
+                              />
+                              {m.display_name} ({m.provider}/{m.model_name})
+                            </CommandItem>
+                          ))}
+                        </CommandList>
+                      </Command>
+                    </PopoverContent>
+                  </Popover>
+                );
+              })()}
               {filteredModels.length === 0 && (
                 <p className="text-xs text-amber-600">
                   {t("No models available. Add models in the Model Registry first.")}
@@ -2741,7 +2940,14 @@ export default function EvaluationPage() {
                       <p className="text-xs text-muted-foreground">
                         {t("Supported headers:")} <code>input</code>,{" "}
                         <code>expected_output</code>, <code>metadata</code>,{" "}
-                        <code>trace_id</code>, <code>source_trace_id</code>.
+                        <code>trace_id</code>, <code>source_trace_id</code>.{" "}
+                        <a
+                          href={sampleDatasetCsvUrl}
+                          download="dataset_sample.csv"
+                          className="text-primary underline hover:no-underline"
+                        >
+                          {t("Download sample CSV")}
+                        </a>
                       </p>
                     </>
                   ) : (
