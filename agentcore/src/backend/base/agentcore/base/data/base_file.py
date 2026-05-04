@@ -109,6 +109,7 @@ class BaseFileNode(Node, ABC):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._temp_dirs: list[TemporaryDirectory] = []
+        self._files_pending_deletion: list[Path] = []
         # Dynamically update FileInput to include valid extensions and bundles
         self._base_inputs[0].file_types = [
             *self.valid_extensions,
@@ -204,7 +205,31 @@ class BaseFileNode(Node, ABC):
                 pass
         self._temp_dirs = []
 
+    def _cleanup_pending_deletions(self):
+        """Delete files marked by the 'Delete Server File After Processing' toggle.
+
+        Called at the end of each output method, after pd.read_excel and similar
+        re-reads have finished.
+        """
+        if not self._files_pending_deletion:
+            return
+        for path in self._files_pending_deletion:
+            try:
+                if path.exists():
+                    if path.is_dir():
+                        shutil.rmtree(path)
+                        logger.info(f"[BaseFile] Deleted server directory: {path}")
+                    else:
+                        path.unlink()
+                        logger.info(f"[BaseFile] Deleted server file: {path}")
+                else:
+                    logger.info(f"[BaseFile] Pending deletion path not found (already gone): {path}")
+            except Exception as e:
+                logger.warning(f"[BaseFile] Failed to delete '{path}': {type(e).__name__}: {e}")
+        self._files_pending_deletion = []
+
     def __del__(self):
+        self._cleanup_pending_deletions()
         self._cleanup_temp_dirs()
 
     def load_files_base(self) -> list[Data]:
@@ -231,15 +256,11 @@ class BaseFileNode(Node, ABC):
             return [data for file in processed_files for data in file.data if file.data]
 
         finally:
-            self._cleanup_temp_dirs()
-
-            # Delete files marked for deletion
+            # Defer deletion until __del__ so output methods that re-read the file
+            # (e.g. load_files_structured -> pd.read_excel) can finish first.
             for file in final_files:
-                if file.delete_after_processing and file.path.exists():
-                    if file.path.is_dir():
-                        shutil.rmtree(file.path)
-                    else:
-                        file.path.unlink()
+                if file.delete_after_processing:
+                    self._files_pending_deletion.append(file.path)
 
     def load_files_core(self) -> list[Data]:
         """Load files and return as Data objects.
@@ -258,19 +279,22 @@ class BaseFileNode(Node, ABC):
         Returns:
             Message: Message containing all file data
         """
-        data_list = self.load_files_core()
-        if not data_list:
-            return Message()  # No data -> empty message
+        try:
+            data_list = self.load_files_core()
+            if not data_list:
+                return Message()  # No data -> empty message
 
-        sep: str = getattr(self, "separator", "\n\n") or "\n\n"
+            sep: str = getattr(self, "separator", "\n\n") or "\n\n"
 
-        parts: list[str] = []
-        for d in data_list:
-            # Prefer explicit text if available, fall back to full dict, lastly str()
-            text = (getattr(d, "get_text", lambda: None)() or d.data.get("text")) if isinstance(d.data, dict) else None
-            parts.append(text if text is not None else str(d))
+            parts: list[str] = []
+            for d in data_list:
+                # Prefer explicit text if available, fall back to full dict, lastly str()
+                text = (getattr(d, "get_text", lambda: None)() or d.data.get("text")) if isinstance(d.data, dict) else None
+                parts.append(text if text is not None else str(d))
 
-        return Message(text=sep.join(parts))
+            return Message(text=sep.join(parts))
+        finally:
+            self._cleanup_pending_deletions()
 
     def load_files_path(self) -> Message:
         """Returns a Message containing file paths from loaded files.
@@ -312,23 +336,26 @@ class BaseFileNode(Node, ABC):
         Returns:
             DataFrame: DataFrame containing structured content from all files
         """
-        data_list = self.load_files_core()
-        if not data_list:
-            return DataFrame()
+        try:
+            data_list = self.load_files_core()
+            if not data_list:
+                return DataFrame()
 
-        # Get the file path from the first Data object
-        file_path = data_list[0].data.get(self.SERVER_FILE_PATH_FIELDNAME, None)
+            # Get the file path from the first Data object
+            file_path = data_list[0].data.get(self.SERVER_FILE_PATH_FIELDNAME, None)
 
-        # If file_path is provided and is a CSV, read it directly
-        if file_path and str(file_path).lower().endswith((".csv", ".xlsx", ".parquet")):
-            rows = self.load_files_structured_helper(file_path)
-        else:
-            # Convert Data objects to a list of dictionaries
-            rows = [data_list[0].data]
+            # If file_path is provided and is a CSV, read it directly
+            if file_path and str(file_path).lower().endswith((".csv", ".xlsx", ".parquet")):
+                rows = self.load_files_structured_helper(file_path)
+            else:
+                # Convert Data objects to a list of dictionaries
+                rows = [data_list[0].data]
 
-        self.status = DataFrame(rows)
+            self.status = DataFrame(rows)
 
-        return DataFrame(rows)
+            return DataFrame(rows)
+        finally:
+            self._cleanup_pending_deletions()
 
     def parse_string_to_dict(self, s: str) -> dict:
         # Try JSON first (handles true/false/null)
@@ -356,17 +383,20 @@ class BaseFileNode(Node, ABC):
         Returns:
             Data: Data object containing JSON content from all files
         """
-        data_list = self.load_files_core()
-        if not data_list:
-            return Data()
+        try:
+            data_list = self.load_files_core()
+            if not data_list:
+                return Data()
 
-        # Grab the JSON data
-        json_data = data_list[0].data[data_list[0].text_key]
-        json_data = self.parse_string_to_dict(json_data)
+            # Grab the JSON data
+            json_data = data_list[0].data[data_list[0].text_key]
+            json_data = self.parse_string_to_dict(json_data)
 
-        self.status = Data(data=json_data)
+            self.status = Data(data=json_data)
 
-        return Data(data=json_data)
+            return Data(data=json_data)
+        finally:
+            self._cleanup_pending_deletions()
 
     def load_files(self) -> DataFrame:
         """Load files and return as DataFrame.
@@ -374,26 +404,29 @@ class BaseFileNode(Node, ABC):
         Returns:
             DataFrame: DataFrame containing all file data
         """
-        data_list = self.load_files_core()
-        if not data_list:
-            return DataFrame()
+        try:
+            data_list = self.load_files_core()
+            if not data_list:
+                return DataFrame()
 
-        # Convert Data objects to a list of dictionaries
-        all_rows = []
-        for data in data_list:
-            file_path = data.data.get(self.SERVER_FILE_PATH_FIELDNAME)
-            row = dict(data.data) if data.data else {}
+            # Convert Data objects to a list of dictionaries
+            all_rows = []
+            for data in data_list:
+                file_path = data.data.get(self.SERVER_FILE_PATH_FIELDNAME)
+                row = dict(data.data) if data.data else {}
 
-            # Add text if available, otherwise use the data's text property
-            if "text" in data.data:
-                row["text"] = data.data["text"]
-            if file_path:
-                row["file_path"] = file_path
-            all_rows.append(row)
+                # Add text if available, otherwise use the data's text property
+                if "text" in data.data:
+                    row["text"] = data.data["text"]
+                if file_path:
+                    row["file_path"] = file_path
+                all_rows.append(row)
 
-        self.status = DataFrame(all_rows)
+            self.status = DataFrame(all_rows)
 
-        return DataFrame(all_rows)
+            return DataFrame(all_rows)
+        finally:
+            self._cleanup_pending_deletions()
 
     @property
     def valid_extensions(self) -> list[str]:
@@ -646,10 +679,18 @@ class BaseFileNode(Node, ABC):
             if isinstance(self.path, list):
                 for path in self.path:
                     data_obj = Data(data={self.SERVER_FILE_PATH_FIELDNAME: path})
-                    add_file(data=data_obj, path=path, delete_after_processing=False)
+                    add_file(
+                        data=data_obj,
+                        path=path,
+                        delete_after_processing=self.delete_server_file_after_processing,
+                    )
             else:
                 data_obj = Data(data={self.SERVER_FILE_PATH_FIELDNAME: self.path})
-                add_file(data=data_obj, path=self.path, delete_after_processing=False)
+                add_file(
+                    data=data_obj,
+                    path=self.path,
+                    delete_after_processing=self.delete_server_file_after_processing,
+                )
         elif file_path:
              for obj in file_path:
                 server_file_path = obj.data.get(self.SERVER_FILE_PATH_FIELDNAME)
