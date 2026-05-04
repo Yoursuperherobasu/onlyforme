@@ -28,8 +28,10 @@ export const useGetCurrentRelease: useQueryFunctionType<
 
   const responseFn = async (): Promise<ReleaseRecord | null> => {
     const data = await getCurrentReleaseFn();
+    // Always update the store when fetching the local/hub region (no cross-region header).
+    // Root admins also have regionCode set, so the old `!regionCode` guard blocked them.
+    const refreshCurrentReleaseVersion = useDarkStore.getState().refreshCurrentReleaseVersion;
     if (!params?.regionCode) {
-      const refreshCurrentReleaseVersion = useDarkStore.getState().refreshCurrentReleaseVersion;
       refreshCurrentReleaseVersion(data?.version ?? "");
     }
     return data;

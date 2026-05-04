@@ -1,4 +1,5 @@
 export * from "./use-get-current-release";
+export * from "./use-get-current-release-version";
 export * from "./use-get-release-document-preview";
 export * from "./use-get-release-package-comparison";
 export * from "./use-get-release-packages";

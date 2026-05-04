@@ -1,4 +1,5 @@
 import type { UseMutationResult } from "@tanstack/react-query";
+import { useDarkStore } from "@/stores/darkStore";
 import { api } from "../../api";
 import { getURL } from "../../helpers/constants";
 import { UseRequestProcessor } from "../../services/request-processor";
@@ -32,6 +33,12 @@ export const usePostBumpReleaseWithDocument = (options?: any) => {
 
   return mutate(["usePostBumpReleaseWithDocument"], bumpReleaseWithDocumentFn, {
     ...options,
+    onSuccess: (data: ReleaseRecord, ...rest) => {
+      if (data?.version) {
+        useDarkStore.getState().refreshCurrentReleaseVersion(data.version);
+      }
+      options?.onSuccess?.(data, ...rest);
+    },
     onSettled: (...args) => {
       queryClient.invalidateQueries({ queryKey: ["useGetCurrentRelease"] });
       queryClient.invalidateQueries({ queryKey: ["useGetReleases"] });

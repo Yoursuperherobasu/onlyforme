@@ -27,6 +27,10 @@ pre {
   cursor: not-allowed !important;
 }
 
+.readonly-sidebar * {
+  cursor: not-allowed !important;
+}
+
 .AccordionContent {
   overflow: hidden;
 }

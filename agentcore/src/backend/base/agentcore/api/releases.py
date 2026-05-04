@@ -665,6 +665,22 @@ async def get_current_release(
     return _release_to_payload(release, package_count=await _get_single_release_package_count(session, release.id))
 
 
+@router.get("/current-version")
+async def get_current_release_version(
+    current_user: CurrentActiveUser,
+    session: DbSession,
+) -> dict[str, str]:
+    """Return only the current release version string. Accessible to all authenticated users."""
+    release = (
+        await session.exec(
+            select(ProductRelease)
+            .where(ProductRelease.end_date == ACTIVE_END_DATE)
+            .order_by(ProductRelease.start_date.desc(), ProductRelease.created_at.desc())
+        )
+    ).first()
+    return {"version": release.version if release else ""}
+
+
 @router.get("/{release_id}")
 async def get_release(
     release_id: UUID,

@@ -277,6 +277,7 @@ function ReleaseDocumentTab({ release, regionCode }: { release: ReleaseRecord; r
     const timer = window.setTimeout(() => {
       setShowViewerAssist(true);
     }, 5000);
+    
     return () => window.clearTimeout(timer);
   }, [data?.office_viewer_url, showFallbackPreview]);
 
