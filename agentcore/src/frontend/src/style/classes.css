@@ -21,6 +21,12 @@ pre {
   cursor: default;
 }
 
+.react-flow.cursor-not-allowed .react-flow__pane,
+.react-flow.cursor-not-allowed .react-flow__node,
+.react-flow.cursor-not-allowed .react-flow__edge {
+  cursor: not-allowed !important;
+}
+
 .AccordionContent {
   overflow: hidden;
 }

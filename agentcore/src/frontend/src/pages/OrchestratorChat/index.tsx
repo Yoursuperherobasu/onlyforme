@@ -76,14 +76,11 @@ import MessagesPage from "../SettingsPage/pages/messagesPage";
 
 
 function SidebarMaskIcon({ src, className = "h-4 w-4 shrink-0" }: { src: string; className?: string }) {
-  const isDark = useDarkStore((state) => state.dark);
-  const resolvedSrc = isDark && src === openaiLogo ? openaiLightLogo : src;
-  const isOpenAILight = resolvedSrc === openaiLightLogo;
   return (
     <img
-      src={resolvedSrc}
+      src={src}
       alt=""
-      className={`${className} opacity-80 object-contain${isOpenAILight ? "" : " dark:invert"}`}
+      className={`${className} opacity-80 object-contain dark:invert`}
     />
   );
 }
@@ -842,8 +839,13 @@ function ThinkingIndicator({
 
 /* ------------------ COMPONENT ------------------ */
 
+function resolveDisplayIcon(icon: string, isDark: boolean): string {
+  return isDark && icon === openaiLogo ? openaiLightLogo : icon;
+}
+
 export default function AgentOrchestrator() {
   const { t } = useTranslation();
+  const isDark = useDarkStore((state) => state.dark);
   const { permissions } = useContext(AuthContext);
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
@@ -4170,7 +4172,7 @@ export default function AgentOrchestrator() {
             >
               {headerDisplayIcon ? (
                 <img
-                  src={headerDisplayIcon}
+                  src={resolveDisplayIcon(headerDisplayIcon, isDark)}
                   alt=""
                   className="h-4 w-4 shrink-0 object-contain"
                 />
@@ -4207,7 +4209,7 @@ export default function AgentOrchestrator() {
                     }`}
                   >
                     <img
-                      src={model.icon}
+                      src={resolveDisplayIcon(model.icon, isDark)}
                       alt=""
                       className={`h-5 w-5 shrink-0 object-contain ${!noAgentMode ? "opacity-30" : ""}`}
                     />
@@ -4253,7 +4255,7 @@ export default function AgentOrchestrator() {
                           }`}
                         >
                           <img
-                            src={model.icon}
+                            src={resolveDisplayIcon(model.icon, isDark)}
                             alt=""
                             className="h-5 w-5 shrink-0 object-contain"
                           />
@@ -4366,7 +4368,7 @@ export default function AgentOrchestrator() {
                   >
                     {matchedModel?.icon ? (
                       <img
-                        src={matchedModel.icon}
+                        src={resolveDisplayIcon(matchedModel.icon, isDark)}
                         alt=""
                         className="h-5 w-5 object-contain"
                       />
