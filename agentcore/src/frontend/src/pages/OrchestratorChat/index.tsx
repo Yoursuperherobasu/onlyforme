@@ -38,7 +38,7 @@ import shareTeamsIcon from "@/assets/share_teams.png";
 import outlookIcon from "@/assets/icons8-outlook-48.png";
 import openaiLogo from "@/assets/openai_logo.svg";
 import openaiLightLogo from "@/assets/openai_light.jfif";
-import useDarkStore from "@/stores/darkStore";
+import { useDarkStore } from "@/stores/darkStore";
 import geminiLogo from "@/assets/gemini_logo.svg";
 import mistralLogo from "@/assets/mistral_logo.svg";
 import claudeLogo from "@/assets/claude_logo.svg";
