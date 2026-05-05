@@ -2194,10 +2194,9 @@ async def reject_agent(
     req.updated_at = now
     session.add(req)
 
-    deployment.status = DeploymentPRODStatusEnum.UNPUBLISHED
-    deployment.is_active = False
-    deployment.updated_at = now
-    session.add(deployment)
+    # The deployment was never live — delete it so the user can re-promote from UAT.
+    # Setting it to UNPUBLISHED would leave an invisible orphan that blocks future promotions.
+    await session.delete(deployment)
 
     # Reset agent lifecycle_status back to DRAFT on rejection
     agent = await session.get(Agent, req.agent_id)

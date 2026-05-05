@@ -2569,8 +2569,13 @@ async def publish_agent(
                     )
                 ).first()
                 if existing_prod_version is not None:
-                    if existing_prod_version.status == DeploymentPRODStatusEnum.ERROR:
-                        # Previous attempt failed — remove the stale record so the user can retry.
+                    if existing_prod_version.status in (
+                        DeploymentPRODStatusEnum.ERROR,
+                        DeploymentPRODStatusEnum.UNPUBLISHED,
+                    ):
+                        # ERROR = previous attempt failed.
+                        # UNPUBLISHED = rejection left an orphan (was never live — fix applied going
+                        # forward, but clean up legacy records here so re-promotion works).
                         await session.delete(existing_prod_version)
                         await session.flush()
                     elif existing_prod_version.status == DeploymentPRODStatusEnum.PENDING_APPROVAL:
