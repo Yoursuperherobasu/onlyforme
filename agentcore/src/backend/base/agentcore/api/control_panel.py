@@ -551,7 +551,7 @@ async def list_control_panel_agents(
             )
             .join(Agent, Agent.id == Model.agent_id)  # type: ignore[arg-type]
             .outerjoin(User, Agent.user_id == User.id)  # type: ignore[arg-type]
-            .outerjoin(Department, Department.id == Agent.dept_id)  # type: ignore[arg-type]
+            .outerjoin(Department, Department.id == Model.dept_id)  # type: ignore[arg-type]
             .where(Model.status == published_status)  # type: ignore[arg-type]
         )
         current_role = str(getattr(current_user, "role", "")).lower()
