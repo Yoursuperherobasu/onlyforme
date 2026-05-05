@@ -1,5 +1,6 @@
 import * as Form from "@radix-ui/react-form";
 import { useContext, useState } from "react";
+import { Link } from "react-router-dom";
 import { useLoginUser } from "@/controllers/API/queries/auth";
 import { Button } from "../../components/ui/button";
 import { SIGNIN_ERROR_ALERT } from "../../constants/alerts_constants";
@@ -37,6 +38,7 @@ function getBackendBaseUrl(): string {
 export default function LoginPage(): JSX.Element {
   const [inputState, setInputState] =
     useState<loginInputStateType>(CONTROL_LOGIN_STATE);
+  const [showPasswordForm, setShowPasswordForm] = useState(false);
 
   const { password, username } = inputState;
 
@@ -264,7 +266,7 @@ export default function LoginPage(): JSX.Element {
                     className="h-11 sm:h-12 !bg-[var(--login-sso-button-bg)] hover:!bg-[var(--login-sso-button-hover)] disabled:!bg-[var(--login-sso-button-disabled)] text-[var(--login-sso-button-foreground)] flex items-center justify-center gap-2 rounded-lg font-medium transition-all text-sm sm:text-base"
                   >
                     <svg className="w-4 h-4 sm:w-5 sm:h-5" viewBox="0 0 23 23">
-                      <path fill="#f25022" d="M1 1h10v10H1z" />
+                      <path fill="#f25022" d="M1  1h10v10H1z" />
                       <path fill="#7fba00" d="M12 1h10v10H12z" />
                       <path fill="#00a4ef" d="M1 12h10v10H1z" />
                       <path fill="#ffb900" d="M12 12h10v10H12z" />
@@ -272,8 +274,77 @@ export default function LoginPage(): JSX.Element {
                     <span className="whitespace-nowrap">{t("Continue with Microsoft SSO")}</span>
                   </Button>
                 </div>
+
+                {showPasswordForm && (
+                  <div className="space-y-3">
+                    <div className="flex items-center gap-2 text-gray-400">
+                      <div className="flex-1 border-t border-gray-200" />
+                      <span className="text-xs">{t("or")}</span>
+                      <div className="flex-1 border-t border-gray-200" />
+                    </div>
+                    <Form.Field name="username">
+                      <Form.Control asChild>
+                        <input
+                          name="username"
+                          type="email"
+                          autoComplete="email"
+                          placeholder={t("Email address")}
+                          value={username}
+                          onChange={handleInput}
+                          className="w-full h-11 px-4 rounded-lg border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#da2128]/30"
+                        />
+                      </Form.Control>
+                    </Form.Field>
+                    <Form.Field name="password">
+                      <Form.Control asChild>
+                        <input
+                          name="password"
+                          type="password"
+                          autoComplete="current-password"
+                          placeholder={t("Password")}
+                          value={password}
+                          onChange={handleInput}
+                          className="w-full h-11 px-4 rounded-lg border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#da2128]/30"
+                        />
+                      </Form.Control>
+                    </Form.Field>
+                    <Button
+                      type="submit"
+                      className="w-full h-11 bg-gray-800 hover:bg-gray-900 text-white rounded-lg font-medium text-sm"
+                    >
+                      {t("Sign In")}
+                    </Button>
+                    <div className="flex items-center justify-between text-sm">
+                      <Link
+                        to="/forgot-password"
+                        className="text-[#da2128] hover:underline text-xs"
+                      >
+                        {t("Forgot / Set password?")}
+                      </Link>
+                      <button
+                        type="button"
+                        onClick={() => setShowPasswordForm(false)}
+                        className="text-xs text-gray-400 hover:text-gray-600"
+                      >
+                        {t("Back to SSO")}
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {!showPasswordForm && (
+                  <div className="text-center pt-1">
+                    <button
+                      type="button"
+                      onClick={() => setShowPasswordForm(true)}
+                      className="text-xs text-gray-500 hover:text-gray-700 underline underline-offset-2"
+                    >
+                      {t("Sign in with password instead")}
+                    </button>
+                  </div>
+                )}
               </Form.Root>
-              
+
               <div className="mt-4 sm:mt-6 text-center">
                 <p className="text-[10px] sm:text-xs text-gray-500 px-2">
                   {t("By signing in, you agree to our Terms of Service and Privacy Policy")}

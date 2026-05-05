@@ -275,14 +275,14 @@ const FilesTab = ({
 
         const type = params.data.path.split(".").pop()?.toLowerCase() ?? "";
         return (
-          <div className="flex items-center gap-4 pl-8 font-medium">
+          <div className="flex min-w-0 items-center gap-4 pl-8 font-medium">
             {params.data.progress !== undefined &&
             params.data.progress !== -1 ? (
               <div className="flex h-6 items-center justify-center text-xs font-semibold text-muted-foreground">
                 {Math.round(params.data.progress * 100)}%
               </div>
             ) : (
-              <div className="file-icon pointer-events-none relative">
+              <div className="file-icon pointer-events-none relative shrink-0">
                 <ForwardedIconComponent
                   name={FILE_ICONS[type]?.icon ?? "File"}
                   className={cn(
@@ -296,14 +296,15 @@ const FilesTab = ({
             )}
             <div
               className={cn(
-                "flex items-center gap-2 text-sm font-medium",
+                "flex min-w-0 items-center text-sm font-medium",
                 params.data.progress !== undefined &&
                   params.data.progress === -1 &&
                   "pointer-events-none text-placeholder-foreground",
               )}
+              title={`${params.value}${type ? `.${type}` : ""}`}
             >
-              {params.value}
-              {type ? `.${type}` : ""}
+              <span className="truncate">{params.value}</span>
+              {type && <span className="shrink-0">.{type}</span>}
             </div>
             {params.data.progress !== undefined &&
             params.data.progress === -1 ? (

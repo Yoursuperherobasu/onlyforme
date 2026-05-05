@@ -47,6 +47,14 @@ class AuthSettings(BaseSettings):
     COOKIE_DOMAIN: str | None = None
     """The domain attribute of the cookies. If None, the domain is not set."""
 
+    FRONTEND_URL: str = ""
+    """Base URL of the frontend, used to build password-reset links in emails. E.g. https://myapp.com"""
+
+    ALLOW_DIRECT_PASSWORD_RESET: bool = False
+    """Temporary fallback: when True, users can reset password without email verification.
+    Set AGENTCORE_ALLOW_DIRECT_PASSWORD_RESET=true in .env for local testing.
+    Remove this flag and all DIRECT RESET FALLBACK blocks once SMTP is ready on client."""
+
     pwd_context: CryptContext = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
     model_config = SettingsConfigDict(validate_assignment=True, extra="ignore", env_prefix="AGENTCORE_")
