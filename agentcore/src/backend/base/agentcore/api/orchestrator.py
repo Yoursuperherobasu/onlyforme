@@ -6,12 +6,9 @@ import json
 import os
 from io import BytesIO
 from pathlib import Path
-from contextvars import ContextVar
 from datetime import datetime, timezone
 from typing import Any, Literal
 from uuid import UUID, uuid4
-
-_request_base_url: ContextVar[str | None] = ContextVar("_request_base_url", default=None)
 
 import httpx
 
@@ -25,7 +22,7 @@ from sqlmodel import select
 
 from fastapi.responses import StreamingResponse
 
-from agentcore.api.utils import CurrentActiveUser, DbSession
+from agentcore.api.utils import CurrentActiveUser, DbSession, build_agent_pod_url
 from agentcore.services.auth.decorators import PermissionChecker
 from agentcore.services.database.models.agent.model import Agent
 from agentcore.events.event_manager import create_default_event_manager
@@ -575,12 +572,7 @@ async def _orch_call_run_api(
     For streaming, SSE token/add_message events are forwarded to event_manager;
     the function waits for the 'end' event to obtain the final text.
     """
-    base_url = os.environ.get("ORCHESTRATOR_BASE_URL") or _request_base_url.get()
-    if not base_url:
-        raise RuntimeError(
-            "Orchestrator base URL is not configured. "
-            "Set ORCHESTRATOR_BASE_URL."
-        )
+    base_url = build_agent_pod_url(agent_id=agent_id, env_code=env, version=version)
     logger.info(f"[ORCH] base_url resolved to: {base_url}")
     secret = os.environ.get("AGENTCORE_INTERNAL_SECRET", "")
     url = (
@@ -1591,7 +1583,6 @@ async def orch_chat(
     4. general_chat + sticky session -> existing agent flow
     5. general_chat + default_chat_model_id -> direct model call
     """
-    _request_base_url.set(str(request.base_url).rstrip("/"))
     try:
         # -- 1. Route request ------------------------------------------------
         routing = await _route_request(session, current_user, body)
@@ -1943,8 +1934,6 @@ async def orch_chat_stream(
       - ``reasoning``    – CoT reasoning chunks (for models that support it)
       - ``end``          – signals stream is done, carries final ``{agent_text, message_id}``
     """
-    _request_base_url.set(str(request.base_url).rstrip("/"))
-
     # -- 1. Route request ------------------------------------------------
     routing = await _route_request(session, current_user, body)
     mode = routing["mode"]
