@@ -13,9 +13,14 @@ import {
   fetchProjectDetail,
 } from "../api";
 
-const LIST_STALE_MS = 60_000;
+// Heavy aggregate queries (metrics/sessions/agents/projects). Bumped from 60s
+// to 5m because for the dashboards on this page (cost / token totals over a
+// 7-30 day window) the underlying numbers don't shift meaningfully every
+// minute — but a refetch is expensive, especially for super-admin viewing
+// all orgs. Manual refresh button still bypasses staleTime.
+const LIST_STALE_MS = 5 * 60_000;
 const DETAIL_STALE_MS = 30_000;
-const GC_MS = 5 * 60_000;
+const GC_MS = 15 * 60_000;
 
 interface QueryConfig {
   dateParams: FetchMetricsParams;

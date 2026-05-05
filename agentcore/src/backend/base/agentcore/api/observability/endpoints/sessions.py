@@ -57,7 +57,7 @@ async def get_user_sessions(
                 **scope_warning_payload(scope_warnings),
             )
 
-        from_ts, to_ts = compute_date_range(from_date, to_date, tz_offset, default_days=1)
+        from_ts, to_ts = compute_date_range(from_date, to_date, tz_offset, default_days=None)
 
         traces, truncated = TraceStore.get_traces(
             clients=scoped_clients,

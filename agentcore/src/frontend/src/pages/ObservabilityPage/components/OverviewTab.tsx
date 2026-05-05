@@ -19,6 +19,7 @@ import { EnhancedStatCard, ProgressBar, CustomTooltip, TruncationBanner } from "
 interface OverviewTabProps {
   metrics: Metrics | undefined;
   metricsLoading: boolean;
+  metricsFetching?: boolean;
   agentsData: AgentsResponse | undefined;
   sessionsData: SessionsResponse | undefined;
   fetchAllMode: boolean;
@@ -27,9 +28,14 @@ interface OverviewTabProps {
 }
 
 export function OverviewTab({
-  metrics, metricsLoading, agentsData, sessionsData,
+  metrics, metricsLoading, metricsFetching, agentsData, sessionsData,
   fetchAllMode, onLoadAll, onSelectSession,
 }: OverviewTabProps) {
+  // Show the full skeleton only when we genuinely have no data to render.
+  // A background refetch (metricsFetching && metrics) keeps the previous
+  // numbers visible and surfaces a small "Refreshing…" pill instead.
+  const showInitialSkeleton = !metrics && metricsLoading;
+  const isBackgroundRefreshing = !!metricsFetching && !!metrics;
   const tokensTrend = useMemo(() => calculateTrend(metrics?.by_date, "total_tokens"), [metrics?.by_date]);
   const costTrend = useMemo(() => calculateTrend(metrics?.by_date, "total_cost"), [metrics?.by_date]);
   const tracesTrend = useMemo(() => calculateTrend(metrics?.by_date, "trace_count"), [metrics?.by_date]);
@@ -47,7 +53,15 @@ export function OverviewTab({
       {metrics?.truncated && !fetchAllMode && (
         <TruncationBanner fetchedCount={metrics.fetched_trace_count ?? 0} onLoadAll={onLoadAll} isLoading={metricsLoading} />
       )}
-      {metricsLoading ? (
+      {isBackgroundRefreshing && (
+        <div className="flex items-center justify-end">
+          <span className="inline-flex items-center gap-2 rounded-full border border-border bg-muted/40 px-3 py-1 text-xs text-muted-foreground">
+            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-current" />
+            Refreshing…
+          </span>
+        </div>
+      )}
+      {showInitialSkeleton ? (
         <div className="grid gap-4 md:grid-cols-4">
           {[1, 2, 3, 4].map((i) => <Skeleton key={i} className="h-32" />)}
         </div>

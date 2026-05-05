@@ -188,6 +188,18 @@ class TraceStore:
 _TRACE_FETCH_CACHE: dict[str, dict[str, Any]] = {}
 _TRACE_CACHE_TTL = 12.0
 _TRACE_CACHE_STALE = 90.0
+# Broad scopes (e.g. super-admin viewing all orgs) are far more expensive to
+# recompute than narrow ones. Heuristic: many clients OR many allowed users
+# ⇒ broad scope ⇒ tolerate longer cache age. The numbers under-shoot on
+# purpose so a single-tenant 2-project case stays narrow.
+_TRACE_CACHE_TTL_BROAD = 120.0
+_TRACE_CACHE_STALE_BROAD = 300.0
+_BROAD_SCOPE_CLIENT_THRESHOLD = 3
+_BROAD_SCOPE_USER_THRESHOLD = 50
+# Cap on parallel Langfuse fetches per request — protects Langfuse from
+# fan-out under super-admin load while still letting us collapse N×roundtrip
+# into ~1×roundtrip for the common case (≤8 projects).
+_BROAD_FETCH_MAX_WORKERS = 8
 
 
 def _scoped_trace_cache_key(
@@ -252,15 +264,21 @@ def _fetch_scoped_traces(
     cache_key = _scoped_trace_cache_key(
         clients, allowed_user_ids, from_timestamp, to_timestamp, name, limit, fetch_all, environment,
     )
+    is_broad_scope = (
+        len(clients) >= _BROAD_SCOPE_CLIENT_THRESHOLD
+        or len(allowed_user_ids) >= _BROAD_SCOPE_USER_THRESHOLD
+    )
+    fresh_ttl = _TRACE_CACHE_TTL_BROAD if is_broad_scope else _TRACE_CACHE_TTL
+    stale_ttl = _TRACE_CACHE_STALE_BROAD if is_broad_scope else _TRACE_CACHE_STALE
     now_mono = time.monotonic()
     cached_entry = _TRACE_FETCH_CACHE.get(cache_key)
     stale_traces: list[Any] = []
     if cached_entry:
         cached_age = now_mono - float(cached_entry.get("ts", 0))
         cached_traces = cached_entry.get("traces", []) or []
-        if cached_age <= _TRACE_CACHE_TTL and cached_traces:
+        if cached_age <= fresh_ttl and cached_traces:
             return list(cached_traces)
-        if cached_age <= _TRACE_CACHE_STALE and cached_traces:
+        if cached_age <= stale_ttl and cached_traces:
             stale_traces = list(cached_traces)
 
     def _attach_client_idx(trace_obj: Any, idx: int) -> Any:
@@ -289,7 +307,7 @@ def _fetch_scoped_traces(
             try:
                 rows: list[Any] = []
                 for page in range(1, max_pages + 1):
-                    kwargs: dict[str, Any] = {"limit": page_size}
+                    kwargs: dict[str, Any] = {"limit": page_size, "order_by": "timestamp.desc"}
                     if from_timestamp:
                         kwargs["from_timestamp"] = from_timestamp
                     if to_timestamp:
@@ -317,7 +335,7 @@ def _fetch_scoped_traces(
                 try:
                     rows = []
                     for page in range(1, max_pages + 1):
-                        kwargs = {"limit": page_size, "page": page}
+                        kwargs = {"limit": page_size, "page": page, "order_by": "timestamp.desc"}
                         if from_timestamp:
                             kwargs["from_timestamp"] = from_timestamp
                         if to_timestamp:
@@ -341,8 +359,33 @@ def _fetch_scoped_traces(
         return []
 
     broad_limit = 5000 if fetch_all else min(limit, 500)
-    for client_idx, client in enumerate(clients):
-        broad_traces = _fetch_client_traces_broad(client, broad_limit)
+
+    # Fan out per-client Langfuse fetches in parallel — Langfuse SDK is sync
+    # so a thread pool collapses N sequential HTTPs into ~1 round-trip.
+    # The merge below stays sequential so quality-score deduping is deterministic.
+    per_client_traces: list[tuple[int, list[Any]]] = []
+    if len(clients) <= 1:
+        for client_idx, client in enumerate(clients):
+            per_client_traces.append((client_idx, _fetch_client_traces_broad(client, broad_limit)))
+    else:
+        max_workers = min(_BROAD_FETCH_MAX_WORKERS, len(clients))
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as pool:
+            future_to_idx = {
+                pool.submit(_fetch_client_traces_broad, client, broad_limit): idx
+                for idx, client in enumerate(clients)
+            }
+            for fut in concurrent.futures.as_completed(future_to_idx):
+                idx = future_to_idx[fut]
+                try:
+                    per_client_traces.append((idx, fut.result()))
+                except Exception as exc:
+                    logger.debug("Per-client broad fetch failed for client {}: {}", idx, exc)
+                    per_client_traces.append((idx, []))
+        # Restore deterministic order so quality-score tie-breaks match the
+        # pre-parallel behaviour (earlier client wins on equal scores).
+        per_client_traces.sort(key=lambda pair: pair[0])
+
+    for client_idx, broad_traces in per_client_traces:
         for trace in broad_traces:
             extracted_uids = extract_trace_user_ids(trace)
             if extracted_uids and not extracted_uids.intersection(allowed_user_ids):

@@ -290,6 +290,7 @@ export default function ObservabilityPage(): JSX.Element {
                 <OverviewTab
                   metrics={metrics.data}
                   metricsLoading={metrics.isLoading}
+                  metricsFetching={metrics.isFetching}
                   agentsData={agentsData.data}
                   sessionsData={sessionsData.data}
                   fetchAllMode={fetchAllMode}
@@ -340,13 +341,21 @@ export default function ObservabilityPage(): JSX.Element {
 
             <TabsContent value="models">
               {activeTab === "models" && (
-                <ModelsTab metrics={metrics.data} metricsLoading={metrics.isLoading} />
+                <ModelsTab
+                  metrics={metrics.data}
+                  metricsLoading={metrics.isLoading}
+                  metricsFetching={metrics.isFetching}
+                />
               )}
             </TabsContent>
 
             <TabsContent value="usage">
               {activeTab === "usage" && (
-                <UsageTab metrics={metrics.data} metricsLoading={metrics.isLoading} />
+                <UsageTab
+                  metrics={metrics.data}
+                  metricsLoading={metrics.isLoading}
+                  metricsFetching={metrics.isFetching}
+                />
               )}
             </TabsContent>
           </Tabs>
