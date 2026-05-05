@@ -20,7 +20,9 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, Query
 from loguru import logger
 from pydantic import BaseModel
-from sqlalchemy import and_, or_, true
+from sqlalchemy import and_, cast, or_, true
+from sqlalchemy import false as sa_false
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import col, func, select
 
 from agentcore.api.approvals import _build_prod_promotion_handoff_payload, _promote_guardrails_for_deployment
@@ -193,6 +195,8 @@ class PromoteFromUATRequest(BaseModel):
     visibility: str = "PRIVATE"
     publish_description: str | None = None
     recipient_emails: list[str] = []
+    department_id: UUID | None = None
+    department_ids: list[UUID] | None = None
 
 
 class PromoteFromUATResponse(BaseModel):
@@ -520,6 +524,22 @@ async def list_control_panel_agents(
             .exists()
         )
 
+        # Multi-dept PROD access: user's dept is listed in deployment.dept_ids JSON array.
+        # Only relevant for AgentDeploymentProd (UAT never has dept_ids set).
+        _user_dept_ids = (
+            await session.exec(
+                select(UserDepartmentMembership.department_id).where(
+                    UserDepartmentMembership.user_id == current_user.id,
+                    UserDepartmentMembership.status == "active",
+                )
+            )
+        ).all()
+        _multi_dept_conds = [
+            cast(Model.dept_ids, JSONB).contains([str(d)])  # type: ignore[attr-defined]
+            for d in _user_dept_ids
+        ]
+        multi_dept_access_expr = or_(*_multi_dept_conds) if _multi_dept_conds else sa_false()
+
         # ── Base query ──────────────────────────────────────────────
         base_stmt = (
             select(
@@ -541,7 +561,7 @@ async def list_control_panel_agents(
         elif current_role == "super_admin":
             org_ids = await _designated_super_admin_org_ids(session, current_user)
             base_stmt = base_stmt.where(Model.org_id.in_(list(org_ids)) if org_ids else False)
-        private_access_expr = ((Agent.user_id == current_user.id) | private_share_exists)  # type: ignore[arg-type]
+        private_access_expr = (Agent.user_id == current_user.id) | private_share_exists | multi_dept_access_expr  # type: ignore[arg-type]
         public_access_expr = Agent.user_id == current_user.id  # type: ignore[assignment]
         if env == ControlPanelEnv.PROD:
             prod_admin_private_roles = {"super_admin", "department_admin", "root"}
@@ -924,21 +944,26 @@ async def get_agent_sharing_options(
 ) -> SharingOptionsResponse:
     try:
         deployment, _ = await _get_deployment_or_404(session, deploy_id)
+        current_role = str(getattr(current_user, "role", "")).lower()
+        is_org_wide_admin = current_role in {"root", "super_admin", "admin"}
+
         dept_id = deployment.dept_id
-        if dept_id is None:
+        # For departmentless super admin UAT deployments, don't fall back to agent.dept_id
+        if dept_id is None and not is_org_wide_admin:
             agent = await session.get(Agent, deployment.agent_id)
             dept_id = agent.dept_id if agent else None
+
+        where_clause = [AgentPublishRecipient.deploy_id == deploy_id]
+        if dept_id is not None:
+            where_clause.append(AgentPublishRecipient.dept_id == dept_id)
 
         rows = (
             await session.exec(
                 select(AgentPublishRecipient)
-                .where(
-                    AgentPublishRecipient.deploy_id == deploy_id,
-                    AgentPublishRecipient.dept_id == dept_id,
-                )
+                .where(*where_clause)
                 .order_by(col(AgentPublishRecipient.updated_at).desc())
             )
-        ).all() if dept_id else []
+        ).all()
 
         return SharingOptionsResponse(
             deploy_id=deploy_id,
@@ -963,16 +988,18 @@ async def update_agent_sharing_options(
     try:
         deployment, _ = await _get_deployment_or_404(session, deploy_id)
         current_role = str(getattr(current_user, "role", "")).lower()
+        is_org_wide_admin = current_role in {"root", "super_admin", "admin"}
         can_manage = current_role in ADMIN_ROLES or deployment.deployed_by == current_user.id
         if not can_manage:
             raise HTTPException(status_code=403, detail="You do not have permission to update sharing options.")
         await _require_control_panel_permission(current_user, "share_agent")
 
         dept_id = deployment.dept_id
-        if dept_id is None:
+        # For departmentless super admin UAT deployments, don't force a dept fallback
+        if dept_id is None and not is_org_wide_admin:
             agent = await session.get(Agent, deployment.agent_id)
             dept_id = agent.dept_id if agent else None
-        if dept_id is None:
+        if dept_id is None and not is_org_wide_admin:
             raise HTTPException(status_code=400, detail="Department is not resolved for this deployment.")
 
         normalized_emails = _normalize_email_list(body.recipient_emails)
@@ -981,21 +1008,38 @@ async def update_agent_sharing_options(
             raise HTTPException(status_code=400, detail=f"Invalid email format: {', '.join(invalid_emails)}")
 
         now = datetime.now(timezone.utc)
+
+        # For departmentless deployments, query all recipients by deploy_id only.
+        where_existing = [AgentPublishRecipient.deploy_id == deploy_id]
+        if dept_id is not None:
+            where_existing.append(AgentPublishRecipient.dept_id == dept_id)
         existing_rows = (
-            await session.exec(
-                select(AgentPublishRecipient).where(
-                    AgentPublishRecipient.deploy_id == deploy_id,
-                    AgentPublishRecipient.dept_id == dept_id,
-                )
-            )
+            await session.exec(select(AgentPublishRecipient).where(*where_existing))
         ).all()
         existing_by_email = {row.recipient_email: row for row in existing_rows}
         next_emails = set(normalized_emails)
 
-        # Remove recipients that are no longer shared.
+        # Remove recipients that are no longer shared (new-style rows, deploy_id set).
         for row in existing_rows:
             if row.recipient_email not in next_emails:
                 await session.delete(row)
+
+        # Also remove legacy rows (deploy_id=NULL) for emails being unshared.
+        emails_being_removed = {row.recipient_email for row in existing_rows if row.recipient_email not in next_emails}
+        all_emails_removed = not normalized_emails
+        legacy_where = [
+            AgentPublishRecipient.deploy_id.is_(None),
+            AgentPublishRecipient.agent_id == deployment.agent_id,
+        ]
+        if dept_id is not None:
+            legacy_where.append(AgentPublishRecipient.dept_id == dept_id)
+        if not all_emails_removed:
+            legacy_where.append(AgentPublishRecipient.recipient_email.in_(list(emails_being_removed)))
+        legacy_stale = (
+            await session.exec(select(AgentPublishRecipient).where(*legacy_where))
+        ).all()
+        for row in legacy_stale:
+            await session.delete(row)
 
         if normalized_emails:
             user_rows = (
@@ -1019,7 +1063,6 @@ async def update_agent_sharing_options(
             if missing_users:
                 raise HTTPException(status_code=400, detail=f"User not found for emails: {', '.join(missing_users)}")
 
-            is_org_wide_admin = current_role in {"root", "super_admin", "admin"}
             recipient_user_ids = [users_by_email[email].id for email in normalized_emails]
             if is_org_wide_admin and deployment.org_id:
                 # Super/root admins can share with any user in any dept in the org
@@ -1032,6 +1075,7 @@ async def update_agent_sharing_options(
                         )
                     )
                 ).all()
+                invalid_membership_msg = "Users not in your organization"
             else:
                 # Dept admins / developers / business users: only their own dept
                 memberships = (
@@ -1043,6 +1087,7 @@ async def update_agent_sharing_options(
                         )
                     )
                 ).all()
+                invalid_membership_msg = "Users not in department"
             allowed_user_ids = {membership.user_id for membership in memberships}
             invalid_membership = [
                 email for email in normalized_emails if users_by_email[email].id not in allowed_user_ids
@@ -1050,11 +1095,24 @@ async def update_agent_sharing_options(
             if invalid_membership:
                 raise HTTPException(
                     status_code=400,
-                    detail=f"Users not in department: {', '.join(invalid_membership)}",
+                    detail=f"{invalid_membership_msg}: {', '.join(invalid_membership)}",
                 )
+
+            # Build a lookup: user_id -> their dept in this org (for departmentless deployments)
+            membership_by_user: dict = {m.user_id: m for m in memberships}
 
             for email in normalized_emails:
                 user = users_by_email[email]
+                # For departmentless deployments, store the recipient's own dept_id
+                recipient_dept_id = dept_id
+                if recipient_dept_id is None:
+                    m = membership_by_user.get(user.id)
+                    recipient_dept_id = m.department_id if m else None
+                if recipient_dept_id is None:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Cannot resolve department for {email} — user has no active department in this org.",
+                    )
                 existing = existing_by_email.get(email)
                 if existing:
                     existing.recipient_user_id = user.id
@@ -1066,7 +1124,7 @@ async def update_agent_sharing_options(
                         agent_id=deployment.agent_id,
                         deploy_id=deploy_id,
                         org_id=deployment.org_id,
-                        dept_id=dept_id,
+                        dept_id=recipient_dept_id,
                         recipient_user_id=user.id,
                         recipient_email=email,
                         created_by=current_user.id,
@@ -1077,13 +1135,13 @@ async def update_agent_sharing_options(
 
         await session.commit()
 
+        where_refresh = [AgentPublishRecipient.deploy_id == deploy_id]
+        if dept_id is not None:
+            where_refresh.append(AgentPublishRecipient.dept_id == dept_id)
         refreshed_rows = (
             await session.exec(
                 select(AgentPublishRecipient)
-                .where(
-                    AgentPublishRecipient.deploy_id == deploy_id,
-                    AgentPublishRecipient.dept_id == dept_id,
-                )
+                .where(*where_refresh)
                 .order_by(col(AgentPublishRecipient.updated_at).desc())
             )
         ).all()
@@ -1136,19 +1194,22 @@ async def promote_uat_to_prod(
         next_version = int(uat_dep.version_number)
         role = str(getattr(current_user, "role", "")).lower()
         is_admin = role in ADMIN_ROLES
-        allow_departmentless_admin_promotion = (
-            is_admin
-            and visibility_enum in {ProdDeploymentVisibilityEnum.PRIVATE, ProdDeploymentVisibilityEnum.PUBLIC}
-            and len(normalized_recipient_emails) == 0
-        )
+        is_org_wide_admin = role in {"root", "super_admin", "admin"}
 
-        department_id = uat_dep.dept_id or agent.dept_id
+        # PROD always requires a dept for super/org-wide admins (UAT may be departmentless).
+        # Prefer body.department_id, fall back to UAT deployment dept or agent dept.
+        department_id = body.department_id or uat_dep.dept_id or agent.dept_id
         department = None
         if department_id:
             department = (await session.exec(select(Department).where(Department.id == department_id))).first()
             if not department:
                 raise HTTPException(status_code=400, detail="Department not found for this deployment.")
-        elif not allow_departmentless_admin_promotion:
+        elif is_org_wide_admin:
+            raise HTTPException(
+                status_code=400,
+                detail="department_id is required when promoting a departmentless UAT deployment to PROD.",
+            )
+        elif not is_admin:
             raise HTTPException(status_code=400, detail="Department is required for PROD promotion.")
 
         existing_prod_version = (
@@ -1172,10 +1233,19 @@ async def promote_uat_to_prod(
         from agentcore.api.publish import _validate_resources_for_prod
         await _validate_resources_for_prod((uat_dep.agent_snapshot or {}), session)
 
+        # Build dept_ids for super admin multi-dept PROD
+        promote_dept_ids: list[str] | None = None
+        if is_org_wide_admin and department_id:
+            all_promote_ids: set[str] = {str(department_id)}
+            for d in (body.department_ids or []):
+                all_promote_ids.add(str(d))
+            promote_dept_ids = sorted(all_promote_ids) if all_promote_ids else None
+
         new_record = AgentDeploymentProd(
             agent_id=uat_dep.agent_id,
             org_id=uat_dep.org_id,
             dept_id=department_id,
+            dept_ids=promote_dept_ids,
             promoted_from_uat_id=uat_dep.id,
             version_number=next_version,
             agent_snapshot=(uat_dep.agent_snapshot or {}).copy(),

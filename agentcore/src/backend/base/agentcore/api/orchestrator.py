@@ -19,7 +19,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFil
 
 from loguru import logger
 from pydantic import BaseModel, Field
-from sqlalchemy import and_, func, or_, true
+from sqlalchemy import and_, cast, false, func, or_, true
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import select
 
 from fastapi.responses import StreamingResponse
@@ -42,6 +43,7 @@ from agentcore.services.database.models.agent_publish_recipient.model import (
 )
 from agentcore.services.database.models.department.model import Department
 from agentcore.services.database.models.role.model import Role
+from agentcore.services.database.models.user_department_membership.model import UserDepartmentMembership
 from agentcore.services.database.models.user_organization_membership.model import (
     UserOrganizationMembership,
 )
@@ -922,6 +924,20 @@ async def _user_can_access_deployment(
     if recipient_exists:
         return True
 
+    # Multi-dept PROD access: user's dept is listed in deployment.dept_ids
+    deploy_dept_ids: list = getattr(deployment, "dept_ids", None) or []
+    if deploy_dept_ids:
+        user_dept_ids = (
+            await session.exec(
+                select(UserDepartmentMembership.department_id).where(
+                    UserDepartmentMembership.user_id == current_user.id,
+                    UserDepartmentMembership.status == "active",
+                )
+            )
+        ).all()
+        if any(str(d) in deploy_dept_ids for d in user_dept_ids):
+            return True
+
     if isinstance(deployment, AgentDeploymentProd):
         visibility_value = (
             deployment.visibility.value
@@ -988,6 +1004,21 @@ async def list_orch_agents(
         dept_ids = await _department_admin_dept_ids(session, current_user)
         org_ids = await _designated_super_admin_org_ids(session, current_user)
 
+        # Multi-dept PROD: check if user's dept is in deployment.dept_ids
+        _orch_user_dept_ids = (
+            await session.exec(
+                select(UserDepartmentMembership.department_id).where(
+                    UserDepartmentMembership.user_id == current_user.id,
+                    UserDepartmentMembership.status == "active",
+                )
+            )
+        ).all()
+        _prod_multi_dept_conds = [
+            cast(AgentDeploymentProd.dept_ids, JSONB).contains([str(d)])
+            for d in _orch_user_dept_ids
+        ]
+        prod_multi_dept_access = or_(*_prod_multi_dept_conds) if _prod_multi_dept_conds else false()
+
         prod_share_exists = (
             select(AgentPublishRecipient.id)
             .where(
@@ -1009,6 +1040,7 @@ async def list_orch_agents(
         prod_private_access = (
             (AgentDeploymentProd.deployed_by == current_user.id)
             | prod_share_exists
+            | prod_multi_dept_access
         )
         # Keep Orchestration aligned with Registry behavior:
         # PUBLIC PROD agents are visible to authenticated users.
