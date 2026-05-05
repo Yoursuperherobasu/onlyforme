@@ -191,7 +191,7 @@ export default function FileRendererComponent({
                   className="h-5 w-5 shrink-0 text-muted-foreground"
                 />
               </Button>
-            ) : file.progress === undefined ? (
+            ) : file.progress === undefined && handleRename ? (
               <FilesContextMenuComponent
                 handleRename={handleOpenRename}
                 file={file}

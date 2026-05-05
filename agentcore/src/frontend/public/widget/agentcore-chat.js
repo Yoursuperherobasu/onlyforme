@@ -1,8 +1,88 @@
 (function () {
-  const REMOTE_BUNDLE_URL =
-    "https://cdn.jsdelivr.net/gh/logspace-ai/langflow-embedded-chat@v1.0.8/dist/build/static/js/bundle.min.js";
+  const REMOTE_BUNDLE_PATH = "/widget/agentcore-chat-runtime.js";
+  const RUN_PATH_RE = /\/api\/v1\/run\//;
+  const DEFAULT_RUN_CONTEXT = { env: "dev", version: "v1" };
 
   let bundleLoadPromise;
+
+  function getRunContext() {
+    const ctx = window.__agentcoreWidgetRunContext || {};
+    return {
+      env: String(ctx.env || DEFAULT_RUN_CONTEXT.env),
+      version: String(ctx.version || DEFAULT_RUN_CONTEXT.version),
+    };
+  }
+
+  function rewriteRunUrl(urlLike) {
+    if (!urlLike) return urlLike;
+    const { env, version } = getRunContext();
+    try {
+      const absolute = new URL(String(urlLike), window.location.origin);
+      if (RUN_PATH_RE.test(absolute.pathname)) {
+        absolute.pathname = absolute.pathname.replace("/api/v1/run/", "/api/run/");
+        if (!absolute.searchParams.get("env")) {
+          absolute.searchParams.set("env", env);
+        }
+        if (!absolute.searchParams.get("version")) {
+          absolute.searchParams.set("version", version);
+        }
+        return absolute.toString();
+      }
+      return urlLike;
+    } catch (_err) {
+      const asString = String(urlLike);
+      if (RUN_PATH_RE.test(asString)) {
+        const normalized = asString.replace("/api/v1/run/", "/api/run/");
+        try {
+          const absoluteNormalized = new URL(normalized, window.location.origin);
+          if (!absoluteNormalized.searchParams.get("env")) {
+            absoluteNormalized.searchParams.set("env", env);
+          }
+          if (!absoluteNormalized.searchParams.get("version")) {
+            absoluteNormalized.searchParams.set("version", version);
+          }
+          return absoluteNormalized.toString();
+        } catch (_innerErr) {
+          return normalized;
+        }
+      }
+      return urlLike;
+    }
+  }
+
+  function patchNetworkForRunPath() {
+    if (!window.__agentcoreWidgetRunPathPatched) {
+      window.__agentcoreWidgetRunPathPatched = true;
+
+      const originalFetch = window.fetch;
+      window.fetch = function (input, init) {
+        if (typeof input === "string" || input instanceof URL) {
+          const rewritten = rewriteRunUrl(input);
+          return originalFetch.call(this, rewritten, init);
+        }
+        if (input && typeof input === "object" && "url" in input) {
+          const rewritten = rewriteRunUrl(input.url);
+          if (rewritten !== input.url) {
+            const patchedRequest = new Request(rewritten, input);
+            return originalFetch.call(this, patchedRequest, init);
+          }
+        }
+        return originalFetch.call(this, input, init);
+      };
+
+      const originalOpen = XMLHttpRequest.prototype.open;
+      XMLHttpRequest.prototype.open = function (method, url, async, user, password) {
+        const rewritten = rewriteRunUrl(url);
+        return originalOpen.call(this, method, rewritten, async, user, password);
+      };
+    }
+  }
+
+  function getRuntimeBundleUrl() {
+    const ctx = window.__agentcoreWidgetRunContext || {};
+    const baseHost = String(ctx.host_url || window.location.origin);
+    return new URL(REMOTE_BUNDLE_PATH, `${baseHost}/`).toString();
+  }
 
   function loadRemoteBundle() {
     if (bundleLoadPromise) return bundleLoadPromise;
@@ -23,7 +103,7 @@
       }
 
       const script = document.createElement("script");
-      script.src = REMOTE_BUNDLE_URL;
+      script.src = getRuntimeBundleUrl();
       script.async = true;
       script.defer = true;
       script.setAttribute("data-agentcore-widget", "remote-bundle");
@@ -49,6 +129,8 @@
         "flowId",
         "host_url",
         "hostUrl",
+        "env",
+        "version",
         "api_key",
         "apiKey",
       ];
@@ -81,9 +163,26 @@
           this._innerWidget.setAttribute("agentId", val);
         }
       }
+
+      if (name === "env" || name === "version") {
+        window.__agentcoreWidgetRunContext = {
+          ...(window.__agentcoreWidgetRunContext || DEFAULT_RUN_CONTEXT),
+          host_url: this.getAttribute("host_url") || window.location.origin,
+          env: this.getAttribute("env") || DEFAULT_RUN_CONTEXT.env,
+          version: this.getAttribute("version") || DEFAULT_RUN_CONTEXT.version,
+        };
+      }
     }
 
     async mount() {
+      patchNetworkForRunPath();
+      window.__agentcoreWidgetRunContext = {
+        ...(window.__agentcoreWidgetRunContext || DEFAULT_RUN_CONTEXT),
+        host_url: this.getAttribute("host_url") || window.location.origin,
+        env: this.getAttribute("env") || DEFAULT_RUN_CONTEXT.env,
+        version: this.getAttribute("version") || DEFAULT_RUN_CONTEXT.version,
+      };
+
       try {
         await loadRemoteBundle();
       } catch (error) {
@@ -92,7 +191,7 @@
 
       if (this._innerWidget) return;
 
-      const inner = document.createElement("langflow-chat");
+      const inner = document.createElement("agentcore-chat-internal");
       for (const attr of this.attributes) {
         inner.setAttribute(attr.name, attr.value);
       }

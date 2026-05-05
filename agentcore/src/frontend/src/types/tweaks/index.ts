@@ -11,6 +11,8 @@ export type GetCodeType = {
   agentId: string;
   agentName: string;
   isAuth: boolean;
+  env?: "dev" | "uat" | "prod";
+  version?: string;
   tweaksBuildedObject?: {};
   endpointName?: string | null;
   activeTweaks?: boolean;

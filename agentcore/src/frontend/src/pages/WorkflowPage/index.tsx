@@ -59,6 +59,8 @@ interface WorkagentType {
   name: string;
   description: string;
   version?: string;
+  runVersion?: string;
+  environment?: "uat" | "prod";
   visibility?: "PUBLIC" | "PRIVATE" | string;
   user: string;
   userEmail?: string;
@@ -126,6 +128,10 @@ export default function WorkflowsView({
   const [selectedSharingAgentId, setSelectedSharingAgentId] =
     useState<string>("");
   const [selectedSharingAgentName, setSelectedSharingAgentName] =
+    useState<string>("");
+  const [selectedSharingEnvironment, setSelectedSharingEnvironment] =
+    useState<"uat" | "prod">("uat");
+  const [selectedSharingVersion, setSelectedSharingVersion] =
     useState<string>("");
   const [selectedSharingDeployId, setSelectedSharingDeployId] =
     useState<string>("");
@@ -253,12 +259,18 @@ export default function WorkflowsView({
       return workflows;
     }
 
-      return (data?.items ?? []).map((item) => ({
+    return (data?.items ?? []).map((item) => ({
         id: item.deploy_id,
         agentId: item.agent_id,
         name: item.agent_name,
         description: item.publish_description ?? item.agent_description ?? "",
         version: item.version_label ?? item.version_number ?? "-",
+        runVersion: item.version_number
+          ? String(item.version_number).startsWith("v")
+            ? String(item.version_number)
+            : `v${item.version_number}`
+          : "",
+        environment: activeTab.toLowerCase() as "uat" | "prod",
         visibility: item.visibility ?? "-",
         user: item.creator_name ?? "-",
         userEmail: item.creator_email ?? undefined,
@@ -275,7 +287,7 @@ export default function WorkflowsView({
         enabled: item.is_enabled,
         inputType: item.input_type,
       }));
-  }, [workflows, data?.items]);
+  }, [workflows, data?.items, activeTab]);
 
   const creatorOptions = useMemo(() => {
     const names = new Set<string>();
@@ -698,6 +710,10 @@ export default function WorkflowsView({
   const setSharingContext = (workflow: WorkagentType) => {
     setSelectedSharingAgentId(workflow.agentId ?? "");
     setSelectedSharingAgentName(workflow.name ?? "");
+    setSelectedSharingEnvironment(
+      workflow.environment ?? (activeTab.toLowerCase() as "uat" | "prod"),
+    );
+    setSelectedSharingVersion(workflow.runVersion ?? "");
   };
 
   const handleOpenWidgetExport = (workflow: WorkagentType) => {
@@ -2313,6 +2329,8 @@ export default function WorkflowsView({
         setOpen={setOpenEmbedModal}
         agentId={selectedSharingAgentId}
         agentName={selectedSharingAgentName}
+        environment={selectedSharingEnvironment}
+        version={selectedSharingVersion}
         isAuth={isAuth}
         tweaksBuildedObject={{}}
         activeTweaks={false}

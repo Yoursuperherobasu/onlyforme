@@ -9,6 +9,8 @@ import type { GetCodeType } from "@/types/tweaks";
 export default function getWidgetCode({
   agentId,
   agentName,
+  env = "dev",
+  version = "v1",
   isAuth: _isAuth,
   copy = false,
 }: GetCodeType): string {
@@ -26,6 +28,8 @@ export default function getWidgetCode({
   <agentcore-chat
     window_title="${agentName}"
     agent_id="${agentId}"
+    env="${env}"
+    version="${version}"
     host_url="${protocol}//${host}"
     api_key="YOUR_AGENTCORE_API_KEY">
 </agentcore-chat>`;

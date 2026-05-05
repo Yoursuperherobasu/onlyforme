@@ -6,6 +6,7 @@ import {
 } from "react-syntax-highlighter/dist/cjs/styles/prism";
 import { useDarkStore } from "@/stores/darkStore";
 import useAlertStore from "@/stores/alertStore";
+import useAgentStore from "@/stores/agentStore";
 import IconComponent from "../../components/common/genericIconComponent";
 import { Button } from "../../components/ui/button";
 import getWidgetCode from "../apiModal/utils/get-widget-code";
@@ -16,6 +17,8 @@ interface EmbedModalProps {
   setOpen: (open: boolean) => void;
   agentId: string;
   agentName: string;
+  environment?: "dev" | "uat" | "prod";
+  version?: string;
   isAuth: boolean;
   tweaksBuildedObject: {};
   activeTweaks: boolean;
@@ -26,17 +29,24 @@ export default function EmbedModal({
   setOpen,
   agentId,
   agentName,
+  environment,
+  version,
   isAuth,
   tweaksBuildedObject,
   activeTweaks,
 }: EmbedModalProps) {
   const isDark = useDarkStore((state) => state.dark);
+  const activePublishedVersion = useAgentStore(
+    (state) => state.activePublishedVersion,
+  );
   const [isCopied, setIsCopied] = useState<boolean>(false);
   const setSuccessData = useAlertStore((state) => state.setSuccessData);
   const widgetProps = {
     agentId: agentId,
     agentName: agentName,
     isAuth: isAuth,
+    env: environment ?? activePublishedVersion?.environment ?? "dev",
+    version: version ?? activePublishedVersion?.versionNumber ?? "v1",
     tweaksBuildedObject: tweaksBuildedObject,
     activeTweaks: activeTweaks,
   };
