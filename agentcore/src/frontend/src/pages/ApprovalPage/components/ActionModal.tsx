@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { X, Upload, File as FileIcon, Trash2 } from "lucide-react";
+import { X, Upload, File as FileIcon, Trash2, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
@@ -27,9 +27,13 @@ export default function ActionModal({
   const [attachments, setAttachments] = useState<File[]>([]);
   const [error, setError] = useState("");
   const [isDragging, setIsDragging] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const isBusy = isLoading || isSubmitting;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isBusy) return;
     const effectiveComments =
       action === "reject" && !comments.trim() && attachments.length === 0
         ? "Rejected by approver"
@@ -40,11 +44,14 @@ export default function ActionModal({
       return;
     }
 
+    setIsSubmitting(true);
     try {
       await onSubmit({ comments: effectiveComments, attachments });
       handleClose();
     } catch (submitErr: any) {
       setError(submitErr?.message || "Failed to submit approval action");
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -250,7 +257,7 @@ export default function ActionModal({
       {/* Backdrop with blur */}
       <div
         className="fixed inset-0 z-50 bg-background/80 backdrop-blur-sm"
-        onClick={handleClose}
+        onClick={isBusy ? undefined : handleClose}
       />
 
       {/* Modal */}
@@ -265,7 +272,8 @@ export default function ActionModal({
           </div>
           <button
             onClick={handleClose}
-            className="rounded-sm opacity-70 ring-offset-background transition-opacity hover:opacity-100"
+            disabled={isBusy}
+            className="rounded-sm opacity-70 ring-offset-background transition-opacity hover:opacity-100 disabled:pointer-events-none"
           >
             <X className="h-5 w-5" />
             <span className="sr-only">Close</span>
@@ -406,6 +414,7 @@ export default function ActionModal({
               type="button"
               variant="outline"
               onClick={handleClose}
+              disabled={isBusy}
               className="flex-1"
             >
               Cancel
@@ -413,10 +422,11 @@ export default function ActionModal({
             <Button
               type="submit"
               variant={isApprove ? "default" : "destructive"}
-              className="flex-1"
-              disabled={isLoading}
+              className="flex-1 gap-2"
+              disabled={isBusy}
             >
-              {isLoading
+              {isBusy && <Loader2 className="h-4 w-4 animate-spin" />}
+              {isBusy
                 ? "Processing..."
                 : isApprove
                   ? "Approve"

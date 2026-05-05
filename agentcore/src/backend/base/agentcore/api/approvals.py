@@ -115,6 +115,7 @@ class ApprovalNotificationRead(BaseModel):
     title: str
     link: str | None = None
     created_at: str
+    is_read: bool = False
 
 
 class GeneralNotificationCreate(BaseModel):
@@ -152,9 +153,9 @@ async def list_approval_notifications(
             select(ApprovalNotification)
             .where(
                 ApprovalNotification.recipient_user_id == current_user.id,
-                ApprovalNotification.is_read == False,  # noqa: E712
             )
             .order_by(ApprovalNotification.created_at.desc())
+            .limit(50)
         )
     ).all()
     return [
@@ -163,6 +164,7 @@ async def list_approval_notifications(
             title=row.title,
             link=row.link,
             created_at=row.created_at.isoformat(),
+            is_read=row.is_read,
         )
         for row in rows
     ]

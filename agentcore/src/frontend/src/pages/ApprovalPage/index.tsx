@@ -56,7 +56,7 @@ export default function ApprovalPage() {
   /* ================= MODAL & ACTIONS MANAGEMENT ================= */
   const { isOpen, selectedAgent, action, openModal, closeModal } =
     useApprovalActionModal();
-  const { handleApprove, handleReject } = useApprovalActions(packageRegionCode);
+  const { handleApprove, handleReject, isLoading: isActionLoading } = useApprovalActions(packageRegionCode);
 
   /* ================= API QUERIES ================= */
   // Fetch all approvals from backend
@@ -358,6 +358,7 @@ export default function ApprovalPage() {
         entityType={selectedAgent?.entityType}
         agentTitle={selectedAgent?.title || ""}
         onSubmit={handleSubmitAction}
+        isLoading={isActionLoading}
       />
       <McpConfigModal
         open={isMcpConfigOpen}

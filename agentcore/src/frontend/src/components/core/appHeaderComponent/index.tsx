@@ -84,9 +84,11 @@ export default function AppHeader(): JSX.Element {
     };
   }, []);
 
+  const unreadApprovalCount = approvalNotifications.filter((n) => !n.is_read).length;
+
   const getNotificationBadge = () => {
     const baseClasses = "absolute h-1 w-1 rounded-full bg-destructive";
-    return notificationCenter || approvalNotifications.length > 0
+    return notificationCenter || unreadApprovalCount > 0
       ? `${baseClasses} right-[0.3rem] top-[5px]`
       : "hidden";
   };
@@ -146,7 +148,10 @@ export default function AppHeader(): JSX.Element {
         </>
         <AlertDropdown
           notificationRef={notificationContentRef}
-          onClose={() => setActiveState(null)}
+          onClose={() => {
+            setActiveState(null);
+            markAllApprovalNotificationsRead(undefined);
+          }}
           serverNotifications={approvalNotifications}
           markServerNotificationRead={(id) =>
             markApprovalNotificationRead({ notificationId: id })

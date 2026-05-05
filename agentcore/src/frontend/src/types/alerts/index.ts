@@ -32,6 +32,7 @@ export type AlertDropdownType = {
     title: string;
     link?: string | null;
     created_at?: string;
+    is_read?: boolean;
   }>;
   markServerNotificationRead?: (id: string) => void;
   markAllServerNotificationsRead?: () => void;

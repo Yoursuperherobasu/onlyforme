@@ -412,22 +412,17 @@ const router = createBrowserRouter(
                 <Route path="" element={<CustomDashboardWrapperPage />}>
                   <Route
                     path="folder/:folderId/"
-                    element={
-                     
-                        <AgentBuilderPage />
-                     
-                    }
+                    element={<AgentBuilderPage />}
+                  />
+                  <Route
+                    path="view"
+                    element={<AgentBuilderPage view={true} />}
                   />
                   <Route
                     path=""
-                    element={
-                     
-                        <AgentBuilderPage />
-                 
-                    }
+                    element={<AgentBuilderPage />}
                   />
                 </Route>
-                <Route path="view" element={<AgentBuilderPage view={true} />} />
               </Route>
             </Route>
           </Route>

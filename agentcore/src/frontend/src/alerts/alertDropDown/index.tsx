@@ -87,6 +87,7 @@ const AlertDropdown = forwardRef<HTMLDivElement, AlertDropdownType>(
           title: item.title,
           link: item.link ?? undefined,
           created_at: item.created_at,
+          is_read: item.is_read ?? false,
         };
       }),
       ...notificationList,
@@ -136,7 +137,7 @@ const AlertDropdown = forwardRef<HTMLDivElement, AlertDropdownType>(
           }}
           navigateTo={navigateTo}
           onClosePanel={() => setOpen(false)}
-          isSeen={seenIds.has(alertItem.id)}
+          isSeen={seenIds.has(alertItem.id) || Boolean((alertItem as any).is_read)}
         />
       );
     };

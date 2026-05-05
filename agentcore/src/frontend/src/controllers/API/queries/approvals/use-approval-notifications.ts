@@ -9,6 +9,7 @@ export interface ApprovalNotification {
   title: string;
   link?: string | null;
   created_at: string;
+  is_read: boolean;
 }
 
 export const useGetApprovalNotifications: useQueryFunctionType<
