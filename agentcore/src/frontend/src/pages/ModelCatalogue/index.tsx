@@ -9,8 +9,7 @@ import {
   XCircle,
   Clock,
 } from "lucide-react";
-import { useContext, useEffect, useMemo, useState } from "react";
-import { StickyScrollContainer } from "@/components/ui/sticky-scroll-container";
+import { useContext, useEffect, useMemo, useRef, useState } from "react";
 import SemanticSearchToggle from "@/components/common/semanticSearchToggle";
 import type { ModelType, ModelEnvironment, ModelTypeFilter } from "@/types/models/models";
 import {
@@ -122,6 +121,41 @@ export default function ModelCatalogue(): JSX.Element {
   const setSuccessData = useAlertStore((state) => state.setSuccessData);
   const setErrorData = useAlertStore((state) => state.setErrorData);
 
+  const tableScrollRef = useRef<HTMLDivElement>(null);
+  const mirrorRef = useRef<HTMLDivElement>(null);
+  const phantomRef = useRef<HTMLDivElement>(null);
+  const syncingRef = useRef(false);
+
+  useEffect(() => {
+    const scroll = tableScrollRef.current;
+    const mirror = mirrorRef.current;
+    const phantom = phantomRef.current;
+    if (!scroll || !mirror || !phantom) return;
+    const syncWidth = () => { phantom.style.width = `${scroll.scrollWidth}px`; };
+    syncWidth();
+    const ro = new ResizeObserver(syncWidth);
+    ro.observe(scroll);
+    const onScrollContent = () => {
+      if (syncingRef.current) return;
+      syncingRef.current = true;
+      mirror.scrollLeft = scroll.scrollLeft;
+      syncingRef.current = false;
+    };
+    const onScrollMirror = () => {
+      if (syncingRef.current) return;
+      syncingRef.current = true;
+      scroll.scrollLeft = mirror.scrollLeft;
+      syncingRef.current = false;
+    };
+    scroll.addEventListener("scroll", onScrollContent, { passive: true });
+    mirror.addEventListener("scroll", onScrollMirror, { passive: true });
+    return () => {
+      ro.disconnect();
+      scroll.removeEventListener("scroll", onScrollContent);
+      mirror.removeEventListener("scroll", onScrollMirror);
+    };
+  }, []);
+
   // Fetch models from API
   const { data: models, isLoading, isError } = useGetRegistryModels({
     active_only: false,
@@ -159,7 +193,20 @@ export default function ModelCatalogue(): JSX.Element {
     [visibilityOptions.departments],
   );
 
-  const displayModels = models ?? [];
+  // TODO: remove dummy data once real models are onboarded
+  const DUMMY_MODELS: ModelType[] = [
+    { id: "d1", display_name: "GPT-4 Turbo", model_name: "gpt-4-turbo-preview", provider: "openai", model_type: "llm", environment: "prod", environments: ["prod"], visibility_scope: "organization", is_active: true, approval_status: "approved", description: "Most capable GPT-4 model for complex tasks" } as any,
+    { id: "d2", display_name: "GPT-3.5 Turbo", model_name: "gpt-3.5-turbo", provider: "openai", model_type: "llm", environment: "uat", environments: ["uat"], visibility_scope: "department", is_active: true, approval_status: "approved", description: "Fast and cost-effective model" } as any,
+    { id: "d3", display_name: "Claude 3 Sonnet", model_name: "claude-3-sonnet-20240229", provider: "anthropic", model_type: "llm", environment: "prod", environments: ["prod"], visibility_scope: "organization", is_active: true, approval_status: "approved", description: "Balanced performance and speed" } as any,
+    { id: "d4", display_name: "Claude 3 Haiku", model_name: "claude-3-haiku-20240307", provider: "anthropic", model_type: "llm", environment: "uat", environments: ["uat"], visibility_scope: "private", is_active: false, approval_status: "pending", description: "Fastest Claude model for lightweight tasks" } as any,
+    { id: "d5", display_name: "Gemini Pro", model_name: "gemini-pro", provider: "google", model_type: "llm", environment: "prod", environments: ["prod", "uat"], visibility_scope: "organization", is_active: true, approval_status: "approved", description: "Google's advanced multimodal model" } as any,
+    { id: "d6", display_name: "Gemini Flash", model_name: "gemini-1.5-flash", provider: "google", model_type: "llm", environment: "uat", environments: ["uat"], visibility_scope: "department", is_active: true, approval_status: "approved", description: "High-speed Gemini model for quick responses" } as any,
+    { id: "d7", display_name: "Azure GPT-4o", model_name: "gpt-4o", provider: "azure", model_type: "llm", environment: "prod", environments: ["prod"], visibility_scope: "organization", is_active: true, approval_status: "approved", description: "Omni model via Azure OpenAI service" } as any,
+    { id: "d8", display_name: "Mixtral 8x7B", model_name: "mixtral-8x7b-32768", provider: "groq", model_type: "llm", environment: "uat", environments: ["uat"], visibility_scope: "department", is_active: true, approval_status: "rejected", description: "High-throughput MoE model via Groq" } as any,
+    { id: "d9", display_name: "text-embedding-3-large", model_name: "text-embedding-3-large", provider: "openai", model_type: "embedding", environment: "prod", environments: ["prod"], visibility_scope: "organization", is_active: true, approval_status: "approved", description: "High-quality text embeddings" } as any,
+    { id: "d10", display_name: "Custom LLaMA 3", model_name: "llama3-70b-custom", provider: "openai_compatible", model_type: "llm", environment: "uat", environments: ["uat"], visibility_scope: "private", is_active: true, approval_status: "approved", description: "Internally hosted LLaMA 3 70B via custom endpoint" } as any,
+  ];
+  const displayModels = (models ?? []).length > 0 ? (models ?? []) : DUMMY_MODELS;
   const defaultProviders = (Object.keys(PROVIDER_LABELS) as ProviderFilter[]).filter(
     (p) => p !== "all",
   );
@@ -452,7 +499,19 @@ export default function ModelCatalogue(): JSX.Element {
       </div>
 
       {/* Table */}
-      <div className="flex-1 overflow-auto p-4 sm:p-6">
+      <style>{`
+        /* hide only the horizontal native scrollbar on the outer container */
+        .model-table-scroll::-webkit-scrollbar { height: 0; }
+        .model-table-scroll { scrollbar-width: none; }
+        /* styled sticky mirror bar */
+        .model-mirror-bar::-webkit-scrollbar { height: 8px; }
+        .model-mirror-bar::-webkit-scrollbar-track { background: hsl(var(--muted)); border-radius: 9999px; }
+        .model-mirror-bar::-webkit-scrollbar-thumb { background: hsl(var(--muted-foreground)); border-radius: 9999px; }
+        .model-mirror-bar::-webkit-scrollbar-thumb:hover { background: hsl(var(--foreground) / 0.8); }
+        .model-mirror-bar { scrollbar-width: thin; scrollbar-color: hsl(var(--muted-foreground)) hsl(var(--muted)); }
+      `}</style>
+      <div className="flex-1 flex flex-col overflow-hidden">
+      <div ref={tableScrollRef} className="model-table-scroll flex-1 overflow-auto">
         {isLoading ? (
           <div className="flex items-center justify-center py-20">
             <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
@@ -463,9 +522,10 @@ export default function ModelCatalogue(): JSX.Element {
           </div>
         ) : (
           <>
-            <StickyScrollContainer className="overflow-x-auto rounded-lg border border-border bg-card [&::-webkit-scrollbar]:hidden">
+            <div className="pt-4 px-4 sm:pt-6 sm:px-6 w-full">
+            <div className="min-w-[1100px] w-full rounded-lg border border-border bg-card">
               <table className="w-full min-w-[1100px]">
-                <thead className="bg-muted/50">
+                <thead className="sticky top-0 z-10 bg-card shadow-sm">
                   <tr className="border-b border-border">
                     {[
                       "Model",
@@ -744,9 +804,9 @@ export default function ModelCatalogue(): JSX.Element {
                   )}
                 </tbody>
               </table>
-            </StickyScrollContainer>
-
-            <div className="mt-4 text-center text-sm text-muted-foreground">
+            </div>
+            </div>
+            <div className="px-4 sm:px-6 pt-4 pb-4 text-center text-sm text-muted-foreground">
               {t("Showing {{shown}} of {{total}} models", {
                 shown: filteredModels.length,
                 total: displayModels.length,
@@ -754,6 +814,15 @@ export default function ModelCatalogue(): JSX.Element {
             </div>
           </>
         )}
+      </div>
+      {/* mirror — sibling of scroll container, always full-width at bottom */}
+      <div
+        ref={mirrorRef}
+        className="model-mirror-bar flex-shrink-0 overflow-x-scroll overflow-y-hidden"
+        style={{ height: 12 }}
+      >
+        <div ref={phantomRef} style={{ height: 1 }} />
+      </div>
       </div>
 
       {/* Edit/Create Modal */}

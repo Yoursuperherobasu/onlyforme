@@ -1,6 +1,5 @@
 import { ArrowUpToLine, Filter, Info, Search, Share2, X } from "lucide-react";
-import { StickyScrollContainer } from "@/components/ui/sticky-scroll-container";
-import { useContext, useEffect, useMemo, useState } from "react";
+import { useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import ShadTooltip from "@/components/common/shadTooltipComponent";
 import { Button } from "@/components/ui/button";
@@ -1054,6 +1053,41 @@ export default function WorkflowsView({
     (can("start_stop_agent") ? 1 : 0) +
     (can("enable_disable_agent") ? 1 : 0);
 
+  const tableScrollRef = useRef<HTMLDivElement>(null);
+  const mirrorRef = useRef<HTMLDivElement>(null);
+  const phantomRef = useRef<HTMLDivElement>(null);
+  const syncingRef = useRef(false);
+
+  useEffect(() => {
+    const scroll = tableScrollRef.current;
+    const mirror = mirrorRef.current;
+    const phantom = phantomRef.current;
+    if (!scroll || !mirror || !phantom) return;
+    const syncWidth = () => { phantom.style.width = `${scroll.scrollWidth}px`; };
+    syncWidth();
+    const ro = new ResizeObserver(syncWidth);
+    ro.observe(scroll);
+    const onScrollContent = () => {
+      if (syncingRef.current) return;
+      syncingRef.current = true;
+      mirror.scrollLeft = scroll.scrollLeft;
+      syncingRef.current = false;
+    };
+    const onScrollMirror = () => {
+      if (syncingRef.current) return;
+      syncingRef.current = true;
+      scroll.scrollLeft = mirror.scrollLeft;
+      syncingRef.current = false;
+    };
+    scroll.addEventListener("scroll", onScrollContent, { passive: true });
+    mirror.addEventListener("scroll", onScrollMirror, { passive: true });
+    return () => {
+      ro.disconnect();
+      scroll.removeEventListener("scroll", onScrollContent);
+      mirror.removeEventListener("scroll", onScrollMirror);
+    };
+  }, []);
+
   return (
       <div className="flex h-full w-full flex-col overflow-hidden">
         <div className="flex-shrink-0 border-b px-4 py-3 sm:px-6 md:px-8 md:py-4">
@@ -1383,10 +1417,20 @@ export default function WorkflowsView({
         </>
       )}
 
-      <div className="flex-1 overflow-auto p-4 sm:p-6">
-        <div className="max-h-full overflow-y-auto overflow-x-hidden rounded-lg border bg-card">
-          <StickyScrollContainer className="overflow-x-auto [&::-webkit-scrollbar]:hidden">
-          <table className="w-full min-w-[1200px] table-fixed text-sm">
+      <style>{`
+        .wf-table-scroll::-webkit-scrollbar { height: 0; }
+        .wf-table-scroll { scrollbar-width: none; }
+        .wf-mirror-bar::-webkit-scrollbar { height: 8px; }
+        .wf-mirror-bar::-webkit-scrollbar-track { background: hsl(var(--muted)); border-radius: 9999px; }
+        .wf-mirror-bar::-webkit-scrollbar-thumb { background: hsl(var(--muted-foreground)); border-radius: 9999px; }
+        .wf-mirror-bar::-webkit-scrollbar-thumb:hover { background: hsl(var(--foreground) / 0.8); }
+        .wf-mirror-bar { scrollbar-width: thin; scrollbar-color: hsl(var(--muted-foreground)) hsl(var(--muted)); }
+      `}</style>
+      <div className="flex-1 flex flex-col overflow-hidden">
+      <div ref={tableScrollRef} className="wf-table-scroll flex-1 overflow-auto">
+        <div className="pt-4 px-4 sm:pt-6 sm:px-6 w-full">
+        <div style={{ width: "max-content", minWidth: "100%" }} className="rounded-lg border bg-card">
+  <table style={{ width: "max-content", minWidth: "100%" }} className="table-fixed text-sm">
             <colgroup>
               <col className="w-[20rem]" />
               <col className="w-[6.5rem]" />
@@ -1602,7 +1646,7 @@ export default function WorkflowsView({
                               onClick={(e) => {
                                 e.stopPropagation();
                                 handleOpenWidgetExport(workflow);
-                              }} disabled
+                              }}
                             >
                               {t("Export as Widget")}
                             </DropdownMenuItem>
@@ -1782,10 +1826,9 @@ export default function WorkflowsView({
               )}
             </tbody>
           </table>
-          </StickyScrollContainer>
         </div>
-
-        <div className="mt-6 flex items-center justify-between">
+        </div>
+        <div className="px-4 sm:px-6 pt-4 pb-4 flex items-center justify-between">
           <div className="text-sm text-muted-foreground">
             {t("Rows per page")}
           </div>
@@ -1798,6 +1841,10 @@ export default function WorkflowsView({
             </button>
           </div>
         </div>
+      </div>
+      <div ref={mirrorRef} className="wf-mirror-bar flex-shrink-0 overflow-x-scroll overflow-y-hidden" style={{ height: 12 }}>
+        <div ref={phantomRef} style={{ height: 1 }} />
+      </div>
       </div>
 
       <Dialog

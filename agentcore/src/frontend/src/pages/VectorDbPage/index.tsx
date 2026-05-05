@@ -1,4 +1,3 @@
-import { StickyScrollContainer } from "@/components/ui/sticky-scroll-container";
 import {
   Search,
   Activity,
@@ -9,7 +8,7 @@ import {
   Database,
   Trash2,
 } from "lucide-react";
-import { useContext, useMemo, useState } from "react";
+import { useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import Loading from "@/components/ui/loading";
 import { Button } from "@/components/ui/button";
@@ -64,6 +63,41 @@ export default function VectorDBView(): JSX.Element {
 
   const deleteMutation = useDeleteVectorDBCatalogue();
   const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  const tableScrollRef = useRef<HTMLDivElement>(null);
+  const mirrorRef = useRef<HTMLDivElement>(null);
+  const phantomRef = useRef<HTMLDivElement>(null);
+  const syncingRef = useRef(false);
+
+  useEffect(() => {
+    const scroll = tableScrollRef.current;
+    const mirror = mirrorRef.current;
+    const phantom = phantomRef.current;
+    if (!scroll || !mirror || !phantom) return;
+    const syncWidth = () => { phantom.style.width = `${scroll.scrollWidth}px`; };
+    syncWidth();
+    const ro = new ResizeObserver(syncWidth);
+    ro.observe(scroll);
+    const onScrollContent = () => {
+      if (syncingRef.current) return;
+      syncingRef.current = true;
+      mirror.scrollLeft = scroll.scrollLeft;
+      syncingRef.current = false;
+    };
+    const onScrollMirror = () => {
+      if (syncingRef.current) return;
+      syncingRef.current = true;
+      scroll.scrollLeft = mirror.scrollLeft;
+      syncingRef.current = false;
+    };
+    scroll.addEventListener("scroll", onScrollContent, { passive: true });
+    mirror.addEventListener("scroll", onScrollMirror, { passive: true });
+    return () => {
+      ro.disconnect();
+      scroll.removeEventListener("scroll", onScrollContent);
+      mirror.removeEventListener("scroll", onScrollMirror);
+    };
+  }, []);
 
   const handleDelete = (db: VectorDBInfo) => {
     if (!window.confirm(`Delete "${db.name}" from the catalogue?`)) return;
@@ -143,9 +177,9 @@ export default function VectorDBView(): JSX.Element {
   /* ---------------------------------- JSX ---------------------------------- */
 
   return (
-    <div className="h-full w-full overflow-auto">
+    <div className="flex h-full w-full flex-col overflow-hidden">
       {/* Header */}
-      <div className="flex flex-shrink-0 flex-col gap-4 border-b px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6 md:px-8 md:py-6">
+      <div className="flex-shrink-0 flex flex-col gap-4 border-b px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6 md:px-8 md:py-6">
         <div>
           <div className="mb-2 flex items-center gap-3">
             <h1 className="text-xl font-semibold md:text-2xl">{t("Vector DB Catalogue")}</h1>
@@ -166,7 +200,7 @@ export default function VectorDBView(): JSX.Element {
       </div>
 
       {/* Stats Cards */}
-      <div className="border-b px-4 py-4 sm:px-6 md:px-8">
+      <div className="flex-shrink-0 border-b px-4 py-4 sm:px-6 md:px-8">
         <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
           <div className="rounded-lg border bg-card p-4">
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -200,7 +234,17 @@ export default function VectorDBView(): JSX.Element {
       </div>
 
       {/* Table */}
-      <div className="p-4 sm:p-6">
+      <style>{`
+        .vdb-table-scroll::-webkit-scrollbar { height: 0; }
+        .vdb-table-scroll { scrollbar-width: none; }
+        .vdb-mirror-bar::-webkit-scrollbar { height: 8px; }
+        .vdb-mirror-bar::-webkit-scrollbar-track { background: hsl(var(--muted)); border-radius: 9999px; }
+        .vdb-mirror-bar::-webkit-scrollbar-thumb { background: hsl(var(--muted-foreground)); border-radius: 9999px; }
+        .vdb-mirror-bar::-webkit-scrollbar-thumb:hover { background: hsl(var(--foreground) / 0.8); }
+        .vdb-mirror-bar { scrollbar-width: thin; scrollbar-color: hsl(var(--muted-foreground)) hsl(var(--muted)); }
+      `}</style>
+      <div className="flex-1 flex flex-col overflow-hidden">
+      <div ref={tableScrollRef} className="vdb-table-scroll flex-1 overflow-auto">
         {isLoading ? (
           <div className="flex h-full w-full items-center justify-center">
             <Loading />
@@ -212,9 +256,10 @@ export default function VectorDBView(): JSX.Element {
                 {t("Failed to load vector databases from database.")}
               </div>
             )}
-            <StickyScrollContainer className="overflow-x-auto rounded-lg border border-border bg-card [&::-webkit-scrollbar]:hidden">
-              <table className="w-full">
-                <thead className="bg-muted/50">
+            <div className="pt-4 px-4 sm:pt-6 sm:px-6 w-full">
+            <div className="min-w-[900px] w-full rounded-lg border border-border bg-card">
+              <table className="w-full min-w-[900px]">
+                <thead className="sticky top-0 z-10 bg-card shadow-sm">
                   <tr className="border-b border-border">
                     {[
                       "Name",
@@ -391,9 +436,9 @@ export default function VectorDBView(): JSX.Element {
                   )}
                 </tbody>
               </table>
-            </StickyScrollContainer>
-
-            <div className="mt-6 text-center text-sm text-muted-foreground">
+            </div>
+            </div>
+            <div className="px-4 sm:px-6 pt-4 pb-4 text-center text-sm text-muted-foreground">
               {t("Showing {{shown}} of {{total}} vector databases", {
                 shown: filteredVectorDBs.length,
                 total: displayVectorDBs.length,
@@ -401,6 +446,10 @@ export default function VectorDBView(): JSX.Element {
             </div>
           </>
         )}
+      </div>
+      <div ref={mirrorRef} className="vdb-mirror-bar flex-shrink-0 overflow-x-scroll overflow-y-hidden" style={{ height: 12 }}>
+        <div ref={phantomRef} style={{ height: 1 }} />
+      </div>
       </div>
     </div>
   );

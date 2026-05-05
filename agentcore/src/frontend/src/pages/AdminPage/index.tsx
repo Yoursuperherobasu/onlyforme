@@ -112,6 +112,11 @@ export default function AdminPage() {
 
   const userList = useRef([]);
 
+  const tableScrollRef = useRef<HTMLDivElement>(null);
+  const mirrorRef = useRef<HTMLDivElement>(null);
+  const phantomRef = useRef<HTMLDivElement>(null);
+  const syncingRef = useRef(false);
+
   useEffect(() => {
     if (!canViewAdminPage) return;
 
@@ -165,6 +170,36 @@ export default function AdminPage() {
       window.removeEventListener("mouseup", onMouseUp);
     };
   }, [resizingColumn]);
+
+  useEffect(() => {
+    const scroll = tableScrollRef.current;
+    const mirror = mirrorRef.current;
+    const phantom = phantomRef.current;
+    if (!scroll || !mirror || !phantom) return;
+    const syncWidth = () => { phantom.style.width = `${scroll.scrollWidth}px`; };
+    syncWidth();
+    const ro = new ResizeObserver(syncWidth);
+    ro.observe(scroll);
+    const onScrollContent = () => {
+      if (syncingRef.current) return;
+      syncingRef.current = true;
+      mirror.scrollLeft = scroll.scrollLeft;
+      syncingRef.current = false;
+    };
+    const onScrollMirror = () => {
+      if (syncingRef.current) return;
+      syncingRef.current = true;
+      scroll.scrollLeft = mirror.scrollLeft;
+      syncingRef.current = false;
+    };
+    scroll.addEventListener("scroll", onScrollContent, { passive: true });
+    mirror.addEventListener("scroll", onScrollMirror, { passive: true });
+    return () => {
+      ro.disconnect();
+      scroll.removeEventListener("scroll", onScrollContent);
+      mirror.removeEventListener("scroll", onScrollMirror);
+    };
+  }, [isPending, isIdle]);
 
   function startColumnResize(event: ReactMouseEvent, key: ColumnKey) {
     event.preventDefault();
@@ -896,12 +931,23 @@ export default function AdminPage() {
             </>
           ) : (
             <>
+              <style>{`
+                .admin-table-scroll::-webkit-scrollbar { height: 0; }
+                .admin-table-scroll { scrollbar-width: none; }
+                .admin-mirror-bar::-webkit-scrollbar { height: 8px; }
+                .admin-mirror-bar::-webkit-scrollbar-track { background: hsl(var(--muted)); border-radius: 9999px; }
+                .admin-mirror-bar::-webkit-scrollbar-thumb { background: hsl(var(--muted-foreground)); border-radius: 9999px; }
+                .admin-mirror-bar::-webkit-scrollbar-thumb:hover { background: hsl(var(--foreground) / 0.8); }
+                .admin-mirror-bar { scrollbar-width: thin; scrollbar-color: hsl(var(--muted-foreground)) hsl(var(--muted)); }
+              `}</style>
               <div
                 className={
-                  "m-4 h-fit overflow-x-auto overflow-y-scroll rounded-md border-2 bg-background custom-scroll" +
+                  "m-4 min-w-0 flex flex-col overflow-hidden rounded-md border-2 bg-background" +
                   (isPending ? " border-0" : "")
                 }
               >
+                <div ref={tableScrollRef} className="admin-table-scroll w-full max-h-[65vh] overflow-auto custom-scroll">
+                <div style={{ minWidth: Object.values(columnWidths).reduce((a, b) => a + b, 0) }}>
                 <Table className={"table-fixed outline-1"}>
                   <colgroup>
                     <col style={{ width: columnWidths.username }} />
@@ -917,7 +963,7 @@ export default function AdminPage() {
                   </colgroup>
                   <TableHeader
                     className={
-                      isPending ? "hidden" : "table-fixed bg-muted outline-1"
+                      isPending ? "hidden" : "sticky top-0 z-10 table-fixed bg-muted outline-1"
                     }
                   >
                     <TableRow>
@@ -1134,6 +1180,11 @@ export default function AdminPage() {
                     
                   )}
                 </Table>
+                </div>
+                </div>
+                <div ref={mirrorRef} className="admin-mirror-bar flex-shrink-0 overflow-x-scroll overflow-y-hidden" style={{ height: 12 }}>
+                  <div ref={phantomRef} style={{ height: 1 }} />
+                </div>
               </div>
 
               <PaginatorComponent

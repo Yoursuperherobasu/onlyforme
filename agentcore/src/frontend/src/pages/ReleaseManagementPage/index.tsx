@@ -1,5 +1,4 @@
-import { useContext, useEffect, useMemo, useState } from "react";
-import { StickyScrollContainer } from "@/components/ui/sticky-scroll-container";
+import { useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Globe } from "lucide-react";
 import { api } from "@/controllers/API/api";
@@ -617,6 +616,41 @@ export default function ReleaseManagementPage() {
     setCreateOpen(false);
   }, [releaseRegionCode]);
 
+  const tableScrollRef = useRef<HTMLDivElement>(null);
+  const mirrorRef = useRef<HTMLDivElement>(null);
+  const phantomRef = useRef<HTMLDivElement>(null);
+  const syncingRef = useRef(false);
+
+  useEffect(() => {
+    const scroll = tableScrollRef.current;
+    const mirror = mirrorRef.current;
+    const phantom = phantomRef.current;
+    if (!scroll || !mirror || !phantom) return;
+    const syncWidth = () => { phantom.style.width = `${scroll.scrollWidth}px`; };
+    syncWidth();
+    const ro = new ResizeObserver(syncWidth);
+    ro.observe(scroll);
+    const onScrollContent = () => {
+      if (syncingRef.current) return;
+      syncingRef.current = true;
+      mirror.scrollLeft = scroll.scrollLeft;
+      syncingRef.current = false;
+    };
+    const onScrollMirror = () => {
+      if (syncingRef.current) return;
+      syncingRef.current = true;
+      scroll.scrollLeft = mirror.scrollLeft;
+      syncingRef.current = false;
+    };
+    scroll.addEventListener("scroll", onScrollContent, { passive: true });
+    mirror.addEventListener("scroll", onScrollMirror, { passive: true });
+    return () => {
+      ro.disconnect();
+      scroll.removeEventListener("scroll", onScrollContent);
+      mirror.removeEventListener("scroll", onScrollMirror);
+    };
+  }, []);
+
   return (
     <div className="flex h-full flex-col bg-background">
       <div className="border-b border-border bg-background px-8 py-5">
@@ -749,9 +783,18 @@ export default function ReleaseManagementPage() {
               </p>
             </div>
 
-            <div className="rounded-lg border border-border bg-card">
-              <div className="max-h-[58vh] overflow-y-auto overflow-x-hidden">
-                <StickyScrollContainer className="overflow-x-auto [&::-webkit-scrollbar]:hidden">
+            <div className="rounded-lg border border-border bg-card overflow-hidden">
+              <style>{`
+                .rel-table-scroll::-webkit-scrollbar { height: 0; }
+                .rel-table-scroll { scrollbar-width: none; }
+                .rel-mirror-bar::-webkit-scrollbar { height: 8px; }
+                .rel-mirror-bar::-webkit-scrollbar-track { background: hsl(var(--muted)); border-radius: 9999px; }
+                .rel-mirror-bar::-webkit-scrollbar-thumb { background: hsl(var(--muted-foreground)); border-radius: 9999px; }
+                .rel-mirror-bar::-webkit-scrollbar-thumb:hover { background: hsl(var(--foreground) / 0.8); }
+                .rel-mirror-bar { scrollbar-width: thin; scrollbar-color: hsl(var(--muted-foreground)) hsl(var(--muted)); }
+              `}</style>
+              <div className="flex flex-col max-h-[58vh]">
+              <div ref={tableScrollRef} className="rel-table-scroll flex-1 overflow-auto">
                 <table className="w-full min-w-[980px] text-sm">
                   <thead className="sticky top-0 z-10 bg-card">
                     <tr className="border-b border-border bg-muted/30 text-xs uppercase tracking-wider text-muted-foreground">
@@ -822,9 +865,12 @@ export default function ReleaseManagementPage() {
                     )}
                   </tbody>
                 </table>
-                </StickyScrollContainer>
+              </div>
+              <div ref={mirrorRef} className="rel-mirror-bar flex-shrink-0 overflow-x-scroll overflow-y-hidden" style={{ height: 12 }}>
+                <div ref={phantomRef} style={{ height: 1 }} />
               </div>
             </div>
+          </div>
           </section>
         </div>
       </div>

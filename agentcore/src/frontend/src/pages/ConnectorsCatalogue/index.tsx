@@ -1,4 +1,3 @@
-import { StickyScrollContainer } from "@/components/ui/sticky-scroll-container";
 import {
   Search,
   Plus,
@@ -20,7 +19,7 @@ import {
   Mail,
   ChevronDown,
 } from "lucide-react";
-import { useContext, useEffect, useMemo, useState } from "react";
+import { useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useSearchParams } from "react-router-dom";
 import OutlookConnectorForm from "./components/OutlookConnectorForm";
@@ -866,6 +865,41 @@ export default function ConnectorsCatalogueView(): JSX.Element {
 
   const [actioningConnectorId, setActioningConnectorId] = useState<string | null>(null);
   const [linkingMailbox, setLinkingMailbox] = useState(false);
+
+  const tableScrollRef = useRef<HTMLDivElement>(null);
+  const mirrorRef = useRef<HTMLDivElement>(null);
+  const phantomRef = useRef<HTMLDivElement>(null);
+  const syncingRef = useRef(false);
+
+  useEffect(() => {
+    const scroll = tableScrollRef.current;
+    const mirror = mirrorRef.current;
+    const phantom = phantomRef.current;
+    if (!scroll || !mirror || !phantom) return;
+    const syncWidth = () => { phantom.style.width = `${scroll.scrollWidth}px`; };
+    syncWidth();
+    const ro = new ResizeObserver(syncWidth);
+    ro.observe(scroll);
+    const onScrollContent = () => {
+      if (syncingRef.current) return;
+      syncingRef.current = true;
+      mirror.scrollLeft = scroll.scrollLeft;
+      syncingRef.current = false;
+    };
+    const onScrollMirror = () => {
+      if (syncingRef.current) return;
+      syncingRef.current = true;
+      scroll.scrollLeft = mirror.scrollLeft;
+      syncingRef.current = false;
+    };
+    scroll.addEventListener("scroll", onScrollContent, { passive: true });
+    mirror.addEventListener("scroll", onScrollMirror, { passive: true });
+    return () => {
+      ro.disconnect();
+      scroll.removeEventListener("scroll", onScrollContent);
+      mirror.removeEventListener("scroll", onScrollMirror);
+    };
+  }, []);
   const handleLinkMailbox = async (connectorId: string) => {
     try {
       setLinkingMailbox(true);
@@ -1031,7 +1065,17 @@ export default function ConnectorsCatalogueView(): JSX.Element {
       </div>
 
       {/* Table */}
-      <div className="flex-1 overflow-auto p-4 sm:p-6">
+      <style>{`
+        .conn-table-scroll::-webkit-scrollbar { height: 0; }
+        .conn-table-scroll { scrollbar-width: none; }
+        .conn-mirror-bar::-webkit-scrollbar { height: 8px; }
+        .conn-mirror-bar::-webkit-scrollbar-track { background: hsl(var(--muted)); border-radius: 9999px; }
+        .conn-mirror-bar::-webkit-scrollbar-thumb { background: hsl(var(--muted-foreground)); border-radius: 9999px; }
+        .conn-mirror-bar::-webkit-scrollbar-thumb:hover { background: hsl(var(--foreground) / 0.8); }
+        .conn-mirror-bar { scrollbar-width: thin; scrollbar-color: hsl(var(--muted-foreground)) hsl(var(--muted)); }
+      `}</style>
+      <div className="flex-1 flex flex-col overflow-hidden">
+      <div ref={tableScrollRef} className="conn-table-scroll flex-1 overflow-auto">
         {isLoading ? (
           <div className="flex h-full w-full items-center justify-center">
             <Loading />
@@ -1043,9 +1087,10 @@ export default function ConnectorsCatalogueView(): JSX.Element {
                 {t("Failed to load connectors.")}
               </div>
             )}
-            <StickyScrollContainer className="overflow-x-auto rounded-lg border border-border bg-card [&::-webkit-scrollbar]:hidden">
-              <table className="w-full">
-                <thead className="bg-muted/50">
+            <div className="pt-4 px-4 sm:pt-6 sm:px-6">
+            <div className="min-w-[1200px] w-full rounded-lg border border-border bg-card">
+              <table className="w-full min-w-[1200px]">
+                <thead className="sticky top-0 z-10 bg-card shadow-sm">
                   <tr className="border-b border-border">
                     {[
                       t("Connector Name"),
@@ -1288,8 +1333,9 @@ export default function ConnectorsCatalogueView(): JSX.Element {
                   )}
                 </tbody>
               </table>
-            </StickyScrollContainer>
-            <div className="mt-6 text-center text-sm text-muted-foreground">
+            </div>
+            </div>
+            <div className="px-4 sm:px-6 pt-4 pb-4 text-center text-sm text-muted-foreground">
               {t("Showing {{shown}} of {{total}} connectors", {
                 shown: filteredConnectors.length,
                 total: displayConnectors.length,
@@ -1297,6 +1343,10 @@ export default function ConnectorsCatalogueView(): JSX.Element {
             </div>
           </>
         )}
+      </div>
+      <div ref={mirrorRef} className="conn-mirror-bar flex-shrink-0 overflow-x-scroll overflow-y-hidden" style={{ height: 12 }}>
+        <div ref={phantomRef} style={{ height: 1 }} />
+      </div>
       </div>
 
       {/* Add/Edit Modal */}

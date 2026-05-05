@@ -9,29 +9,24 @@ import type { GetCodeType } from "@/types/tweaks";
 export default function getWidgetCode({
   agentId,
   agentName,
-  isAuth,
+  isAuth: _isAuth,
   copy = false,
 }: GetCodeType): string {
+  const { protocol, host } = customGetHostProtocol();
+
   const source = copy
     ? `<script
-  src="https://cdn.jsdelivr.net/gh/logspace-ai/agentcore-embedded-chat@v1.0.7/dist/build/static/js/bundle.min.js">
+  src="${protocol}//${host}/widget/agentcore-chat.js">
 </script>`
     : `<script
-  src="https://cdn.jsdelivr.net/gh/logspace-ai/agentcore-embedded-chat@v1.0.7/dist/
-build/static/js/bundle.min.js">
+  src="${protocol}//${host}/widget/agentcore-chat.js">
 </script>`;
-
-  const { protocol, host } = customGetHostProtocol();
 
   return `${source}
   <agentcore-chat
     window_title="${agentName}"
     agent_id="${agentId}"
-    host_url="${protocol}//${host}"${
-      !isAuth
-        ? `
-    api_key="..."`
-        : ""
-    }>
+    host_url="${protocol}//${host}"
+    api_key="YOUR_AGENTCORE_API_KEY">
 </agentcore-chat>`;
 }

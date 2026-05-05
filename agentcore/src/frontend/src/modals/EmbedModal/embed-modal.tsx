@@ -5,6 +5,7 @@ import {
   oneLight,
 } from "react-syntax-highlighter/dist/cjs/styles/prism";
 import { useDarkStore } from "@/stores/darkStore";
+import useAlertStore from "@/stores/alertStore";
 import IconComponent from "../../components/common/genericIconComponent";
 import { Button } from "../../components/ui/button";
 import getWidgetCode from "../apiModal/utils/get-widget-code";
@@ -31,6 +32,7 @@ export default function EmbedModal({
 }: EmbedModalProps) {
   const isDark = useDarkStore((state) => state.dark);
   const [isCopied, setIsCopied] = useState<boolean>(false);
+  const setSuccessData = useAlertStore((state) => state.setSuccessData);
   const widgetProps = {
     agentId: agentId,
     agentName: agentName,
@@ -47,6 +49,7 @@ export default function EmbedModal({
 
     navigator.clipboard.writeText(copyCode).then(() => {
       setIsCopied(true);
+      setSuccessData({ title: "Widget code copied" });
 
       setTimeout(() => {
         setIsCopied(false);
@@ -54,35 +57,78 @@ export default function EmbedModal({
     });
   };
 
+  const downloadWidgetCode = () => {
+    const htmlContent = `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>${agentName} Widget</title>
+  </head>
+  <body>
+${copyCode}
+  </body>
+</html>`;
+
+    const safeName = (agentName || "agent")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "");
+    const blob = new Blob([htmlContent], { type: "text/html;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `${safeName || "agent"}-widget.html`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    setSuccessData({ title: "Widget file downloaded" });
+  };
+
   return (
     <BaseModal open={open} setOpen={setOpen} size="retangular">
       <BaseModal.Header>
         <div className="flex items-center gap-2 text-base font-semibold">
           <IconComponent name="Columns2" className="icon-size" />
-          Embed into site
+          Export as Widget
         </div>
       </BaseModal.Header>
       <BaseModal.Content className="">
         <div className="relative flex h-full w-full">
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={copyToClipboard}
-            data-testid="btn-copy-code"
-            className="!hover:bg-foreground group absolute right-2 top-2"
-          >
-            {isCopied ? (
+          <div className="absolute right-2 top-2 z-10 flex items-center gap-1">
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={downloadWidgetCode}
+              data-testid="btn-download-widget"
+              className="group"
+            >
               <IconComponent
-                name="Check"
-                className="h-5 w-5 text-muted-foreground"
-              />
-            ) : (
-              <IconComponent
-                name="Copy"
+                name="Download"
                 className="!h-5 !w-5 text-muted-foreground"
               />
-            )}
-          </Button>
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={copyToClipboard}
+              data-testid="btn-copy-code"
+              className="group"
+            >
+              {isCopied ? (
+                <IconComponent
+                  name="Check"
+                  className="h-5 w-5 text-muted-foreground"
+                />
+              ) : (
+                <IconComponent
+                  name="Copy"
+                  className="!h-5 !w-5 text-muted-foreground"
+                />
+              )}
+            </Button>
+          </div>
           <SyntaxHighlighter
             showLineNumbers={true}
             wrapLongLines={true}

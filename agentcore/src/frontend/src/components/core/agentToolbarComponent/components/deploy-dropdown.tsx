@@ -144,7 +144,7 @@ export default function PublishDropdown({
               className="deploy-dropdown-item group"
             >
               <IconComponent name="Columns2" className={`icon-size mr-2`} />
-              <span>Embed into site</span>
+              <span>Export as Widget</span>
             </DropdownMenuItem>
           )}
 
