@@ -128,6 +128,7 @@ const useAgentStore = create<AgentStoreType>((set, get) => ({
     get().revertBuiltStatusFromBuilding();
     useAlertStore.getState().setErrorData({
       title: "Build stopped",
+      link: get().currentAgent?.id ? `/agent/${get().currentAgent!.id}` : undefined,
     });
   },
   isPending: true,
@@ -221,6 +222,7 @@ const useAgentStore = create<AgentStoreType>((set, get) => ({
       useAlertStore.getState().setErrorData({
         title: BROKEN_EDGES_WARNING,
         list: brokenEdges.map((edge) => brokenEdgeMessage(edge)),
+        link: agent?.id ? `/agent/${agent.id}` : undefined,
       });
     }
     const newEdges = cleanEdges(nodes, edges);
@@ -719,6 +721,7 @@ const useAgentStore = create<AgentStoreType>((set, get) => ({
       setErrorData({
         title: MISSED_ERROR_ALERT,
         list: errors,
+        link: currentAgent?.id ? `/agent/${currentAgent.id}` : undefined,
       });
       const ids = errorsObjs.flatMap((obj) => obj.id);
       get().updateBuildStatus(ids, BuildStatus.ERROR); // Set only the build status as error without adding info to the agent pool
@@ -864,6 +867,7 @@ const useAgentStore = create<AgentStoreType>((set, get) => ({
           setErrorData({
             title:
               "There are outdated components in the agent. The error could be related to them.",
+            link: currentAgent?.id ? `/agent/${currentAgent.id}` : undefined,
           });
         get().updateEdgesRunningByNodes(
           get().nodes.map((n) => n.id),
@@ -874,6 +878,7 @@ const useAgentStore = create<AgentStoreType>((set, get) => ({
           title: title,
           type: "error",
           list: list,
+          link: currentAgent?.id ? `/agent/${currentAgent.id}` : undefined,
         });
         get().setIsBuilding(false);
         useMessagesStore.getState().setDisplayLoadingMessage(false);

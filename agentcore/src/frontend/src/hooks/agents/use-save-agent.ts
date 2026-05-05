@@ -127,6 +127,7 @@ const useSaveAgent = () => {
                   setErrorData({
                     title: "Failed to save agent",
                     list: [e.message],
+                    link: agent?.id ? `/agent/${agent.id}` : undefined,
                   });
                   setSaveLoading(false);
                   reject(e);

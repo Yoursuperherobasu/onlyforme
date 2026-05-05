@@ -3,6 +3,8 @@ import { create } from "zustand";
 import type { AlertItemType } from "../types/alerts";
 import type { AlertStoreType } from "../types/zustand/alert";
 import { customStringify } from "../utils/reactFlowUtils";
+import { api } from "../controllers/API/api";
+import { getURL } from "../controllers/API/helpers/constants";
 
 const useAlertStore = create<AlertStoreType>((set, get) => ({
   errorData: { title: "", list: [] },
@@ -17,6 +19,15 @@ const useAlertStore = create<AlertStoreType>((set, get) => ({
       notificationCenter: true,
       notificationList: [newNotification, ...get().notificationList],
     });
+    // Persist to DB so the notification survives page refresh
+    if (notification.link) {
+      api
+        .post(`${getURL("APPROVALS")}/notifications/general`, {
+          title: notification.title,
+          link: notification.link,
+        })
+        .catch(() => {});
+    }
   },
   addNotificationToTempList: (notification: Omit<AlertItemType, "id">) => {
     const newNotification = { ...notification, id: uniqueId() };
@@ -44,13 +55,14 @@ const useAlertStore = create<AlertStoreType>((set, get) => ({
       });
     }
   },
-  setErrorData: (newState: { title: string; list?: Array<string> }) => {
+  setErrorData: (newState: { title: string; list?: Array<string>; link?: string }) => {
     if (newState.title && newState.title !== "") {
       set({ errorData: newState });
       const notification: Omit<AlertItemType, "id"> = {
         type: "error",
         title: newState.title,
         list: newState.list,
+        link: newState.link,
       };
       get().addNotificationToHistory(notification);
       get().addNotificationToTempList(notification);
@@ -68,12 +80,13 @@ const useAlertStore = create<AlertStoreType>((set, get) => ({
       get().addNotificationToTempList(notification);
     }
   },
-  setSuccessData: (newState: { title: string }) => {
+  setSuccessData: (newState: { title: string; link?: string }) => {
     if (newState.title && newState.title !== "") {
-      set({ successData: newState });
+      set({ successData: { title: newState.title } });
       const notification: Omit<AlertItemType, "id"> = {
         type: "success",
         title: newState.title,
+        link: newState.link,
       };
       get().addNotificationToHistory(notification);
       get().addNotificationToTempList(notification);

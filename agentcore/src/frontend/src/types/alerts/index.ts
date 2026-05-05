@@ -19,6 +19,8 @@ export type SuccessAlertType = {
 export type SingleAlertComponentType = {
   dropItem: AlertItemType;
   removeAlert: (index: string) => void;
+  navigateTo?: string;
+  onClosePanel?: () => void;
 };
 export type AlertDropdownType = {
   children: JSX.Element;

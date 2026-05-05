@@ -50,12 +50,14 @@ export const useApprovalActions = (regionCode?: string | null) => {
                 onSuccess: () => {
                   setSuccessData({
                     title: `${entityLabel(agent.entityType)} "${agent.title}" approved successfully.`,
+                    link: "/approval",
                   });
                   resolve(null);
                 },
                 onError: () => {
                   setErrorData({
                     title: `Failed to approve ${entityLabel(agent.entityType).toLowerCase()} "${agent.title}".`,
+                    link: "/approval",
                   });
                   reject(new Error("Approval failed"));
                 },
@@ -73,12 +75,14 @@ export const useApprovalActions = (regionCode?: string | null) => {
               onSuccess: () => {
                 setSuccessData({
                   title: `${entityLabel(agent.entityType)} "${agent.title}" approved successfully.`,
+                  link: "/approval",
                 });
                 resolve(null);
               },
               onError: () => {
                 setErrorData({
                   title: `Failed to approve ${entityLabel(agent.entityType).toLowerCase()} "${agent.title}".`,
+                  link: "/approval",
                 });
                 reject(new Error("Approval failed"));
               },
@@ -115,12 +119,14 @@ export const useApprovalActions = (regionCode?: string | null) => {
                 onSuccess: () => {
                   setSuccessData({
                     title: `${entityLabel(agent.entityType)} "${agent.title}" rejected.`,
+                    link: "/approval",
                   });
                   resolve(null);
                 },
                 onError: () => {
                   setErrorData({
                     title: `Failed to reject ${entityLabel(agent.entityType).toLowerCase()} "${agent.title}".`,
+                    link: "/approval",
                   });
                   reject(new Error("Rejection failed"));
                 },
@@ -138,12 +144,14 @@ export const useApprovalActions = (regionCode?: string | null) => {
               onSuccess: () => {
                 setSuccessData({
                   title: `${entityLabel(agent.entityType)} "${agent.title}" rejected.`,
+                  link: "/approval",
                 });
                 resolve(null);
               },
               onError: () => {
                 setErrorData({
                   title: `Failed to reject ${entityLabel(agent.entityType).toLowerCase()} "${agent.title}".`,
+                  link: "/approval",
                 });
                 reject(new Error("Rejection failed"));
               },

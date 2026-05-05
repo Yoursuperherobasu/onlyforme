@@ -104,6 +104,7 @@ const VersionSavePrompt = (): JSX.Element | null => {
 
       setSuccessData({
         title: response.message || `Published ${response.version_number}`,
+        link: agentId ? `/agent/${agentId}` : undefined,
       });
 
       queryClient.invalidateQueries({

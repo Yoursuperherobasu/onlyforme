@@ -462,9 +462,9 @@ export default function ModelCatalogue(): JSX.Element {
           </div>
         ) : (
           <>
-            <div className="overflow-x-auto rounded-lg border border-border bg-card">
+            <div className="rounded-lg border border-border bg-card">
               <table className="w-full">
-                <thead className="bg-muted/50">
+                <thead className="sticky top-0 z-10 bg-muted">
                   <tr className="border-b border-border">
                     {[
                       "Model",

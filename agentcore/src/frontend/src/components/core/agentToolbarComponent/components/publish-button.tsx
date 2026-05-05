@@ -462,11 +462,19 @@ const PublishButton = ({}: PublishButtonProps) => {
         return;
       }
 
-      resolvedDepartmentId =
-        results.find((item) => item.exists_in_department && item.department_id)
-          ?.department_id ??
-        results.find((item) => item.department_id)?.department_id ??
-        null;
+      // Org-wide admins (super_admin/root/admin) are never scoped to a dept.
+      // Emails are recipients only — dept_id on the deployment stays null.
+      if (!canDepartmentlessPrivatePublish) {
+        resolvedDepartmentId =
+          results.find((item) => item.exists_in_department && item.department_id)
+            ?.department_id ??
+          results.find((item) => item.department_id)?.department_id ??
+          null;
+      }
+    } else if (canDepartmentlessPrivatePublish) {
+      // Super admin / root / admin publishing to UAT with no recipients:
+      // must be org-scoped (dept_id = null). Never resolve a dept from context.
+      resolvedDepartmentId = null;
     } else {
       const contextResult = await resolvePublishContext(true);
       if (contextResult.data) {
@@ -476,7 +484,7 @@ const PublishButton = ({}: PublishButtonProps) => {
       } else {
         const fallbackDepartmentId =
           await resolveDepartmentFromCurrentUserEmail();
-        if (!fallbackDepartmentId && !canDepartmentlessPrivatePublish) {
+        if (!fallbackDepartmentId) {
           setErrorData({
             title: "Unable to resolve publish context.",
             list: [
@@ -515,6 +523,7 @@ const PublishButton = ({}: PublishButtonProps) => {
       });
       setSuccessData({
         title: `UAT: ${response.message} (${response.version_number})`,
+        link: currentAgent ? `/agent/${currentAgent.id}` : undefined,
       });
       setOpen(false);
     } catch (error: any) {

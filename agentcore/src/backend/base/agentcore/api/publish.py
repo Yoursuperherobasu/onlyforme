@@ -2287,10 +2287,9 @@ async def publish_agent(
 
         # Super admins may publish UAT without a department (org-scoped UAT).
         # PROD always requires at least one department_id — enforce that here.
-        allow_departmentless_private_publish = (
-            str(getattr(current_user, "role", "")).lower() in {"root", "super_admin", "admin"}
-            and env == "uat"
-        )
+        role = str(getattr(current_user, "role", "")).lower()
+        is_org_wide_admin = role in {"root", "super_admin", "admin"}
+        allow_departmentless_private_publish = is_org_wide_admin and env == "uat"
 
         resolved_department_id, resolved_department_admin_id = await _resolve_publish_scope(
             session,
@@ -2301,7 +2300,7 @@ async def publish_agent(
             allow_departmentless_private_publish=allow_departmentless_private_publish,
         )
         recipient_emails = _normalize_recipient_emails(body.recipient_emails)
-        if resolved_department_id is None and recipient_emails:
+        if resolved_department_id is None and recipient_emails and not is_org_wide_admin:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=(

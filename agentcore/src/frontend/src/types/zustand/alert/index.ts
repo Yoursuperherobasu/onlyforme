@@ -2,11 +2,11 @@ import type { AlertItemType } from "../../alerts";
 
 export type AlertStoreType = {
   errorData: { title: string; list?: Array<string> };
-  setErrorData: (newState: { title: string; list?: Array<string> }) => void;
+  setErrorData: (newState: { title: string; list?: Array<string>; link?: string }) => void;
   noticeData: { title: string; link?: string };
   setNoticeData: (newState: { title: string; link?: string }) => void;
   successData: { title: string };
-  setSuccessData: (newState: { title: string }) => void;
+  setSuccessData: (newState: { title: string; link?: string }) => void;
   notificationCenter: boolean;
   setNotificationCenter: (newState: boolean) => void;
   notificationList: Array<AlertItemType>;

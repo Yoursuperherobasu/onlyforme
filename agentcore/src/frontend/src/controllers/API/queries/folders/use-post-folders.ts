@@ -23,9 +23,7 @@ export const usePostFolders: useMutationFunctionType<
       tags: newFolder.data.tags ?? [],
     };
 
-    console.log("[usePostFolders] payload:", payload);
     const res = await api.post(`${getURL("PROJECTS")}/`, payload);
-    console.log("[usePostFolders] response:", res.status, res.data);
     return res.data;
   };
 

@@ -101,7 +101,7 @@ const AgentSettingsComponent = ({
       saveAgent(newAgent)
         ?.then(() => {
           setIsSaving(false);
-          setSuccessData({ title: "Changes saved successfully" });
+          setSuccessData({ title: "Changes saved successfully", link: agent?.id ? `/agent/${agent.id}` : undefined });
           close();
         })
         .catch(() => {

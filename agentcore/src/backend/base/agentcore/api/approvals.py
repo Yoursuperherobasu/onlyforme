@@ -117,6 +117,11 @@ class ApprovalNotificationRead(BaseModel):
     created_at: str
 
 
+class GeneralNotificationCreate(BaseModel):
+    title: str
+    link: str | None = None
+
+
 class GuardrailPromotionResult(BaseModel):
     uat_guardrail_id: str
     prod_guardrail_id: str | None = None
@@ -199,6 +204,28 @@ async def mark_all_approval_notifications_read(
             row.read_at = now
             session.add(row)
         await session.commit()
+    return None
+
+
+@router.post("/notifications/general", status_code=201)
+async def create_general_notification(
+    body: GeneralNotificationCreate,
+    session: DbSession,
+    current_user: CurrentActiveUser,
+):
+    """Store a client-side notification in the DB so it persists across page refreshes."""
+    from uuid import uuid4
+    from agentcore.services.approval_notifications import upsert_approval_notification
+
+    await upsert_approval_notification(
+        session,
+        recipient_user_id=current_user.id,
+        entity_type="general",
+        entity_id=str(uuid4()),
+        title=body.title,
+        link=body.link or "/",
+    )
+    await session.commit()
     return None
 
 

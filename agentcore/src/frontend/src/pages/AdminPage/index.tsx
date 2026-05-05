@@ -357,6 +357,7 @@ export default function AdminPage() {
           resetFilter();
           setSuccessData({
             title: USER_DEL_SUCCESS_ALERT,
+            link: "/admin",
           });
         },
         onError: (error) => {
@@ -380,6 +381,7 @@ export default function AdminPage() {
               title: result?.emailSent
                 ? `User ${user.username} edited and email sent.`
                 : `User ${user.username} edited, email not sent.`,
+              link: "/admin",
             });
             resolve();
           },
@@ -405,6 +407,7 @@ export default function AdminPage() {
             title: result?.emailSent
               ? `User ${user.username} edited and email sent.`
               : `User ${user.username} edited, email not sent.`,
+            link: "/admin",
           });
         },
         onError: (error) => {
@@ -562,6 +565,7 @@ export default function AdminPage() {
             : successWithWarningCount > 0
               ? `User ${usernames[0]} added, email not sent.`
               : `User ${usernames[0]} added and email sent.`,
+        link: "/admin",
       });
     }
 

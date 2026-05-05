@@ -24,7 +24,7 @@ import { useApprovalActionModal, useApprovalActions } from "./hooks";
 import CustomLoader from "@/customization/components/custom-loader";
 
 type FilterType = "all" | "pending" | "approved" | "rejected" | "deployed" | "cancelled";
-type ApprovalTabType = "agent" | "model" | "mcp" | "package";
+type ApprovalTabType = "all" | "agent" | "model" | "mcp" | "package";
 
 const APPROVAL_TABS: Array<{ id: ApprovalTabType; label: string; permission: string }> = [
   { id: "agent", label: "AI Agent", permission: "view_agent" },
@@ -38,7 +38,7 @@ export default function ApprovalPage() {
   /* ================= STATE ================= */
   const [filter, setFilter] = useState<FilterType>("all");
   const [searchQuery, setSearchQuery] = useState("");
-  const [activeTab, setActiveTab] = useState<ApprovalTabType>("agent");
+  const [activeTab, setActiveTab] = useState<ApprovalTabType>("all");
   const navigate = useCustomNavigate();
   const { permissions, role } = useContext(AuthContext);
   const setErrorData = useAlertStore((state) => state.setErrorData);
@@ -84,9 +84,13 @@ export default function ApprovalPage() {
         })()
       : false;
 
-  const visibleTabs = isRoot
+  const typeTabs = isRoot
     ? APPROVAL_TABS.filter((tab) => tab.id === "package")
     : APPROVAL_TABS.filter((tab) => tab.id !== "package" && can(tab.permission));
+  const visibleTabs: Array<{ id: ApprovalTabType; label: string; permission: string }> = [
+    { id: "all", label: "All", permission: "" },
+    ...typeTabs,
+  ];
 
   useEffect(() => {
     if (visibleTabs.length === 0) return;
@@ -96,10 +100,11 @@ export default function ApprovalPage() {
   }, [activeTab, visibleTabs]);
 
   useEffect(() => {
-    if (activeTab !== "package" && (filter === "deployed" || filter === "cancelled")) {
+    const isPackageLike = activeTab === "package" || (activeTab === "all" && isRoot);
+    if (!isPackageLike && (filter === "deployed" || filter === "cancelled")) {
       setFilter("all");
     }
-  }, [activeTab, filter]);
+  }, [activeTab, filter, isRoot]);
 
   /* ================= FILTERING & CALCULATIONS ================= */
   const packageApprovalCards: ApprovalAgent[] = packageRequests.map((request) => ({
@@ -121,11 +126,18 @@ export default function ApprovalPage() {
     recentChanges: request.review_comments || request.deployment_notes || "-",
   }));
 
-  const sourceApprovals = activeTab === "package" ? packageApprovalCards : agents;
+  const allData = isRoot
+    ? packageApprovalCards
+    : agents;
+
+  const sourceApprovals =
+    activeTab === "all" ? allData :
+    activeTab === "package" ? packageApprovalCards :
+    agents;
 
   const filteredAgents = sourceApprovals.filter((agent) => {
     const entityType = (agent.entityType || "agent") as ApprovalTabType;
-    const matchesTab = entityType === activeTab;
+    const matchesTab = activeTab === "all" ? true : entityType === activeTab;
     const matchesFilter = filter === "all" ? true : agent.status === filter;
     const matchesSearch =
       searchQuery === "" ||
@@ -136,19 +148,19 @@ export default function ApprovalPage() {
     return matchesTab && matchesFilter && matchesSearch;
   });
 
-  const pendingCount = sourceApprovals.filter((a) => a.status === "pending").length;
+  const pendingCount = allData.filter((a) => a.status === "pending").length;
   const noAgentsMessage =
     filter === "pending"
-      ? t("No pending agents found")
+      ? t("No pending items found")
       : filter === "approved"
-        ? t("No approved agents found")
+        ? t("No approved items found")
         : filter === "rejected"
-          ? t("No rejected agents found")
+          ? t("No rejected items found")
           : filter === "deployed"
             ? t("No deployed requests found")
             : filter === "cancelled"
               ? t("No cancelled requests found")
-              : t("No agents found");
+              : t("No items found");
 
   /* ================= EVENT HANDLERS ================= */
   const handleApproveClick = (agent: ApprovalAgent) => {
@@ -175,11 +187,11 @@ export default function ApprovalPage() {
         },
         {
           onSuccess: () => {
-            setSuccessData({ title: `Package "${agent.title}" marked as deployed.` });
+            setSuccessData({ title: `Package "${agent.title}" marked as deployed.`, link: "/approval" });
             resolve(null);
           },
           onError: () => {
-            setErrorData({ title: `Failed to mark package "${agent.title}" as deployed.` });
+            setErrorData({ title: `Failed to mark package "${agent.title}" as deployed.`, link: "/approval" });
             reject(new Error("Package deploy action failed"));
           },
         },
@@ -282,7 +294,7 @@ export default function ApprovalPage() {
 
         <div className="h-6 w-px bg-border mx-1" />
 
-        {(activeTab === "package"
+        {(activeTab === "package" || (activeTab === "all" && isRoot)
           ? (["all", "pending", "approved", "rejected", "deployed", "cancelled"] as FilterType[])
           : (["all", "pending", "approved", "rejected"] as FilterType[])
         ).map((type) => (
@@ -299,7 +311,7 @@ export default function ApprovalPage() {
 
       {/* Agent Cards */}
       <div className="flex-1 overflow-auto p-4 sm:p-6">
-        {isLoadingAgents || (activeTab === "package" && isLoadingPackageRequests) ? (
+        {(isRoot ? isLoadingPackageRequests : isLoadingAgents) ? (
           <div className="flex h-full items-center justify-center">
             <CustomLoader />
           </div>

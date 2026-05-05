@@ -11,6 +11,29 @@ import useAlertStore from "../../stores/alertStore";
 import type { AlertDropdownType } from "../../types/alerts";
 import SingleAlert from "./components/singleAlertComponent";
 
+function resolveNotificationRoute(title: string): string | null {
+  const t = title.toLowerCase();
+  // Approval page
+  if (
+    t.includes("approved") || t.includes("rejected") || t.includes("approval") ||
+    t.includes("submitted for review") || t.includes("marked as deployed") ||
+    t.includes("pending review") || t.includes("under review")
+  ) return "/approval";
+  // Admin / user management
+  if (
+    t.includes("user ") || t.includes("user(s)") ||
+    t.includes("success! user") || t.includes("error on edit user") ||
+    t.includes("error when adding new user")
+  ) return "/admin";
+  // Model catalogue
+  if (t.includes("model")) return "/model-catalogue";
+  // MCP servers
+  if (t.includes("mcp")) return "/mcp-servers";
+  // Packages
+  if (t.includes("package")) return "/packages";
+  return null;
+}
+
 const AlertDropdown = forwardRef<HTMLDivElement, AlertDropdownType>(
   function AlertDropdown(
     {
@@ -33,7 +56,6 @@ const AlertDropdown = forwardRef<HTMLDivElement, AlertDropdownType>(
     const setNotificationCenter = useAlertStore(
       (state) => state.setNotificationCenter,
     );
-
     const [open, setOpen] = useState(false);
     const mergedNotifications = [
       ...serverNotifications.map((item) => {
@@ -48,6 +70,7 @@ const AlertDropdown = forwardRef<HTMLDivElement, AlertDropdownType>(
           id: `server:${item.id}`,
           type,
           title: item.title,
+          link: item.link ?? undefined,
         };
       }),
       ...notificationList,
@@ -101,19 +124,24 @@ const AlertDropdown = forwardRef<HTMLDivElement, AlertDropdownType>(
           </div>
           <div className="text-high-foreground mt-3 flex h-full w-full flex-col overflow-y-scroll scrollbar-hide">
             {mergedNotifications.length !== 0 ? (
-              mergedNotifications.map((alertItem) => (
-                <SingleAlert
-                  key={alertItem.id}
-                  dropItem={alertItem}
-                  removeAlert={(id) => {
-                    if (id.startsWith("server:")) {
-                      markServerNotificationRead?.(id.replace("server:", ""));
-                      return;
-                    }
-                    removeFromNotificationList(id);
-                  }}
-                />
-              ))
+              mergedNotifications.map((alertItem) => {
+                const navigateTo = alertItem.link || resolveNotificationRoute(alertItem.title) || undefined;
+                return (
+                  <SingleAlert
+                    key={alertItem.id}
+                    dropItem={alertItem}
+                    removeAlert={(id) => {
+                      if (id.startsWith("server:")) {
+                        markServerNotificationRead?.(id.replace("server:", ""));
+                        return;
+                      }
+                      removeFromNotificationList(id);
+                    }}
+                    navigateTo={navigateTo}
+                    onClosePanel={() => setOpen(false)}
+                  />
+                );
+              })
             ) : (
               <div className="flex h-full w-full items-center justify-center pb-16 text-ring">
                 {ZERO_NOTIFICATIONS}

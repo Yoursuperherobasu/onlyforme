@@ -840,16 +840,15 @@ export default function FolderCardsView({
             {/* Create New Project Card*/}
             {can("view_projects_page") && (
             <div
-              className="group relative flex flex-col items-center justify-between rounded-lg border-2 border-dashed border-muted-foreground/25 bg-background p-4 transition-all hover:border-primary hover:bg-accent"
+              onClick={!isPending ? handleOpenCreateModal : undefined}
+              className="group relative flex cursor-pointer flex-col items-center justify-between rounded-lg border-2 border-dashed border-muted-foreground/25 bg-background p-4 transition-all hover:border-primary hover:bg-accent"
             >
               <div className="flex-1 flex items-center justify-center">
-                <button
-                  onClick={handleOpenCreateModal}
-                  disabled={isPending}
-                  className="flex h-12 w-12 items-center justify-center rounded-lg bg-primary/10 transition-colors group-hover:bg-primary/20 disabled:opacity-50"
+                <div
+                  className={`flex h-12 w-12 items-center justify-center rounded-lg bg-primary/10 transition-colors group-hover:bg-primary/20${isPending ? " opacity-50" : ""}`}
                 >
                   <Plus className="h-6 w-6 text-primary" />
-                </button>
+                </div>
               </div>
               <span className="text-center text-xs font-medium text-muted-foreground mt-2">Blank project</span>
             </div>
