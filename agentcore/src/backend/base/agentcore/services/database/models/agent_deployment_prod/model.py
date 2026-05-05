@@ -135,6 +135,11 @@ class AgentDeploymentProdBase(SQLModel):
         default_factory=lambda: datetime.now(timezone.utc),
         nullable=False,
     )
+    dept_ids: list | None = Field(
+        default=None,
+        sa_column=Column(JSON, nullable=True),
+        description="Super admin multi-dept PROD: list of dept ID strings beyond the primary dept_id.",
+    )
     error_message: str | None = Field(
         default=None,
         sa_column=Column(Text, nullable=True),

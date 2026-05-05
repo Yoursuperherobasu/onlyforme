@@ -26,7 +26,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks, U
 from loguru import logger
 from pydantic import BaseModel, Field
 from sqlmodel import select
-from sqlalchemy import or_, true
+from sqlalchemy import and_, cast, false, or_, true
+from sqlalchemy.dialects.postgresql import JSONB
 from agentcore.services.deps import session_scope
 # `agent` objects are stored as `Agent` in the DB; import AccessTypeEnum and
 # alias `Agent` to `agent` so the rest of the module can keep using `agent`.
@@ -5770,12 +5771,33 @@ async def _list_deployed_agents(session, current_user: User, env: str) -> list[d
     current_role = str(getattr(current_user, "role", "")).lower()
     is_admin = current_role in {"super_admin", "department_admin", "root"}
 
+    # Multi-dept PROD: check if user's dept is listed in deployment.dept_ids
+    _eval_user_dept_ids = (
+        await session.exec(
+            select(UserDepartmentMembership.department_id).where(
+                UserDepartmentMembership.user_id == current_user.id,
+                UserDepartmentMembership.status == "active",
+            )
+        )
+    ).all()
+    _prod_multi_dept_conds = [
+        cast(AgentDeploymentProd.dept_ids, JSONB).contains([str(d)])
+        for d in _eval_user_dept_ids
+    ]
+    prod_multi_dept_access = or_(*_prod_multi_dept_conds) if _prod_multi_dept_conds else false()
+
     if env == "production":
         # ---- Production RBAC (mirrors orchestrator.py) ----
         prod_share_exists = (
             select(AgentPublishRecipient.id)
             .where(
-                AgentPublishRecipient.agent_id == AgentDeploymentProd.agent_id,
+                or_(
+                    AgentPublishRecipient.deploy_id == AgentDeploymentProd.id,
+                    and_(
+                        AgentPublishRecipient.deploy_id.is_(None),
+                        AgentPublishRecipient.agent_id == AgentDeploymentProd.agent_id,
+                    ),
+                ),
                 AgentPublishRecipient.recipient_user_id == current_user.id,
                 or_(
                     AgentDeploymentProd.dept_id.is_(None),
@@ -5796,6 +5818,7 @@ async def _list_deployed_agents(session, current_user: User, env: str) -> list[d
         prod_private_access = (
             (AgentDeploymentProd.deployed_by == current_user.id)
             | prod_share_exists
+            | prod_multi_dept_access
         )
         prod_public_access = prod_private_access | prod_dept_member_exists
         if is_admin:
@@ -5826,7 +5849,13 @@ async def _list_deployed_agents(session, current_user: User, env: str) -> list[d
         uat_share_exists = (
             select(AgentPublishRecipient.id)
             .where(
-                AgentPublishRecipient.agent_id == AgentDeploymentUAT.agent_id,
+                or_(
+                    AgentPublishRecipient.deploy_id == AgentDeploymentUAT.id,
+                    and_(
+                        AgentPublishRecipient.deploy_id.is_(None),
+                        AgentPublishRecipient.agent_id == AgentDeploymentUAT.agent_id,
+                    ),
+                ),
                 AgentPublishRecipient.recipient_user_id == current_user.id,
                 or_(
                     AgentDeploymentUAT.dept_id.is_(None),

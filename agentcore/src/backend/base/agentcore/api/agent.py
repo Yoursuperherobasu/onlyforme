@@ -112,7 +112,9 @@ async def _resolve_tenant_scope_for_user(
         # Fall back to the first active membership instead of blocking the user.
         scoped = memberships
 
-    selected = sorted(scoped, key=lambda m: (str(m.org_id), str(m.department_id)))[0]
+    # Use the oldest membership (by created_at) so the user's original department
+    # is picked deterministically rather than an arbitrary UUID-sort ordering.
+    selected = sorted(scoped, key=lambda m: m.created_at)[0]
     return selected.org_id, selected.department_id
 
 
@@ -234,6 +236,7 @@ async def _new_agent(
     session: AsyncSession,
     agent: AgentCreate,
     user_id: UUID,
+    user_role: str | None = None,
 ):
     try:
         await _verify_fs_path(agent.fs_path)
@@ -242,14 +245,19 @@ async def _new_agent(
         if agent.user_id is None:
             agent.user_id = user_id
 
+        is_org_wide_admin = str(user_role or "").lower() in {"root", "super_admin", "admin"}
+        explicit_dept_id = getattr(agent, "dept_id", None)
+
         resolved_org_id, resolved_dept_id = await _resolve_tenant_scope_for_user(
             session=session,
             user_id=user_id,
             requested_org_id=getattr(agent, "org_id", None),
-            requested_dept_id=getattr(agent, "dept_id", None),
+            requested_dept_id=explicit_dept_id,
         )
         agent.org_id = resolved_org_id
-        agent.dept_id = resolved_dept_id
+        # Org-wide admins (super_admin / root) should not be auto-assigned to a
+        # department picked from their memberships. Only honour an explicit request.
+        agent.dept_id = explicit_dept_id if is_org_wide_admin else resolved_dept_id
 
         # First check if the agent.name is unique
         # there might be agents with name like: "Myagent", "Myagent (1)", "Myagent (2)"
@@ -334,6 +342,7 @@ async def create_agent(
                 session=session,
                 agent=candidate_agent,
                 user_id=current_user.id,
+                user_role=getattr(current_user, "role", None),
             )
             try:
                 await session.commit()
@@ -780,6 +789,7 @@ async def create_agents(
             session=session,
             agent=agent,
             user_id=current_user.id,
+            user_role=getattr(current_user, "role", None),
         )
         db_agents.append(db_agent)
     await session.commit()
@@ -806,7 +816,7 @@ async def upload_file(
         agent.user_id = current_user.id
         if project_id:
             agent.project_id = project_id
-        response = await _new_agent(session=session, agent=agent, user_id=current_user.id)
+        response = await _new_agent(session=session, agent=agent, user_id=current_user.id, user_role=getattr(current_user, "role", None))
         response_list.append(response)
 
     try:

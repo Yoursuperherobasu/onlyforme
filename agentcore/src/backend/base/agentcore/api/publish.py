@@ -267,6 +267,14 @@ class PublishRequest(BaseModel):
         default=None,
         description="Optional recipient emails for this agent publish scope.",
     )
+    department_ids: list[UUID] | None = Field(
+        default=None,
+        description=(
+            "Super admin only — multi-dept PROD publish. "
+            "List of department IDs this PROD deployment should be accessible to. "
+            "The primary department_id is always included; this field adds extra depts."
+        ),
+    )
 
 
 class CloneFromPublishRequest(BaseModel):
@@ -1122,6 +1130,59 @@ async def get_publish_email_suggestions(
             break
 
     return suggestions
+
+
+class PublishDepartmentOption(BaseModel):
+    id: UUID
+    name: str
+    org_id: UUID
+
+
+@router.get("/{agent_id}/departments", response_model=list[PublishDepartmentOption], status_code=200)
+async def get_publish_departments(
+    *,
+    session: DbSession,
+    agent_id: UUID,
+    current_user: CurrentActiveUser,
+) -> list[PublishDepartmentOption]:
+    """Return departments the current user may publish to for a given agent.
+
+    - super_admin / root / admin: all departments in their organization
+    - department_admin / developer / business_user: only their own department(s)
+
+    Used by the UI to populate the department dropdown on the publish dialog.
+    """
+    agent = await _get_agent_or_404(session, agent_id, current_user.id)
+    current_role = str(getattr(current_user, "role", "")).lower()
+    is_org_wide_admin = current_role in {"root", "super_admin", "admin"}
+
+    if is_org_wide_admin:
+        org_id = agent.org_id
+        if not org_id:
+            org_ids = await _current_user_org_ids(session, current_user.id)
+            org_id = sorted(org_ids, key=str)[0] if org_ids else None
+        if not org_id:
+            return []
+        depts = (
+            await session.exec(
+                select(Department)
+                .where(Department.org_id == org_id)
+                .order_by(col(Department.name).asc())
+            )
+        ).all()
+    else:
+        user_dept_ids = await _current_user_department_ids(session, current_user.id)
+        if not user_dept_ids:
+            return []
+        depts = (
+            await session.exec(
+                select(Department)
+                .where(Department.id.in_(list(user_dept_ids)))
+                .order_by(col(Department.name).asc())
+            )
+        ).all()
+
+    return [PublishDepartmentOption(id=d.id, name=d.name, org_id=d.org_id) for d in depts]
 
 
 @router.get("/{agent_id}/context", response_model=PublishContextResponse, status_code=200)
@@ -2215,10 +2276,11 @@ async def publish_agent(
                 detail="Cannot deploy agent with no flow data. Build the agent first.",
             )
 
+        # Super admins may publish UAT without a department (org-scoped UAT).
+        # PROD always requires at least one department_id — enforce that here.
         allow_departmentless_private_publish = (
-            env == "uat"
-            and str(body.visibility).strip().upper() == "PRIVATE"
-            and str(getattr(current_user, "role", "")).lower() in {"root", "super_admin", "admin"}
+            str(getattr(current_user, "role", "")).lower() in {"root", "super_admin", "admin"}
+            and env == "uat"
         )
 
         resolved_department_id, resolved_department_admin_id = await _resolve_publish_scope(
@@ -2511,10 +2573,22 @@ async def publish_agent(
                 # Validate all models and MCP servers are available for PROD
                 await _validate_resources_for_prod(snapshot, session)
                 # Admin/manager: direct deploy
+                # Super admin multi-dept PROD: collect all requested dept IDs.
+                is_super_admin_role = role in {"root", "super_admin"}
+                prod_dept_ids: list[str] | None = None
+                if is_super_admin_role and (body.department_ids or resolved_department_id):
+                    all_ids: set[str] = set()
+                    if resolved_department_id:
+                        all_ids.add(str(resolved_department_id))
+                    for d in (body.department_ids or []):
+                        all_ids.add(str(d))
+                    prod_dept_ids = sorted(all_ids) if all_ids else None
+
                 new_record = AgentDeploymentProd(
                     agent_id=agent_id,
                     org_id=agent.org_id,
                     dept_id=resolved_department_id,
+                    dept_ids=prod_dept_ids,
                     promoted_from_uat_id=promoted_from_uat_id,
                     version_number=next_version,
                     agent_snapshot=snapshot,
@@ -2905,6 +2979,42 @@ async def get_version_history(
                 else ProdDeploymentLifecycleEnum.ARCHIVED
             )
             stmt = stmt.where(table_class.lifecycle_step != archived_status)
+
+        current_role = str(getattr(current_user, "role", "")).lower()
+        is_admin = current_role in {"root", "super_admin", "department_admin"}
+        agent_obj = await session.get(Agent, agent_id)
+        is_owner = agent_obj is not None and agent_obj.user_id == current_user.id
+
+        if not is_admin and not is_owner:
+            # Shared user: only expose versions they have an explicit share on.
+            # Legacy rows (deploy_id=NULL) still grant access to ALL versions.
+            has_legacy = (
+                await session.exec(
+                    select(AgentPublishRecipient.id)
+                    .where(
+                        AgentPublishRecipient.agent_id == agent_id,
+                        AgentPublishRecipient.recipient_user_id == current_user.id,
+                        AgentPublishRecipient.deploy_id.is_(None),
+                    )
+                    .limit(1)
+                )
+            ).first()
+
+            if not has_legacy:
+                accessible_ids = (
+                    await session.exec(
+                        select(AgentPublishRecipient.deploy_id)
+                        .where(
+                            AgentPublishRecipient.agent_id == agent_id,
+                            AgentPublishRecipient.recipient_user_id == current_user.id,
+                            AgentPublishRecipient.deploy_id.is_not(None),
+                        )
+                    )
+                ).all()
+                if not accessible_ids:
+                    return []
+                stmt = stmt.where(table_class.id.in_(accessible_ids))
+
         records = (await session.exec(stmt)).all()
 
         return [_record_to_summary(r, env) for r in records]
