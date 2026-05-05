@@ -1032,6 +1032,7 @@ async def list_orch_agents(
                 AgentPublishRecipient.recipient_user_id == current_user.id,
                 or_(
                     AgentDeploymentProd.dept_id.is_(None),
+                    AgentPublishRecipient.dept_id.is_(None),
                     AgentPublishRecipient.dept_id == AgentDeploymentProd.dept_id,
                 ),
             )
@@ -1082,6 +1083,7 @@ async def list_orch_agents(
                 AgentPublishRecipient.recipient_user_id == current_user.id,
                 or_(
                     AgentDeploymentUAT.dept_id.is_(None),
+                    AgentPublishRecipient.dept_id.is_(None),
                     AgentPublishRecipient.dept_id == AgentDeploymentUAT.dept_id,
                 ),
             )

@@ -50,6 +50,8 @@ import { AuthContext } from "@/contexts/authContext";
 import { api } from "@/controllers/API/api";
 import useRegionStore from "@/stores/regionStore";
 
+
+
 type SectionId =
   | "platform"
   | "governance"
@@ -1159,7 +1161,7 @@ export default function DashboardAdmin(): JSX.Element {
             </div>
 
             {/* Region selector — root admin only */}
-            {isRootAdmin && regions.length > 0 && (
+            {isRootAdmin && regions.length > 1 && (
               <div className="flex items-center gap-2">
                 <Globe className="h-4 w-4 text-muted-foreground" />
                 <Select value={selectedRegionCode ?? ""} onValueChange={setSelectedRegion}>

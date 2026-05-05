@@ -518,6 +518,7 @@ async def list_control_panel_agents(
                 AgentPublishRecipient.recipient_user_id == current_user.id,
                 or_(
                     Model.dept_id.is_(None),  # type: ignore[attr-defined]
+                    AgentPublishRecipient.dept_id.is_(None),
                     AgentPublishRecipient.dept_id == Model.dept_id,  # type: ignore[arg-type]
                 ),
             )
@@ -525,20 +526,23 @@ async def list_control_panel_agents(
         )
 
         # Multi-dept PROD access: user's dept is listed in deployment.dept_ids JSON array.
-        # Only relevant for AgentDeploymentProd (UAT never has dept_ids set).
-        _user_dept_ids = (
-            await session.exec(
-                select(UserDepartmentMembership.department_id).where(
-                    UserDepartmentMembership.user_id == current_user.id,
-                    UserDepartmentMembership.status == "active",
+        # Only relevant for AgentDeploymentProd — AgentDeploymentUAT has no dept_ids column.
+        if env == ControlPanelEnv.PROD:
+            _user_dept_ids = (
+                await session.exec(
+                    select(UserDepartmentMembership.department_id).where(
+                        UserDepartmentMembership.user_id == current_user.id,
+                        UserDepartmentMembership.status == "active",
+                    )
                 )
-            )
-        ).all()
-        _multi_dept_conds = [
-            cast(Model.dept_ids, JSONB).contains([str(d)])  # type: ignore[attr-defined]
-            for d in _user_dept_ids
-        ]
-        multi_dept_access_expr = or_(*_multi_dept_conds) if _multi_dept_conds else sa_false()
+            ).all()
+            _multi_dept_conds = [
+                cast(Model.dept_ids, JSONB).contains([str(d)])  # type: ignore[attr-defined]
+                for d in _user_dept_ids
+            ]
+            multi_dept_access_expr = or_(*_multi_dept_conds) if _multi_dept_conds else sa_false()
+        else:
+            multi_dept_access_expr = sa_false()
 
         # ── Base query ──────────────────────────────────────────────
         base_stmt = (
@@ -562,7 +566,7 @@ async def list_control_panel_agents(
             org_ids = await _designated_super_admin_org_ids(session, current_user)
             base_stmt = base_stmt.where(Model.org_id.in_(list(org_ids)) if org_ids else False)
         private_access_expr = (Agent.user_id == current_user.id) | private_share_exists | multi_dept_access_expr  # type: ignore[arg-type]
-        public_access_expr = Agent.user_id == current_user.id  # type: ignore[assignment]
+        public_access_expr = (Agent.user_id == current_user.id) | private_share_exists  # type: ignore[assignment]
         if env == ControlPanelEnv.PROD:
             prod_admin_private_roles = {"super_admin", "department_admin", "root"}
             prod_admin_public_roles = {"super_admin", "department_admin"}

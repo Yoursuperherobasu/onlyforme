@@ -1959,7 +1959,6 @@ export default function WorkflowsView({
               <div className="space-y-2 rounded-md border p-3">
                 <Label className="text-sm font-medium">
                   {t("Department")}
-                  <span className="ml-1 text-destructive">*</span>
                 </Label>
                 <Select
                   value={selectedPromoteDepartmentId}
@@ -2108,10 +2107,7 @@ export default function WorkflowsView({
                 onClick={() => void handlePromoteToProd()}
                 disabled={
                   !selectedPromoteDeployId ||
-                  promotingById[selectedPromoteDeployId] ||
-                  (isSuperAdmin &&
-                    selectedPromoteVisibility === "PRIVATE" &&
-                    !selectedPromoteDepartmentId)
+                  promotingById[selectedPromoteDeployId]
                 }
               >
                 {promotingById[selectedPromoteDeployId]
