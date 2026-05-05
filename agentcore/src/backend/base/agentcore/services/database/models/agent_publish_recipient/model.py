@@ -11,6 +11,9 @@ class AgentPublishRecipient(SQLModel, table=True):  # type: ignore[call-arg]
 
     id: UUID = Field(default_factory=uuid4, primary_key=True)
     agent_id: UUID = Field(foreign_key="agent.id", nullable=False, index=True)
+    # deploy_id scopes the share to a specific deployment version (UAT or PROD).
+    # NULL means a legacy row created before per-version sharing was introduced.
+    deploy_id: UUID | None = Field(default=None, nullable=True, index=True)
     org_id: UUID | None = Field(default=None, foreign_key="organization.id", nullable=True, index=True)
     dept_id: UUID = Field(foreign_key="department.id", nullable=False, index=True)
     recipient_user_id: UUID = Field(foreign_key="user.id", nullable=False, index=True)
@@ -29,11 +32,13 @@ class AgentPublishRecipient(SQLModel, table=True):  # type: ignore[call-arg]
     )
 
     __table_args__ = (
+        # New per-version unique constraint; NULL deploy_ids (legacy rows) are
+        # exempt because Postgres treats NULLs as distinct in unique indexes.
         UniqueConstraint(
-            "agent_id",
+            "deploy_id",
             "dept_id",
             "recipient_email",
-            name="uq_agent_publish_recipient_agent_dept_email",
+            name="uq_agent_publish_recipient_deploy_dept_email",
         ),
         Index("ix_agent_publish_recipient_dept_email", "dept_id", "recipient_email"),
     )
@@ -42,6 +47,7 @@ class AgentPublishRecipient(SQLModel, table=True):  # type: ignore[call-arg]
 class AgentPublishRecipientRead(BaseModel):
     id: UUID
     agent_id: UUID
+    deploy_id: UUID | None = None
     org_id: UUID | None = None
     dept_id: UUID
     recipient_user_id: UUID

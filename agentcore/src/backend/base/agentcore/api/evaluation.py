@@ -26,7 +26,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks, U
 from loguru import logger
 from pydantic import BaseModel, Field
 from sqlmodel import select
-from sqlalchemy import or_, true
+from sqlalchemy import and_, or_, true
 from agentcore.services.deps import session_scope
 # `agent` objects are stored as `Agent` in the DB; import AccessTypeEnum and
 # alias `Agent` to `agent` so the rest of the module can keep using `agent`.
@@ -5775,7 +5775,13 @@ async def _list_deployed_agents(session, current_user: User, env: str) -> list[d
         prod_share_exists = (
             select(AgentPublishRecipient.id)
             .where(
-                AgentPublishRecipient.agent_id == AgentDeploymentProd.agent_id,
+                or_(
+                    AgentPublishRecipient.deploy_id == AgentDeploymentProd.id,
+                    and_(
+                        AgentPublishRecipient.deploy_id.is_(None),
+                        AgentPublishRecipient.agent_id == AgentDeploymentProd.agent_id,
+                    ),
+                ),
                 AgentPublishRecipient.recipient_user_id == current_user.id,
                 or_(
                     AgentDeploymentProd.dept_id.is_(None),
@@ -5826,7 +5832,13 @@ async def _list_deployed_agents(session, current_user: User, env: str) -> list[d
         uat_share_exists = (
             select(AgentPublishRecipient.id)
             .where(
-                AgentPublishRecipient.agent_id == AgentDeploymentUAT.agent_id,
+                or_(
+                    AgentPublishRecipient.deploy_id == AgentDeploymentUAT.id,
+                    and_(
+                        AgentPublishRecipient.deploy_id.is_(None),
+                        AgentPublishRecipient.agent_id == AgentDeploymentUAT.agent_id,
+                    ),
+                ),
                 AgentPublishRecipient.recipient_user_id == current_user.id,
                 or_(
                     AgentDeploymentUAT.dept_id.is_(None),

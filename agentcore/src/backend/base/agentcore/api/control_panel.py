@@ -20,7 +20,7 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, Query
 from loguru import logger
 from pydantic import BaseModel
-from sqlalchemy import or_, true
+from sqlalchemy import and_, or_, true
 from sqlmodel import col, func, select
 
 from agentcore.api.approvals import _build_prod_promotion_handoff_payload, _promote_guardrails_for_deployment
@@ -504,7 +504,13 @@ async def list_control_panel_agents(
         private_share_exists = (
             select(AgentPublishRecipient.id)
             .where(
-                AgentPublishRecipient.agent_id == Model.agent_id,  # type: ignore[arg-type]
+                or_(
+                    AgentPublishRecipient.deploy_id == Model.id,  # type: ignore[arg-type]
+                    and_(
+                        AgentPublishRecipient.deploy_id.is_(None),
+                        AgentPublishRecipient.agent_id == Model.agent_id,  # type: ignore[arg-type]
+                    ),
+                ),
                 AgentPublishRecipient.recipient_user_id == current_user.id,
                 or_(
                     Model.dept_id.is_(None),  # type: ignore[attr-defined]
@@ -602,28 +608,21 @@ async def list_control_panel_agents(
         stmt = stmt.order_by(col(Model.deployed_at).desc()).offset(offset).limit(size)
         rows = (await session.exec(stmt)).all()
 
-        # Build owner map from sharing table (agent_id + dept_id -> recipients)
-        dep_pairs = {
-            (str(row[0].agent_id), str(row[0].dept_id) if row[0].dept_id else None)
-            for row in rows
-        }
-        dep_agent_ids = {pair[0] for pair in dep_pairs}
-        owner_by_pair: dict[tuple[str, str | None], list[str]] = {}
-        owner_emails_by_pair: dict[tuple[str, str | None], list[str]] = {}
-        owner_by_agent: dict[str, list[str]] = {}
-        owner_emails_by_agent: dict[str, list[str]] = {}
-        if dep_pairs:
-            agent_ids = list({UUID(pair[0]) for pair in dep_pairs})
+        # Build owner map from sharing table (deploy_id -> recipients)
+        dep_deploy_ids = [row[0].id for row in rows]
+        owner_by_deploy_id: dict[str, list[str]] = {}
+        owner_emails_by_deploy_id: dict[str, list[str]] = {}
+        if dep_deploy_ids:
             recipient_rows = (
                 await session.exec(
                     select(AgentPublishRecipient, User)
                     .join(User, User.id == AgentPublishRecipient.recipient_user_id)
-                    .where(AgentPublishRecipient.agent_id.in_(agent_ids))
+                    .where(AgentPublishRecipient.deploy_id.in_(dep_deploy_ids))
                     .order_by(col(AgentPublishRecipient.updated_at).desc())
                 )
             ).all()
             for recipient, owner_user in recipient_rows:
-                key = (str(recipient.agent_id), str(recipient.dept_id) if recipient.dept_id else None)
+                key = str(recipient.deploy_id)
                 owner_label = _name_from_user(
                     owner_user.username,
                     owner_user.display_name,
@@ -634,22 +633,12 @@ async def list_control_panel_agents(
                     owner_user.email,
                     recipient.recipient_email,
                 )
-                if key in dep_pairs:
-                    owner_by_pair.setdefault(key, [])
-                    owner_emails_by_pair.setdefault(key, [])
-                    if owner_label not in owner_by_pair[key]:
-                        owner_by_pair[key].append(owner_label)
-                    if owner_email and owner_email not in owner_emails_by_pair[key]:
-                        owner_emails_by_pair[key].append(owner_email)
-
-                agent_key = str(recipient.agent_id)
-                if agent_key in dep_agent_ids:
-                    owner_by_agent.setdefault(agent_key, [])
-                    owner_emails_by_agent.setdefault(agent_key, [])
-                    if owner_label not in owner_by_agent[agent_key]:
-                        owner_by_agent[agent_key].append(owner_label)
-                    if owner_email and owner_email not in owner_emails_by_agent[agent_key]:
-                        owner_emails_by_agent[agent_key].append(owner_email)
+                owner_by_deploy_id.setdefault(key, [])
+                owner_emails_by_deploy_id.setdefault(key, [])
+                if owner_label not in owner_by_deploy_id[key]:
+                    owner_by_deploy_id[key].append(owner_label)
+                if owner_email and owner_email not in owner_emails_by_deploy_id[key]:
+                    owner_emails_by_deploy_id[key].append(owner_email)
 
         promoted_uat_ids: set[UUID] = set()
         pending_prod_approval_uat_ids: set[UUID] = set()
@@ -703,12 +692,8 @@ async def list_control_panel_agents(
             creator = _name_from_user(creator_username, creator_display_name, creator_email)
             creator_email_value = _email_from_user(creator_username, creator_email)
             department = row[4]  # department_name or None
-            owner_key = (str(dep.agent_id), str(dep.dept_id) if dep.dept_id else None)
-            owners = owner_by_pair.get(owner_key, [])
-            owner_emails = owner_emails_by_pair.get(owner_key, [])
-            if not owners:
-                owners = owner_by_agent.get(str(dep.agent_id), [])
-                owner_emails = owner_emails_by_agent.get(str(dep.agent_id), [])
+            owners = owner_by_deploy_id.get(str(dep.id), [])
+            owner_emails = owner_emails_by_deploy_id.get(str(dep.id), [])
 
             # Query transaction table for last_run and failed_runs
             TxnModel = TransactionProdTable if env == ControlPanelEnv.PROD else TransactionUATTable
@@ -948,7 +933,7 @@ async def get_agent_sharing_options(
             await session.exec(
                 select(AgentPublishRecipient)
                 .where(
-                    AgentPublishRecipient.agent_id == deployment.agent_id,
+                    AgentPublishRecipient.deploy_id == deploy_id,
                     AgentPublishRecipient.dept_id == dept_id,
                 )
                 .order_by(col(AgentPublishRecipient.updated_at).desc())
@@ -999,7 +984,7 @@ async def update_agent_sharing_options(
         existing_rows = (
             await session.exec(
                 select(AgentPublishRecipient).where(
-                    AgentPublishRecipient.agent_id == deployment.agent_id,
+                    AgentPublishRecipient.deploy_id == deploy_id,
                     AgentPublishRecipient.dept_id == dept_id,
                 )
             )
@@ -1079,6 +1064,7 @@ async def update_agent_sharing_options(
                 session.add(
                     AgentPublishRecipient(
                         agent_id=deployment.agent_id,
+                        deploy_id=deploy_id,
                         org_id=deployment.org_id,
                         dept_id=dept_id,
                         recipient_user_id=user.id,
@@ -1095,7 +1081,7 @@ async def update_agent_sharing_options(
             await session.exec(
                 select(AgentPublishRecipient)
                 .where(
-                    AgentPublishRecipient.agent_id == deployment.agent_id,
+                    AgentPublishRecipient.deploy_id == deploy_id,
                     AgentPublishRecipient.dept_id == dept_id,
                 )
                 .order_by(col(AgentPublishRecipient.updated_at).desc())
@@ -1280,10 +1266,11 @@ async def promote_uat_to_prod(
                 raise HTTPException(status_code=400, detail=f"Invalid email format: {', '.join(invalid_emails)}")
 
             now = datetime.now(timezone.utc)
+            # new_record.id is available after the flush above; scope to this PROD deployment only.
             existing_rows = (
                 await session.exec(
                     select(AgentPublishRecipient).where(
-                        AgentPublishRecipient.agent_id == uat_dep.agent_id,
+                        AgentPublishRecipient.deploy_id == new_record.id,
                         AgentPublishRecipient.dept_id == department_id,
                     )
                 )
@@ -1356,6 +1343,7 @@ async def promote_uat_to_prod(
                     session.add(
                         AgentPublishRecipient(
                             agent_id=uat_dep.agent_id,
+                            deploy_id=new_record.id,
                             org_id=uat_dep.org_id,
                             dept_id=department_id,
                             recipient_user_id=user.id,

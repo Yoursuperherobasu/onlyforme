@@ -19,7 +19,7 @@ export const useGetCurrentReleaseVersionQuery = (options?: any) => {
 
   return query(["useGetCurrentReleaseVersionQuery"], responseFn, {
     refetchOnWindowFocus: false,
-    enabled: isAuthenticated,
     ...options,
+    enabled: isAuthenticated && (options?.enabled ?? true),
   });
 };

@@ -19,7 +19,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFil
 
 from loguru import logger
 from pydantic import BaseModel, Field
-from sqlalchemy import func, or_, true
+from sqlalchemy import and_, func, or_, true
 from sqlmodel import select
 
 from fastapi.responses import StreamingResponse
@@ -903,7 +903,13 @@ async def _user_can_access_deployment(
         await session.exec(
             select(AgentPublishRecipient.id)
             .where(
-                AgentPublishRecipient.agent_id == deployment.agent_id,
+                or_(
+                    AgentPublishRecipient.deploy_id == deployment.id,
+                    and_(
+                        AgentPublishRecipient.deploy_id.is_(None),
+                        AgentPublishRecipient.agent_id == deployment.agent_id,
+                    ),
+                ),
                 AgentPublishRecipient.recipient_user_id == current_user.id,
                 or_(
                     deployment.dept_id is None,
@@ -985,7 +991,13 @@ async def list_orch_agents(
         prod_share_exists = (
             select(AgentPublishRecipient.id)
             .where(
-                AgentPublishRecipient.agent_id == AgentDeploymentProd.agent_id,
+                or_(
+                    AgentPublishRecipient.deploy_id == AgentDeploymentProd.id,
+                    and_(
+                        AgentPublishRecipient.deploy_id.is_(None),
+                        AgentPublishRecipient.agent_id == AgentDeploymentProd.agent_id,
+                    ),
+                ),
                 AgentPublishRecipient.recipient_user_id == current_user.id,
                 or_(
                     AgentDeploymentProd.dept_id.is_(None),
@@ -1028,7 +1040,13 @@ async def list_orch_agents(
         uat_share_exists = (
             select(AgentPublishRecipient.id)
             .where(
-                AgentPublishRecipient.agent_id == AgentDeploymentUAT.agent_id,
+                or_(
+                    AgentPublishRecipient.deploy_id == AgentDeploymentUAT.id,
+                    and_(
+                        AgentPublishRecipient.deploy_id.is_(None),
+                        AgentPublishRecipient.agent_id == AgentDeploymentUAT.agent_id,
+                    ),
+                ),
                 AgentPublishRecipient.recipient_user_id == current_user.id,
                 or_(
                     AgentDeploymentUAT.dept_id.is_(None),
