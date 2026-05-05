@@ -573,14 +573,23 @@ async def _resolve_publish_scope(
                 agent.org_id = resolved_org_id
                 session.add(agent)
 
+        # When departmentless publish is allowed (super admin UAT) and no explicit
+        # dept was sent, return (None, None) immediately — never fall back to
+        # agent.dept_id so old agents with a pre-existing dept stay org-scoped.
+        if allow_departmentless_private_publish and not requested_department_id:
+            if not agent.org_id:
+                agent.org_id = resolved_org_id
+                session.add(agent)
+            if resolved_org_id:
+                return None, None
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Organization is required for departmentless UAT publish.",
+            )
+
         resolved_department_id = requested_department_id or agent.dept_id
 
         if not resolved_department_id:
-            if allow_departmentless_private_publish and resolved_org_id:
-                if not agent.org_id:
-                    agent.org_id = resolved_org_id
-                    session.add(agent)
-                return None, None
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=(

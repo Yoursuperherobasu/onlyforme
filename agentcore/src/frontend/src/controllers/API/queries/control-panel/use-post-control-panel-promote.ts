@@ -8,6 +8,8 @@ export interface PromoteControlPanelAgentPayload {
   visibility?: "PUBLIC" | "PRIVATE";
   publish_description?: string;
   recipient_emails?: string[];
+  department_id?: string;
+  department_ids?: string[];
 }
 
 export interface PromoteControlPanelAgentResponse {
@@ -32,6 +34,8 @@ export const usePostControlPanelPromote = (options?: any) => {
         visibility: payload.visibility ?? "PRIVATE",
         publish_description: payload.publish_description ?? null,
         recipient_emails: payload.recipient_emails ?? [],
+        ...(payload.department_id ? { department_id: payload.department_id } : {}),
+        ...(payload.department_ids?.length ? { department_ids: payload.department_ids } : {}),
       },
     );
     return res.data;

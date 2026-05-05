@@ -19,9 +19,17 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { AuthContext } from "@/contexts/authContext";
 import { api } from "@/controllers/API/api";
 import { getURL } from "@/controllers/API/helpers/constants";
+import { useGetPublishDepartments } from "@/controllers/API/queries/agents/use-get-publish-departments";
 import { useGetPublishEmailSuggestions } from "@/controllers/API/queries/agents/use-get-publish-email-suggestions";
 import { useValidatePublishEmail } from "@/controllers/API/queries/agents/use-validate-publish-email";
 import {
@@ -150,6 +158,8 @@ export default function WorkflowsView({
     useState("");
   const [promoteRecipientsInitialized, setPromoteRecipientsInitialized] =
     useState(false);
+  const [selectedPromoteDepartmentId, setSelectedPromoteDepartmentId] =
+    useState<string>("");
   const [openExportModal, setOpenExportModal] = useState(false);
   const [openEmbedModal, setOpenEmbedModal] = useState(false);
   const [openExportApiModal, setOpenExportApiModal] = useState(false);
@@ -178,6 +188,12 @@ export default function WorkflowsView({
   const canViewScheduler = can("view_control_panel");
   const canDirectPromoteToProd = can("prod_publish_approval_not_required");
   const requiresProdApproval = !canDirectPromoteToProd;
+  const isSuperAdmin = userData?.role === "super_admin";
+
+  const { data: promoteDepartments = [] } = useGetPublishDepartments(
+    { agent_id: selectedPromoteAgentId },
+    { enabled: isSuperAdmin && Boolean(selectedPromoteAgentId) },
+  );
 
   const handleRowDoubleClick = (workflow: WorkagentType) => {
     const agentId = workflow.agentId;
@@ -250,7 +266,7 @@ export default function WorkflowsView({
         ownerCount: item.owner_count ?? 0,
         ownerNames: item.owner_names ?? [],
         ownerEmails: item.owner_emails ?? [],
-        department: item.creator_department ?? "-",
+        department: item.creator_department ?? "Org-wide",
         createdAtRaw: item.created_at ?? undefined,
         created: formatDateTime(item.created_at),
         movedToProd: item.moved_to_prod ?? false,
@@ -814,6 +830,9 @@ export default function WorkflowsView({
           selectedPromoteVisibility === "PRIVATE"
             ? normalizedPromoteEmails
             : undefined,
+        ...(isSuperAdmin && selectedPromoteDepartmentId
+          ? { department_id: selectedPromoteDepartmentId }
+          : {}),
       });
       setSuccessData({
         title: response?.message || t("Promotion request submitted."),
@@ -839,6 +858,7 @@ export default function WorkflowsView({
     const workflow = displayworkflows.find((item) => item.id === workflowId);
     setSelectedPromoteAgentId(workflow?.agentId ?? "");
     setSelectedPromoteVisibility("PRIVATE");
+    setSelectedPromoteDepartmentId("");
     setPromoteSelectedEmails([]);
     setPromoteEmailDraft("");
     setPromoteRecipientsInitialized(false);
@@ -1931,6 +1951,32 @@ export default function WorkflowsView({
                 <Label htmlFor="promote-private">{t("Private")}</Label>
               </div>
             </div>
+            {isSuperAdmin && selectedPromoteVisibility === "PRIVATE" && (
+              <div className="space-y-2 rounded-md border p-3">
+                <Label className="text-sm font-medium">
+                  {t("Department")}
+                  <span className="ml-1 text-destructive">*</span>
+                </Label>
+                <Select
+                  value={selectedPromoteDepartmentId}
+                  onValueChange={setSelectedPromoteDepartmentId}
+                >
+                  <SelectTrigger className="w-full">
+                    <SelectValue placeholder={t("Select a department")} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {promoteDepartments.map((dept) => (
+                      <SelectItem key={dept.id} value={dept.id}>
+                        {dept.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  {t("All users in this department will be able to access this PROD deployment.")}
+                </p>
+              </div>
+            )}
             {selectedPromoteVisibility === "PRIVATE" && (
               <div className="space-y-2 rounded-md border p-3">
                 <Label htmlFor="promote-emails" className="text-sm font-medium">
@@ -2058,7 +2104,10 @@ export default function WorkflowsView({
                 onClick={() => void handlePromoteToProd()}
                 disabled={
                   !selectedPromoteDeployId ||
-                  promotingById[selectedPromoteDeployId]
+                  promotingById[selectedPromoteDeployId] ||
+                  (isSuperAdmin &&
+                    selectedPromoteVisibility === "PRIVATE" &&
+                    !selectedPromoteDepartmentId)
                 }
               >
                 {promotingById[selectedPromoteDeployId]
