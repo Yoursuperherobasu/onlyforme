@@ -1,4 +1,5 @@
 import { useContext, useEffect, useState } from "react";
+import { StickyScrollContainer } from "@/components/ui/sticky-scroll-container";
 import {
   Plus,
   Server,
@@ -383,7 +384,7 @@ export default function MCPServersPage() {
           </div>
         ) : (
           <>
-            <div className="overflow-x-auto rounded-lg border border-border bg-card">
+            <StickyScrollContainer className="overflow-x-auto rounded-lg border border-border bg-card">
               <table className="w-full">
                 <thead className="bg-muted/50">
                   <tr className="border-b border-border">
@@ -700,7 +701,7 @@ export default function MCPServersPage() {
                   ))}
                 </tbody>
               </table>
-            </div>
+            </StickyScrollContainer>
 
             <div className="mt-6 text-center text-sm text-muted-foreground">
               {t("Showing {{shown}} of {{total}} servers", {

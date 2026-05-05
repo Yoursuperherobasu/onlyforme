@@ -21,6 +21,7 @@ export type SingleAlertComponentType = {
   removeAlert: (index: string) => void;
   navigateTo?: string;
   onClosePanel?: () => void;
+  isSeen?: boolean;
 };
 export type AlertDropdownType = {
   children: JSX.Element;
@@ -30,6 +31,7 @@ export type AlertDropdownType = {
     id: string;
     title: string;
     link?: string | null;
+    created_at?: string;
   }>;
   markServerNotificationRead?: (id: string) => void;
   markAllServerNotificationsRead?: () => void;
@@ -40,4 +42,5 @@ export type AlertItemType = {
   link?: string;
   list?: Array<string>;
   id: string;
+  created_at?: string;
 };

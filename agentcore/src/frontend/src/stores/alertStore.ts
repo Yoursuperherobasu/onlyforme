@@ -3,8 +3,6 @@ import { create } from "zustand";
 import type { AlertItemType } from "../types/alerts";
 import type { AlertStoreType } from "../types/zustand/alert";
 import { customStringify } from "../utils/reactFlowUtils";
-import { api } from "../controllers/API/api";
-import { getURL } from "../controllers/API/helpers/constants";
 
 const useAlertStore = create<AlertStoreType>((set, get) => ({
   errorData: { title: "", list: [] },
@@ -14,20 +12,24 @@ const useAlertStore = create<AlertStoreType>((set, get) => ({
   notificationList: [],
   tempNotificationList: [],
   addNotificationToHistory: (notification: Omit<AlertItemType, "id">) => {
-    const newNotification = { ...notification, id: uniqueId() };
+    const newNotification = { ...notification, id: uniqueId(), created_at: new Date().toISOString() };
     set({
       notificationCenter: true,
       notificationList: [newNotification, ...get().notificationList],
     });
-    // Persist to DB so the notification survives page refresh
-    if (notification.link) {
-      api
-        .post(`${getURL("APPROVALS")}/notifications/general`, {
-          title: notification.title,
-          link: notification.link,
-        })
-        .catch(() => {});
-    }
+    // Persist every notification to DB so it survives page refresh.
+    // Dynamic imports break the circular dep: api.tsx → useAlertStore → api.tsx
+    const { title, link } = notification;
+    Promise.all([
+      import("../controllers/API/api.tsx"),
+      import("../controllers/API/helpers/constants"),
+    ])
+      .then(([{ api }, { getURL }]) => {
+        api
+          .post(`${getURL("APPROVALS")}/notifications/general`, { title, link: link ?? null })
+          .catch(() => {});
+      })
+      .catch(() => {});
   },
   addNotificationToTempList: (notification: Omit<AlertItemType, "id">) => {
     const newNotification = { ...notification, id: uniqueId() };

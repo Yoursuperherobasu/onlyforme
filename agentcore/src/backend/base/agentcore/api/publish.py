@@ -2569,13 +2569,34 @@ async def publish_agent(
                     )
                 ).first()
                 if existing_prod_version is not None:
-                    raise HTTPException(
-                        status_code=status.HTTP_409_CONFLICT,
-                        detail=(
-                            f"PROD version v{next_version} already exists for agent {agent_id}. "
-                            "This UAT version has already been promoted or the version number is in use."
-                        ),
-                    )
+                    if existing_prod_version.status == DeploymentPRODStatusEnum.ERROR:
+                        # Previous attempt failed — remove the stale record so the user can retry.
+                        await session.delete(existing_prod_version)
+                        await session.flush()
+                    elif existing_prod_version.status == DeploymentPRODStatusEnum.PENDING_APPROVAL:
+                        raise HTTPException(
+                            status_code=status.HTTP_409_CONFLICT,
+                            detail=(
+                                f"PROD v{next_version} for this agent is already awaiting approval. "
+                                "Check the Review & Approval page."
+                            ),
+                        )
+                    elif existing_prod_version.status == DeploymentPRODStatusEnum.PUBLISHED:
+                        raise HTTPException(
+                            status_code=status.HTTP_409_CONFLICT,
+                            detail=(
+                                f"PROD v{next_version} for this agent is already live. "
+                                "You can find it in the PROD tab of the Control Panel."
+                            ),
+                        )
+                    else:
+                        raise HTTPException(
+                            status_code=status.HTTP_409_CONFLICT,
+                            detail=(
+                                f"PROD v{next_version} for this agent already exists (status: {existing_prod_version.status.value}). "
+                                "Check the PROD tab of the Control Panel."
+                            ),
+                        )
 
             if is_admin:
                 # Validate all models and MCP servers are available for PROD

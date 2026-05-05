@@ -29,6 +29,7 @@ export default function RequestPackageModal({
   const [packageName, setPackageName] = useState("");
   const [requestedVersion, setRequestedVersion] = useState("");
   const [justification, setJustification] = useState("");
+  const [justificationError, setJustificationError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const createRequestMutation = useCreatePackageRequest();
@@ -50,6 +51,7 @@ export default function RequestPackageModal({
     setPackageName("");
     setRequestedVersion("");
     setJustification("");
+    setJustificationError("");
   };
 
   const handleClose = () => {
@@ -63,6 +65,11 @@ export default function RequestPackageModal({
       setErrorData({
         title: "Package name, version, and justification are required.",
       });
+      if (!justification.trim()) setJustificationError("Justification is required.");
+      return;
+    }
+    if (justification.trim().length < 5) {
+      setJustificationError("Justification must be at least 5 characters.");
       return;
     }
     setIsSubmitting(true);
@@ -136,10 +143,16 @@ export default function RequestPackageModal({
             <Label>Justification</Label>
             <Textarea
               value={justification}
-              onChange={(e) => setJustification(e.target.value)}
+              onChange={(e) => {
+                setJustification(e.target.value);
+                if (justificationError) setJustificationError("");
+              }}
               placeholder="Business justification for this package"
-              className="min-h-[110px]"
+              className={`min-h-[110px]${justificationError ? " border-destructive focus-visible:ring-destructive" : ""}`}
             />
+            {justificationError && (
+              <p className="text-sm text-destructive">{justificationError}</p>
+            )}
           </div>
 
           <div className="flex justify-end gap-3 pt-2">

@@ -1,5 +1,6 @@
 import { Cross2Icon } from "@radix-ui/react-icons";
-import { forwardRef, useEffect, useState } from "react";
+import { ChevronRight } from "lucide-react";
+import { forwardRef, useEffect, useRef, useState } from "react";
 import IconComponent from "../../components/common/genericIconComponent";
 import {
   Popover,
@@ -13,25 +14,33 @@ import SingleAlert from "./components/singleAlertComponent";
 
 function resolveNotificationRoute(title: string): string | null {
   const t = title.toLowerCase();
-  // Approval page
+  // Control panel — UAT→PROD promotions
+  if (t.includes("moved to prod") || t.includes("stopped in uat")) return "/workflows";
+  // Approval — submission waiting for review
   if (
+    t.includes("submitted for prod approval") ||
     t.includes("approved") || t.includes("rejected") || t.includes("approval") ||
     t.includes("submitted for review") || t.includes("marked as deployed") ||
     t.includes("pending review") || t.includes("under review")
   ) return "/approval";
-  // Admin / user management
   if (
     t.includes("user ") || t.includes("user(s)") ||
     t.includes("success! user") || t.includes("error on edit user") ||
     t.includes("error when adding new user")
   ) return "/admin";
-  // Model catalogue
   if (t.includes("model")) return "/model-catalogue";
-  // MCP servers
   if (t.includes("mcp")) return "/mcp-servers";
-  // Packages
   if (t.includes("package")) return "/packages";
   return null;
+}
+
+function isRecentNotification(created_at?: string): boolean {
+  if (!created_at) return true; // treat undated as recent
+  const created = new Date(created_at);
+  const now = new Date();
+  // start of yesterday (2 full days back from start of today)
+  const yesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+  return created >= yesterday;
 }
 
 const AlertDropdown = forwardRef<HTMLDivElement, AlertDropdownType>(
@@ -57,6 +66,12 @@ const AlertDropdown = forwardRef<HTMLDivElement, AlertDropdownType>(
       (state) => state.setNotificationCenter,
     );
     const [open, setOpen] = useState(false);
+    const [showOlder, setShowOlder] = useState(false);
+    // IDs that were visible when the panel last closed — rendered as muted/seen
+    const [seenIds, setSeenIds] = useState<Set<string>>(new Set());
+    // Accumulate IDs visible in the current open session; committed to seenIds on close
+    const pendingSeenRef = useRef<Set<string>>(new Set());
+
     const mergedNotifications = [
       ...serverNotifications.map((item) => {
         const loweredTitle = item.title.toLowerCase();
@@ -71,16 +86,60 @@ const AlertDropdown = forwardRef<HTMLDivElement, AlertDropdownType>(
           type,
           title: item.title,
           link: item.link ?? undefined,
+          created_at: item.created_at,
         };
       }),
       ...notificationList,
     ];
 
+    const recentNotifications = mergedNotifications.filter((n) =>
+      isRecentNotification(n.created_at),
+    );
+    const olderNotifications = mergedNotifications.filter(
+      (n) => !isRecentNotification(n.created_at),
+    );
+
+    // When the panel opens, start collecting visible IDs
     useEffect(() => {
-      if (!open) {
+      if (open) {
+        mergedNotifications.forEach((n) => pendingSeenRef.current.add(n.id));
+      } else {
+        // Panel closed: commit pending IDs to seenIds and fire onClose
+        if (pendingSeenRef.current.size > 0) {
+          setSeenIds((prev) => {
+            const next = new Set(prev);
+            pendingSeenRef.current.forEach((id) => next.add(id));
+            return next;
+          });
+          pendingSeenRef.current = new Set();
+        }
+        setShowOlder(false);
         onClose?.();
       }
     }, [open]);
+
+    const renderAlert = (alertItem: (typeof mergedNotifications)[number]) => {
+      // Ignore "/" — backend stores it as the fallback when no real link was given
+      const explicitLink = alertItem.link && alertItem.link !== "/" ? alertItem.link : null;
+      const navigateTo =
+        explicitLink || resolveNotificationRoute(alertItem.title) || undefined;
+      return (
+        <SingleAlert
+          key={alertItem.id}
+          dropItem={alertItem}
+          removeAlert={(id) => {
+            if (id.startsWith("server:")) {
+              markServerNotificationRead?.(id.replace("server:", ""));
+              return;
+            }
+            removeFromNotificationList(id);
+          }}
+          navigateTo={navigateTo}
+          onClosePanel={() => setOpen(false)}
+          isSeen={seenIds.has(alertItem.id)}
+        />
+      );
+    };
 
     return (
       <Popover
@@ -124,24 +183,39 @@ const AlertDropdown = forwardRef<HTMLDivElement, AlertDropdownType>(
           </div>
           <div className="text-high-foreground mt-3 flex h-full w-full flex-col overflow-y-scroll scrollbar-hide">
             {mergedNotifications.length !== 0 ? (
-              mergedNotifications.map((alertItem) => {
-                const navigateTo = alertItem.link || resolveNotificationRoute(alertItem.title) || undefined;
-                return (
-                  <SingleAlert
-                    key={alertItem.id}
-                    dropItem={alertItem}
-                    removeAlert={(id) => {
-                      if (id.startsWith("server:")) {
-                        markServerNotificationRead?.(id.replace("server:", ""));
-                        return;
-                      }
-                      removeFromNotificationList(id);
-                    }}
-                    navigateTo={navigateTo}
-                    onClosePanel={() => setOpen(false)}
-                  />
-                );
-              })
+              <>
+                {recentNotifications.map(renderAlert)}
+
+                {olderNotifications.length > 0 && (
+                  <>
+                    {showOlder ? (
+                      <>
+                        <div className="mx-2 mb-1 mt-1 flex items-center gap-2">
+                          <div className="h-px flex-1 bg-border" />
+                          <span className="text-xs text-muted-foreground">Older</span>
+                          <div className="h-px flex-1 bg-border" />
+                        </div>
+                        {olderNotifications.map(renderAlert)}
+                      </>
+                    ) : (
+                      <button
+                        className="mx-2 mb-2 mt-1 flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+                        onClick={() => setShowOlder(true)}
+                      >
+                        <ChevronRight className="h-3 w-3" />
+                        {olderNotifications.length} more notification
+                        {olderNotifications.length !== 1 ? "s" : ""}
+                      </button>
+                    )}
+                  </>
+                )}
+
+                {recentNotifications.length === 0 && olderNotifications.length === 0 && (
+                  <div className="flex h-full w-full items-center justify-center pb-16 text-ring">
+                    {ZERO_NOTIFICATIONS}
+                  </div>
+                )}
+              </>
             ) : (
               <div className="flex h-full w-full items-center justify-center pb-16 text-ring">
                 {ZERO_NOTIFICATIONS}

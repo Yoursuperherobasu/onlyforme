@@ -1,3 +1,4 @@
+import { StickyScrollContainer } from "@/components/ui/sticky-scroll-container";
 import {
   Search,
   Activity,
@@ -211,7 +212,7 @@ export default function VectorDBView(): JSX.Element {
                 {t("Failed to load vector databases from database.")}
               </div>
             )}
-            <div className="overflow-x-auto rounded-lg border border-border bg-card">
+            <StickyScrollContainer className="overflow-x-auto rounded-lg border border-border bg-card">
               <table className="w-full">
                 <thead className="bg-muted/50">
                   <tr className="border-b border-border">
@@ -390,7 +391,7 @@ export default function VectorDBView(): JSX.Element {
                   )}
                 </tbody>
               </table>
-            </div>
+            </StickyScrollContainer>
 
             <div className="mt-6 text-center text-sm text-muted-foreground">
               {t("Showing {{shown}} of {{total}} vector databases", {

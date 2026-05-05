@@ -1,4 +1,5 @@
 import { ArrowUpToLine, Filter, Info, Search, Share2, X } from "lucide-react";
+import { StickyScrollContainer } from "@/components/ui/sticky-scroll-container";
 import { useContext, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import ShadTooltip from "@/components/common/shadTooltipComponent";
@@ -836,6 +837,7 @@ export default function WorkflowsView({
       });
       setSuccessData({
         title: response?.message || t("Promotion request submitted."),
+        link: "/workflows",
       });
       setPromoteDialogOpen(false);
     } catch (error: any) {
@@ -1382,7 +1384,8 @@ export default function WorkflowsView({
       )}
 
       <div className="flex-1 overflow-auto p-4 sm:p-6">
-        <div className="max-h-full overflow-auto rounded-lg border bg-card">
+        <div className="max-h-full overflow-y-auto overflow-x-hidden rounded-lg border bg-card">
+          <StickyScrollContainer className="overflow-x-auto">
           <table className="w-full min-w-[1200px] table-fixed text-sm">
             <colgroup>
               <col className="w-[20rem]" />
@@ -1779,6 +1782,7 @@ export default function WorkflowsView({
               )}
             </tbody>
           </table>
+          </StickyScrollContainer>
         </div>
 
         <div className="mt-6 flex items-center justify-between">

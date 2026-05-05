@@ -1,4 +1,5 @@
 import { useContext, useEffect, useMemo, useState } from "react";
+import { StickyScrollContainer } from "@/components/ui/sticky-scroll-container";
 import { useTranslation } from "react-i18next";
 import { Globe } from "lucide-react";
 import { api } from "@/controllers/API/api";
@@ -749,7 +750,8 @@ export default function ReleaseManagementPage() {
             </div>
 
             <div className="rounded-lg border border-border bg-card">
-              <div className="max-h-[58vh] overflow-auto">
+              <div className="max-h-[58vh] overflow-y-auto overflow-x-hidden">
+                <StickyScrollContainer className="overflow-x-auto">
                 <table className="w-full min-w-[980px] text-sm">
                   <thead className="sticky top-0 z-10 bg-card">
                     <tr className="border-b border-border bg-muted/30 text-xs uppercase tracking-wider text-muted-foreground">
@@ -820,6 +822,7 @@ export default function ReleaseManagementPage() {
                     )}
                   </tbody>
                 </table>
+                </StickyScrollContainer>
               </div>
             </div>
           </section>
