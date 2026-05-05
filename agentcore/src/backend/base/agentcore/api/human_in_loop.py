@@ -26,6 +26,7 @@ from sqlmodel import col, select
 from agentcore.api.utils import (
     CurrentActiveUser,
     DbSession,
+    build_agent_pod_url,
     build_graph_from_data,
     build_graph_from_db_no_cache,
 )
@@ -291,8 +292,9 @@ async def resume_hitl(
 
     On the backend pod (no AGENTCORE_IS_POD):
     - playground/non-deployed runs execute locally on backend
-    - deployed/published runs are forwarded via ORCHESTRATOR_BASE_URL
-      so execution stays on routed agent pod context.
+    - deployed/published runs are forwarded to the agent pod via
+      cluster DNS (see build_agent_pod_url) so execution stays on the
+      routed agent pod context.
     On the agent pod (AGENTCORE_IS_POD=true), or when called internally, this
     executes the graph locally.
 
@@ -343,33 +345,19 @@ async def resume_hitl(
                 session=session,
             )
 
-        base_url = os.environ.get("ORCHESTRATOR_BASE_URL", "")
-        if base_url:
-            hitl_resume_flag_raw = str(os.environ.get("HITL_RESUME_VIA_RUN_API", "false"))
-            use_run_resume = hitl_resume_flag_raw.lower() in {
-                "1",
-                "true",
-                "yes",
-                "on",
-            }
-            logger.info(
-                f"[HITL] Resume routing config — HITL_RESUME_VIA_RUN_API={hitl_resume_flag_raw!r}, "
-                f"parsed_use_run_resume={use_run_resume}, "
-                f"has_orchestrator_base_url={bool(base_url)}"
-            )
-            if use_run_resume:
-                return await _forward_resume_via_run_api(
-                    base_url=base_url,
-                    secret=_internal_secret,
-                    thread_id=thread_id,
-                    body=body,
-                    hitl_req=hitl_req,
-                    current_user=current_user,
-                    session=session,
-                    request=request,
-                )
-            return await _forward_resume_to_agent_pod(
-                base_url=base_url,
+        hitl_resume_flag_raw = str(os.environ.get("HITL_RESUME_VIA_RUN_API", "false"))
+        use_run_resume = hitl_resume_flag_raw.lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+        logger.info(
+            f"[HITL] Resume routing config — HITL_RESUME_VIA_RUN_API={hitl_resume_flag_raw!r}, "
+            f"parsed_use_run_resume={use_run_resume}"
+        )
+        if use_run_resume:
+            return await _forward_resume_via_run_api(
                 secret=_internal_secret,
                 thread_id=thread_id,
                 body=body,
@@ -378,8 +366,14 @@ async def resume_hitl(
                 session=session,
                 request=request,
             )
-        logger.warning(
-            "[HITL] ORCHESTRATOR_BASE_URL not set — running resume locally on backend pod"
+        return await _forward_resume_to_agent_pod(
+            secret=_internal_secret,
+            thread_id=thread_id,
+            body=body,
+            hitl_req=hitl_req,
+            current_user=current_user,
+            session=session,
+            request=request,
         )
 
     # ── Execute locally (agent pod, or fallback) ────────────────────────
@@ -394,7 +388,6 @@ async def resume_hitl(
 
 async def _forward_resume_to_agent_pod(
     *,
-    base_url: str,
     secret: str,
     thread_id: str,
     body: HITLResumeRequest,
@@ -404,7 +397,23 @@ async def _forward_resume_to_agent_pod(
     request: Request | None = None,
 ) -> dict[str, Any]:
     """Forward the HITL resume request to the agent pod via HTTP."""
-    url = f"{base_url}/api/v1/hitl/{thread_id}/resume"
+    target = await _resolve_hitl_run_target(hitl_req=hitl_req, session=session)
+    if not target:
+        logger.error(
+            f"[HITL] Could not resolve env/version for thread_id={thread_id!r} "
+            "— cannot forward legacy resume to agent pod"
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Could not resolve agent pod target for HITL resume",
+        )
+    env_code, version = target
+    pod_base_url = build_agent_pod_url(
+        agent_id=str(hitl_req.agent_id),
+        env_code=env_code,
+        version=version,
+    )
+    url = f"{pod_base_url}/api/v1/hitl/{thread_id}/resume"
     headers = {
         "X-Internal-Secret": secret,
         "Content-Type": "application/json",
@@ -578,7 +587,6 @@ async def _resolve_hitl_run_target(
 
 async def _forward_resume_via_run_api(
     *,
-    base_url: str,
     secret: str,
     thread_id: str,
     body: HITLResumeRequest,
@@ -595,7 +603,6 @@ async def _forward_resume_via_run_api(
             "falling back to legacy /api/v1/hitl forward path"
         )
         return await _forward_resume_to_agent_pod(
-            base_url=base_url,
             secret=secret,
             thread_id=thread_id,
             body=body,
@@ -606,8 +613,13 @@ async def _forward_resume_via_run_api(
         )
 
     env_code, version = target
+    pod_base_url = build_agent_pod_url(
+        agent_id=str(hitl_req.agent_id),
+        env_code=env_code,
+        version=version,
+    )
     url = (
-        f"{base_url}/api/run/{hitl_req.agent_id}"
+        f"{pod_base_url}/api/run/{hitl_req.agent_id}"
         f"?env={env_code}&version={version}&stream=false"
         f"&hitl_resume_thread_id={thread_id}"
     )
@@ -648,7 +660,6 @@ async def _forward_resume_via_run_api(
                 "falling back to legacy /api/v1/hitl forward path"
             )
             return await _forward_resume_to_agent_pod(
-                base_url=base_url,
                 secret=secret,
                 thread_id=thread_id,
                 body=body,
