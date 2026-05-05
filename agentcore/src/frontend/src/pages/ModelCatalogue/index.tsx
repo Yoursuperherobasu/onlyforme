@@ -10,6 +10,7 @@ import {
   Clock,
 } from "lucide-react";
 import { useContext, useEffect, useMemo, useState } from "react";
+import { StickyScrollContainer } from "@/components/ui/sticky-scroll-container";
 import SemanticSearchToggle from "@/components/common/semanticSearchToggle";
 import type { ModelType, ModelEnvironment, ModelTypeFilter } from "@/types/models/models";
 import {
@@ -462,9 +463,9 @@ export default function ModelCatalogue(): JSX.Element {
           </div>
         ) : (
           <>
-            <div className="rounded-lg border border-border bg-card">
-              <table className="w-full">
-                <thead className="sticky top-0 z-10 bg-muted">
+            <StickyScrollContainer className="overflow-x-auto rounded-lg border border-border bg-card [&::-webkit-scrollbar]:hidden">
+              <table className="w-full min-w-[1100px]">
+                <thead className="bg-muted/50">
                   <tr className="border-b border-border">
                     {[
                       "Model",
@@ -743,9 +744,9 @@ export default function ModelCatalogue(): JSX.Element {
                   )}
                 </tbody>
               </table>
-            </div>
+            </StickyScrollContainer>
 
-            <div className="mt-6 text-center text-sm text-muted-foreground">
+            <div className="mt-4 text-center text-sm text-muted-foreground">
               {t("Showing {{shown}} of {{total}} models", {
                 shown: filteredModels.length,
                 total: displayModels.length,

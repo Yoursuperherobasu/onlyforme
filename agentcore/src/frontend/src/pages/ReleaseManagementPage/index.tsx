@@ -751,7 +751,7 @@ export default function ReleaseManagementPage() {
 
             <div className="rounded-lg border border-border bg-card">
               <div className="max-h-[58vh] overflow-y-auto overflow-x-hidden">
-                <StickyScrollContainer className="overflow-x-auto">
+                <StickyScrollContainer className="overflow-x-auto [&::-webkit-scrollbar]:hidden">
                 <table className="w-full min-w-[980px] text-sm">
                   <thead className="sticky top-0 z-10 bg-card">
                     <tr className="border-b border-border bg-muted/30 text-xs uppercase tracking-wider text-muted-foreground">

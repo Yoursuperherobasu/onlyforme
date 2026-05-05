@@ -1385,7 +1385,7 @@ export default function WorkflowsView({
 
       <div className="flex-1 overflow-auto p-4 sm:p-6">
         <div className="max-h-full overflow-y-auto overflow-x-hidden rounded-lg border bg-card">
-          <StickyScrollContainer className="overflow-x-auto">
+          <StickyScrollContainer className="overflow-x-auto [&::-webkit-scrollbar]:hidden">
           <table className="w-full min-w-[1200px] table-fixed text-sm">
             <colgroup>
               <col className="w-[20rem]" />

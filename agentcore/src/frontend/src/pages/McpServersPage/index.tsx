@@ -384,7 +384,7 @@ export default function MCPServersPage() {
           </div>
         ) : (
           <>
-            <StickyScrollContainer className="overflow-x-auto rounded-lg border border-border bg-card">
+            <StickyScrollContainer className="overflow-x-auto rounded-lg border border-border bg-card [&::-webkit-scrollbar]:hidden">
               <table className="w-full">
                 <thead className="bg-muted/50">
                   <tr className="border-b border-border">

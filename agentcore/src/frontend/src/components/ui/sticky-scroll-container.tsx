@@ -55,18 +55,27 @@ export function StickyScrollContainer({
   }, []);
 
   return (
-    <div className="flex flex-col">
-      <div ref={scrollRef} className={className}>
-        {children}
+    <>
+      <style>{`
+        .sticky-mirror-bar::-webkit-scrollbar { height: 8px; }
+        .sticky-mirror-bar::-webkit-scrollbar-track { background: hsl(var(--muted)); border-radius: 9999px; }
+        .sticky-mirror-bar::-webkit-scrollbar-thumb { background: hsl(var(--muted-foreground) / 0.8); border-radius: 9999px; }
+        .sticky-mirror-bar::-webkit-scrollbar-thumb:hover { background: hsl(var(--muted-foreground)); }
+        .sticky-mirror-bar { scrollbar-width: thin; scrollbar-color: hsl(var(--muted-foreground) / 0.8) hsl(var(--muted)); }
+      `}</style>
+      <div className="flex flex-col">
+        <div ref={scrollRef} className={className}>
+          {children}
+        </div>
+        {/* sticky mirror scrollbar — sticks to the bottom of the nearest scroll ancestor */}
+        <div
+          ref={mirrorRef}
+          className="sticky-mirror-bar sticky bottom-0 overflow-x-scroll overflow-y-hidden"
+          style={{ height: 12, marginTop: -12 }}
+        >
+          <div ref={phantomRef} style={{ height: 1 }} />
+        </div>
       </div>
-      {/* sticky mirror scrollbar — sticks to the bottom of the nearest scroll ancestor */}
-      <div
-        ref={mirrorRef}
-        className="sticky bottom-0 overflow-x-scroll overflow-y-hidden"
-        style={{ height: 12 }}
-      >
-        <div ref={phantomRef} style={{ height: 1 }} />
-      </div>
-    </div>
+    </>
   );
 }
