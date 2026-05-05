@@ -51,23 +51,24 @@ def _is_admin_role(role: str | None) -> bool:
 
 
 async def _get_scope_memberships(session: DbSession, user_id: UUID) -> tuple[set[UUID], set[UUID]]:
-    from sqlalchemy import literal, union_all as _union_all
-    rows = (
-        await session.execute(
-            _union_all(
-                select(literal("o").label("t"), UserOrganizationMembership.org_id.label("id")).where(
-                    UserOrganizationMembership.user_id == user_id,
-                    UserOrganizationMembership.status.in_(["accepted", "active"]),
-                ),
-                select(literal("d").label("t"), UserDepartmentMembership.department_id.label("id")).where(
-                    UserDepartmentMembership.user_id == user_id,
-                    UserDepartmentMembership.status == "active",
-                ),
+    org_rows = (
+        await session.exec(
+            select(UserOrganizationMembership.org_id).where(
+                UserOrganizationMembership.user_id == user_id,
+                UserOrganizationMembership.status.in_(["accepted", "active"]),
             )
         )
     ).all()
-    org_ids = {row.id for row in rows if row.t == "o"}
-    dept_ids = {row.id for row in rows if row.t == "d"}
+    dept_rows = (
+        await session.exec(
+            select(UserDepartmentMembership.department_id).where(
+                UserDepartmentMembership.user_id == user_id,
+                UserDepartmentMembership.status == "active",
+            )
+        )
+    ).all()
+    org_ids = {r for r in org_rows if r}
+    dept_ids = {r for r in dept_rows if r}
     return org_ids, dept_ids
 
 
@@ -294,6 +295,8 @@ async def create_project(
             await sync_project_tags(session, new_project.id, project.tags, org_id, current_user.id)
             await session.commit()
 
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
 
