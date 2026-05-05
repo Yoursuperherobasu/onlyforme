@@ -204,7 +204,7 @@ export default function WorkflowsView({
     if (isCreator) {
       navigate(`/agent/${agentId}`);
     } else {
-      navigate(`/agent/${agentId}?readonly=1`);
+      navigate(`/agent/${agentId}/view`);
     }
   };
 

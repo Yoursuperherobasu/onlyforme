@@ -52,6 +52,7 @@ from agentcore.services.database.models.agent_deployment_uat.model import (
     DeploymentUATStatusEnum,
 )
 from agentcore.services.database.models.agent_edit_lock.model import AgentEditLock
+from agentcore.services.database.models.agent_publish_recipient.model import AgentPublishRecipient
 from agentcore.services.database.models.user_department_membership.model import UserDepartmentMembership
 from agentcore.services.database.models.user_organization_membership.model import UserOrganizationMembership
 from agentcore.services.database.models.folder.model import Folder
@@ -227,6 +228,18 @@ async def _can_access_agent(session: AsyncSession, current_user: CurrentActiveUs
         _, dept_ids = await _get_scope_memberships(session, current_user.id)
         if agent.dept_id and agent.dept_id in dept_ids:
             return True
+
+    # Allow access for explicit share recipients of any deployment of this agent.
+    recipient = (
+        await session.exec(
+            select(AgentPublishRecipient.id).where(
+                AgentPublishRecipient.agent_id == agent.id,
+                AgentPublishRecipient.recipient_user_id == current_user.id,
+            ).limit(1)
+        )
+    ).first()
+    if recipient:
+        return True
 
     return False
 

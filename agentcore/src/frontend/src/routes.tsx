@@ -427,7 +427,7 @@ const router = createBrowserRouter(
                     }
                   />
                 </Route>
-                <Route path="view" element={<ViewPage />} />
+                <Route path="view" element={<AgentBuilderPage view={true} />} />
               </Route>
             </Route>
           </Route>
