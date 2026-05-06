@@ -55,8 +55,8 @@ def build_agent_pod_url(agent_id: str, env_code: str, version: str) -> str:
     Format: http://agent-{agent_id}-{env_num}-{version}.{namespace}.svc.cluster.local:{port}
 
     Namespace selection (overridable via env vars):
-      - dev / uat (env_num 0 or 1) -> AGENT_POD_NAMESPACE_NONPROD (default 'agentcore-dev')
-      - prod      (env_num 2)      -> AGENT_POD_NAMESPACE_PROD    (default 'micore-dev')
+      - dev / uat (env_num 0 or 1) -> AGENT_POD_NAMESPACE_NONPROD (default 'micore-dev')
+      - prod      (env_num 2)      -> AGENT_POD_NAMESPACE_PROD    (default 'micore-prod')
     Port from AGENT_POD_PORT (default '7860').
 
     Accepts env_code as either numeric ('0'/'1'/'2') or named ('dev'/'uat'/'prod').
@@ -71,8 +71,8 @@ def build_agent_pod_url(agent_id: str, env_code: str, version: str) -> str:
 
     env_num = _AGENT_POD_ENV_NUM_MAP.get(str(env_code).lower(), str(env_code))
 
-    nonprod_ns = os.environ.get("AGENT_POD_NAMESPACE_NONPROD", "agentcore-dev")
-    prod_ns = os.environ.get("AGENT_POD_NAMESPACE_PROD", "micore-dev")
+    nonprod_ns = os.environ.get("AGENT_POD_NAMESPACE_NONPROD", "micore-dev")
+    prod_ns = os.environ.get("AGENT_POD_NAMESPACE_PROD", "micore-prod")
     port = os.environ.get("AGENT_POD_PORT", "7860")
 
     namespace = prod_ns if env_num == "2" else nonprod_ns

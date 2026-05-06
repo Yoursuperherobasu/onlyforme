@@ -1105,6 +1105,15 @@ export default function AgentOrchestrator() {
   const aiModelPickerRef = useRef<HTMLDivElement>(null);
   const hitlSessionRef = useRef<string | null>(null);
   const sessionSelectionSyncRef = useRef<string | null>(null);
+  // Tracks message IDs that were just regenerated via the edit endpoint, with
+  // the wall-clock time of the edit. The polling-refetch merge prefers API
+  // content over local when local isn't longer (see merge useEffect) — fine
+  // for text edits, but for image edits the new and old URLs have identical
+  // length, so the heuristic falls through and a stale read-replica response
+  // can briefly clobber the just-applied new image. While an ID lives in this
+  // ref we keep local content during the merge.
+  const recentlyEditedRef = useRef<Map<string, number>>(new Map());
+  const RECENT_EDIT_TTL_MS = 30_000;
 
   /* ------------------ FILE UPLOAD ------------------ */
 
@@ -1386,8 +1395,21 @@ export default function AgentOrchestrator() {
             // commit, etc). Only override when local clearly has more text.
             const apiContent = (merged.content as string | undefined) || "";
             const localContent = (local.content as string | undefined) || "";
+            // Image-edit grace period: the length heuristic below can't tell
+            // a new vs old image URL apart (same format → same length), so a
+            // stale polling read can clobber the just-applied new image. If
+            // this id was edited within the TTL, keep the authoritative
+            // local content.
+            const editedAt = recentlyEditedRef.current.get(m.id);
+            const isRecentlyEdited =
+              editedAt !== undefined && Date.now() - editedAt < RECENT_EDIT_TTL_MS;
+            if (editedAt !== undefined && !isRecentlyEdited) {
+              recentlyEditedRef.current.delete(m.id);
+            }
             const preferredContent =
-              localContent && (!apiContent || localContent.length > apiContent.length)
+              isRecentlyEdited && localContent
+                ? localContent
+                : localContent && (!apiContent || localContent.length > apiContent.length)
                 ? localContent
                 : apiContent;
 
@@ -2198,32 +2220,55 @@ export default function AgentOrchestrator() {
 
     // 1. Optimistic update: set user msg text to edited value, mark agent msg
     // as "thinking" (empty content) and truncate anything after the pair.
-    setMessages((prev) => {
-      const userIdx = prev.findIndex((m) => m.id === msgIdBeingEdited);
-      if (userIdx === -1) return prev;
-      // Find the next agent message AFTER this user msg
-      let agentIdx = -1;
-      for (let i = userIdx + 1; i < prev.length; i++) {
-        if (prev[i].sender === "agent") {
-          agentIdx = i;
-          break;
+    // flushSync runs the updater synchronously so editingAgentMsgId is
+    // populated before the setStreamingMsgId call below — without flushSync,
+    // React would defer the updater to render time and the closure variable
+    // would still be null.
+    let editingAgentMsgId: string | null = null;
+    let priorWasImage = false;
+    flushSync(() => {
+      setMessages((prev) => {
+        const userIdx = prev.findIndex((m) => m.id === msgIdBeingEdited);
+        if (userIdx === -1) return prev;
+        // Find the next agent message AFTER this user msg
+        let agentIdx = -1;
+        for (let i = userIdx + 1; i < prev.length; i++) {
+          if (prev[i].sender === "agent") {
+            agentIdx = i;
+            break;
+          }
         }
-      }
-      const truncateAt = agentIdx === -1 ? userIdx + 1 : agentIdx + 1;
-      const updated = [...prev.slice(0, truncateAt)];
-      // Update user message content
-      updated[userIdx] = { ...updated[userIdx], content: text };
-      // Reset agent response to empty to show "Thinking..." state (if it exists)
-      if (agentIdx !== -1) {
-        updated[agentIdx] = {
-          ...updated[agentIdx],
-          content: "",
-          reasoningContent: undefined,
-          contentBlocks: undefined,
-        };
-      }
-      return updated;
+        const truncateAt = agentIdx === -1 ? userIdx + 1 : agentIdx + 1;
+        const updated = [...prev.slice(0, truncateAt)];
+        // Update user message content
+        updated[userIdx] = { ...updated[userIdx], content: text };
+        // Reset agent response to empty to show "Thinking..." state (if it exists)
+        if (agentIdx !== -1) {
+          editingAgentMsgId = updated[agentIdx].id;
+          // Detect whether this was an image-gen reply so the ThinkingIndicator
+          // can show the image skeleton (square placeholder + "Generating image"
+          // phrases) during the regenerate, instead of the generic text bars.
+          priorWasImage = !!updated[agentIdx].content?.includes("![");
+          updated[agentIdx] = {
+            ...updated[agentIdx],
+            content: "",
+            reasoningContent: undefined,
+            contentBlocks: undefined,
+          };
+        }
+        return updated;
+      });
     });
+    // Scope the ThinkingIndicator to this exact agent bubble. Without this,
+    // the render-loop's `msg.id === streamingMsgId` guard would fail and the
+    // empty bubble would render the "Message empty." fallback.
+    if (editingAgentMsgId) setStreamingMsgId(editingAgentMsgId);
+    // Pre-seed routedMode so the indicator matches the prior reply's modality.
+    // For image edits this surfaces the image skeleton immediately, instead
+    // of the generic text-bar one until (or if) the backend re-emits a
+    // routing event. For non-image edits, clear stale routedMode from prior
+    // turns so we fall back to the generic skeleton.
+    setRoutedMode(priorWasImage ? "image_gen" : null);
 
     // 2. Call PUT endpoint to do the in-place update on the backend
     try {
@@ -2233,7 +2278,8 @@ export default function AgentOrchestrator() {
       // would render "Message empty." via MarkdownField's empty fallback.
       setIsSending(true);
       setSendingSessionId(currentSessionId);
-      setRoutedMode(null);
+      // routedMode was pre-seeded above based on the prior reply's modality;
+      // don't overwrite it here.
       const headers: Record<string, string> = { "Content-Type": "application/json" };
       const tokenMatch = document.cookie.match(/(?:^|;\s*)access_token_ag=([^;]*)/);
       if (tokenMatch?.[1]) headers["Authorization"] = `Bearer ${decodeURIComponent(tokenMatch[1])}`;
@@ -2255,6 +2301,25 @@ export default function AgentOrchestrator() {
       );
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
+      // MiBuddy-only carve-out: in model-direct mode (No Agent), the
+      // polling-refetch merge's length heuristic can clobber the just-
+      // applied edit response with a stale read when new and old content
+      // are similar lengths — happens both for image URL edits (identical
+      // format) and for text edits where the regenerated essay/answer is
+      // close in length to the original.
+      // Tag the regenerated agent message + (for image edits) the user
+      // message so the merge keeps our authoritative local content.
+      // Agent-mode edits are NOT tagged — that flow has its own behavior
+      // we don't want to touch.
+      if (noAgentMode) {
+        const editedAt = Date.now();
+        if (data?.agent_message?.id) {
+          recentlyEditedRef.current.set(String(data.agent_message.id), editedAt);
+        }
+        if (priorWasImage && data?.user_message?.id) {
+          recentlyEditedRef.current.set(String(data.user_message.id), editedAt);
+        }
+      }
       // 3. Apply server-returned content for both updated messages
       setMessages((prev) =>
         prev.map((m) => {
@@ -2317,6 +2382,7 @@ export default function AgentOrchestrator() {
       setIsSending(false);
       setSendingSessionId(null);
       setRoutedMode(null);
+      setStreamingMsgId(null);
     }
   }, [editDraft, editingMsgId, cotReasoning, imageMode]);
 
@@ -4230,11 +4296,17 @@ export default function AgentOrchestrator() {
               // that placeholder text would unmount the ThinkingIndicator (and its
               // image skeleton) the instant streaming begins. Keep showing the
               // indicator until real image markdown ("![...](...)") appears.
+              // Scope to the currently-streaming message — routedMode is global,
+              // so without `msg.id === streamingMsgId` an in-flight image_gen send
+              // would retroactively flip prior plain-text replies into the image
+              // skeleton state and hide their real content.
               const hasImageMarkdown = !!msg.content && msg.content.includes("![");
+              const isCurrentlyStreaming = msg.id === streamingMsgId;
               const isImageGenStreaming =
-                routedMode === "image_gen" && !hasImageMarkdown;
+                isCurrentlyStreaming && routedMode === "image_gen" && !hasImageMarkdown;
               const isThinking =
                 msg.sender === "agent" &&
+                isCurrentlyStreaming &&
                 (msg.content === "" || isImageGenStreaming) &&
                 !hasContentBlocks &&
                 !hasReasoning &&
