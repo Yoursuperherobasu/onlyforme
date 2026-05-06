@@ -188,6 +188,18 @@ class TraceStore:
 _TRACE_FETCH_CACHE: dict[str, dict[str, Any]] = {}
 _TRACE_CACHE_TTL = 12.0
 _TRACE_CACHE_STALE = 90.0
+# Broad scopes (e.g. super-admin viewing all orgs) are far more expensive to
+# recompute than narrow ones. Heuristic: many clients OR many allowed users
+# ⇒ broad scope ⇒ tolerate longer cache age. The numbers under-shoot on
+# purpose so a single-tenant 2-project case stays narrow.
+_TRACE_CACHE_TTL_BROAD = 120.0
+_TRACE_CACHE_STALE_BROAD = 300.0
+_BROAD_SCOPE_CLIENT_THRESHOLD = 3
+_BROAD_SCOPE_USER_THRESHOLD = 50
+# Cap on parallel Langfuse fetches per request — protects Langfuse from
+# fan-out under super-admin load while still letting us collapse N×roundtrip
+# into ~1×roundtrip for the common case (≤8 projects).
+_BROAD_FETCH_MAX_WORKERS = 8
 
 
 def _scoped_trace_cache_key(
@@ -252,15 +264,21 @@ def _fetch_scoped_traces(
     cache_key = _scoped_trace_cache_key(
         clients, allowed_user_ids, from_timestamp, to_timestamp, name, limit, fetch_all, environment,
     )
+    is_broad_scope = (
+        len(clients) >= _BROAD_SCOPE_CLIENT_THRESHOLD
+        or len(allowed_user_ids) >= _BROAD_SCOPE_USER_THRESHOLD
+    )
+    fresh_ttl = _TRACE_CACHE_TTL_BROAD if is_broad_scope else _TRACE_CACHE_TTL
+    stale_ttl = _TRACE_CACHE_STALE_BROAD if is_broad_scope else _TRACE_CACHE_STALE
     now_mono = time.monotonic()
     cached_entry = _TRACE_FETCH_CACHE.get(cache_key)
     stale_traces: list[Any] = []
     if cached_entry:
         cached_age = now_mono - float(cached_entry.get("ts", 0))
         cached_traces = cached_entry.get("traces", []) or []
-        if cached_age <= _TRACE_CACHE_TTL and cached_traces:
+        if cached_age <= fresh_ttl and cached_traces:
             return list(cached_traces)
-        if cached_age <= _TRACE_CACHE_STALE and cached_traces:
+        if cached_age <= stale_ttl and cached_traces:
             stale_traces = list(cached_traces)
 
     def _attach_client_idx(trace_obj: Any, idx: int) -> Any:
@@ -282,14 +300,17 @@ def _fetch_scoped_traces(
     # old (UUID) and new (username + user_uuid metadata) trace shapes.
 
     def _fetch_client_traces_broad(client_obj: Any, broad_limit: int) -> list[Any]:
-        page_size = min(100, max(1, broad_limit))
+        # 50 × ~2KB/trace (with fields=core,metrics) ≈ 100KB per response —
+        # safely under the Next.js 4MB Pages-API cap on Langfuse.
+        page_size = min(50, max(1, broad_limit))
         max_pages = max(1, (broad_limit + page_size - 1) // page_size)
 
         if hasattr(client_obj, "fetch_traces"):
             try:
                 rows: list[Any] = []
+                supports_fields = True
                 for page in range(1, max_pages + 1):
-                    kwargs: dict[str, Any] = {"limit": page_size}
+                    kwargs: dict[str, Any] = {"limit": page_size, "order_by": "timestamp.desc"}
                     if from_timestamp:
                         kwargs["from_timestamp"] = from_timestamp
                     if to_timestamp:
@@ -298,7 +319,14 @@ def _fetch_scoped_traces(
                         kwargs["name"] = name
                     if environment:
                         kwargs["environment"] = environment
-                    resp = client_obj.fetch_traces(**kwargs, page=page)
+                    if supports_fields:
+                        kwargs["fields"] = "core,metrics"
+                    try:
+                        resp = client_obj.fetch_traces(**kwargs, page=page)
+                    except TypeError:
+                        supports_fields = False
+                        kwargs.pop("fields", None)
+                        resp = client_obj.fetch_traces(**kwargs, page=page)
                     page_rows = _response_to_traces(resp)
                     if not page_rows:
                         break
@@ -316,8 +344,9 @@ def _fetch_scoped_traces(
             if trace_api and hasattr(trace_api, "list"):
                 try:
                     rows = []
+                    supports_fields = True
                     for page in range(1, max_pages + 1):
-                        kwargs = {"limit": page_size, "page": page}
+                        kwargs = {"limit": page_size, "page": page, "order_by": "timestamp.desc"}
                         if from_timestamp:
                             kwargs["from_timestamp"] = from_timestamp
                         if to_timestamp:
@@ -326,7 +355,14 @@ def _fetch_scoped_traces(
                             kwargs["name"] = name
                         if environment:
                             kwargs["environment"] = environment
-                        resp = trace_api.list(**kwargs)
+                        if supports_fields:
+                            kwargs["fields"] = "core,metrics"
+                        try:
+                            resp = trace_api.list(**kwargs)
+                        except TypeError:
+                            supports_fields = False
+                            kwargs.pop("fields", None)
+                            resp = trace_api.list(**kwargs)
                         page_rows = _response_to_traces(resp)
                         if not page_rows:
                             break
@@ -340,9 +376,37 @@ def _fetch_scoped_traces(
 
         return []
 
-    broad_limit = 5000 if fetch_all else min(limit, 500)
-    for client_idx, client in enumerate(clients):
-        broad_traces = _fetch_client_traces_broad(client, broad_limit)
+    # Cap fetch_all to 1000 traces (20 pages × 50). Prior 5000 caused Langfuse
+    # web pods to OOM under load. Combined with fields=core,metrics this keeps
+    # the broad-scan response set well within memory.
+    broad_limit = 1000 if fetch_all else min(limit, 200)
+
+    # Fan out per-client Langfuse fetches in parallel — Langfuse SDK is sync
+    # so a thread pool collapses N sequential HTTPs into ~1 round-trip.
+    # The merge below stays sequential so quality-score deduping is deterministic.
+    per_client_traces: list[tuple[int, list[Any]]] = []
+    if len(clients) <= 1:
+        for client_idx, client in enumerate(clients):
+            per_client_traces.append((client_idx, _fetch_client_traces_broad(client, broad_limit)))
+    else:
+        max_workers = min(_BROAD_FETCH_MAX_WORKERS, len(clients))
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as pool:
+            future_to_idx = {
+                pool.submit(_fetch_client_traces_broad, client, broad_limit): idx
+                for idx, client in enumerate(clients)
+            }
+            for fut in concurrent.futures.as_completed(future_to_idx):
+                idx = future_to_idx[fut]
+                try:
+                    per_client_traces.append((idx, fut.result()))
+                except Exception as exc:
+                    logger.debug("Per-client broad fetch failed for client {}: {}", idx, exc)
+                    per_client_traces.append((idx, []))
+        # Restore deterministic order so quality-score tie-breaks match the
+        # pre-parallel behaviour (earlier client wins on equal scores).
+        per_client_traces.sort(key=lambda pair: pair[0])
+
+    for client_idx, broad_traces in per_client_traces:
         for trace in broad_traces:
             extracted_uids = extract_trace_user_ids(trace)
             if extracted_uids and not extracted_uids.intersection(allowed_user_ids):
@@ -391,8 +455,8 @@ def fetch_traces_from_langfuse(
     The `tags`, `session_id`, and `_date_fallback_depth` parameters are
     accepted for backward compatibility but unused.
     """
-    effective_limit = 5000 if fetch_all else limit
-    page_size = min(100, effective_limit)
+    effective_limit = 1000 if fetch_all else limit
+    page_size = min(50, effective_limit)
     max_pages = max(1, (effective_limit + page_size - 1) // page_size)
     target_uid = str(user_id)
 
@@ -416,9 +480,18 @@ def fetch_traces_from_langfuse(
                 filter_kwargs["name"] = name
             if environment:
                 filter_kwargs["environment"] = environment
+            supports_fields = True
 
             for page in range(1, max_pages + 1):
-                response = call_with_rate_limit_retry(client.fetch_traces, **filter_kwargs, page=page)
+                page_kwargs = dict(filter_kwargs)
+                if supports_fields:
+                    page_kwargs["fields"] = "core,metrics"
+                try:
+                    response = call_with_rate_limit_retry(client.fetch_traces, **page_kwargs, page=page)
+                except TypeError:
+                    supports_fields = False
+                    page_kwargs.pop("fields", None)
+                    response = call_with_rate_limit_retry(client.fetch_traces, **page_kwargs, page=page)
                 page_traces = _response_to_traces(response)
                 if not page_traces:
                     break
@@ -438,6 +511,7 @@ def fetch_traces_from_langfuse(
         if trace_api and hasattr(trace_api, "list"):
             try:
                 all_traces = []
+                supports_fields = True
                 for page in range(1, max_pages + 1):
                     kwargs: dict[str, Any] = {"limit": page_size, "page": page}
                     if from_timestamp:
@@ -448,10 +522,23 @@ def fetch_traces_from_langfuse(
                         kwargs["name"] = name
                     if environment:
                         kwargs["environment"] = environment
+                    if supports_fields:
+                        kwargs["fields"] = "core,metrics"
                     try:
                         response = call_with_rate_limit_retry(trace_api.list, **kwargs)
                     except TypeError:
-                        break
+                        # TypeError here may be from `fields` kwarg on older SDKs
+                        # (retry without it) or from a deeper signature mismatch
+                        # (then bail out).
+                        if supports_fields:
+                            supports_fields = False
+                            kwargs.pop("fields", None)
+                            try:
+                                response = call_with_rate_limit_retry(trace_api.list, **kwargs)
+                            except TypeError:
+                                break
+                        else:
+                            break
                     page_traces = _response_to_traces(response)
                     if not page_traces:
                         break

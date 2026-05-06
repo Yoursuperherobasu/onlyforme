@@ -96,7 +96,7 @@ async def get_user_traces(
             from_timestamp=from_ts,
             to_timestamp=to_ts,
             environment=environment,
-            limit=min(limit * page + 50, 500),
+            limit=min(limit * page + 50, 200),
         )
 
         if session_id:
@@ -169,11 +169,15 @@ async def get_trace_detail(
                 break
 
         if not trace:
-            logger.info(f"get_trace_detail: searching {len(scoped_clients)} client(s) for trace_id variants={_tid_variants}")
+            # Per-client search emits debug-level chatter only — a miss on
+            # client[0] before a hit on client[1] is expected, not an error.
+            # The genuine "not found across all clients" log is the warning at
+            # the end of this block.
+            logger.debug(f"get_trace_detail: searching {len(scoped_clients)} client(s) for trace_id variants={_tid_variants}")
             for idx, cand_client in enumerate(scoped_clients):
                 _api = getattr(cand_client, 'api', None)
                 _api_attrs = [a for a in dir(_api) if not a.startswith('_')] if _api else []
-                logger.info(
+                logger.debug(
                     f"get_trace_detail: client[{idx}] type={type(cand_client).__name__}, "
                     f"has_fetch_trace={hasattr(cand_client, 'fetch_trace')}, "
                     f"is_v3={is_v3_client(cand_client)}, "
@@ -190,7 +194,7 @@ async def get_trace_detail(
                             _t = resp.data if hasattr(resp, "data") else resp
                             if _t:
                                 s = _trace_quality_score(_t)
-                                logger.info(f"get_trace_detail: client[{idx}] fetch_trace({_tid_v}) found trace, quality={s}")
+                                logger.debug(f"get_trace_detail: client[{idx}] fetch_trace({_tid_v}) found trace, quality={s}")
                                 if s > best_score:
                                     best_trace, best_client, best_score = _t, cand_client, s
                         except Exception as e:
@@ -198,14 +202,14 @@ async def get_trace_detail(
                     if is_v3_client(cand_client) and hasattr(cand_client, "api") and hasattr(cand_client.api, "trace"):
                         try:
                             _t = call_with_rate_limit_retry(cand_client.api.trace.get, _tid_v)
-                            logger.info(f"get_trace_detail: client[{idx}] api.trace.get({_tid_v}) returned type={type(_t).__name__}, truthy={bool(_t)}")
+                            logger.debug(f"get_trace_detail: client[{idx}] api.trace.get({_tid_v}) returned type={type(_t).__name__}, truthy={bool(_t)}")
                             if _t:
                                 s = _trace_quality_score(_t)
-                                logger.info(f"get_trace_detail: client[{idx}] api.trace.get({_tid_v}) found trace, quality={s}")
+                                logger.debug(f"get_trace_detail: client[{idx}] api.trace.get({_tid_v}) found trace, quality={s}")
                                 if s > best_score:
                                     best_trace, best_client, best_score = _t, cand_client, s
                         except Exception as e:
-                            logger.info(f"get_trace_detail: client[{idx}] api.trace.get({_tid_v}) EXCEPTION: {type(e).__name__}: {e}")
+                            logger.debug(f"get_trace_detail: client[{idx}] api.trace.get({_tid_v}) EXCEPTION: {type(e).__name__}: {e}")
 
         if best_trace is not None:
             trace = best_trace

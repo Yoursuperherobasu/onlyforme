@@ -17,9 +17,10 @@ import { CustomTooltip } from "./StatCard";
 interface UsageTabProps {
   metrics: Metrics | undefined;
   metricsLoading: boolean;
+  metricsFetching?: boolean;
 }
 
-export function UsageTab({ metrics, metricsLoading }: UsageTabProps) {
+export function UsageTab({ metrics, metricsLoading, metricsFetching }: UsageTabProps) {
   const [search, setSearch] = useState("");
   const filteredUsageData = useMemo(() => {
     if (!metrics?.by_date) return [];
@@ -28,7 +29,8 @@ export function UsageTab({ metrics, metricsLoading }: UsageTabProps) {
     return metrics.by_date.filter(day => day.date?.toLowerCase().includes(s));
   }, [metrics?.by_date, search]);
 
-  if (metricsLoading) return <Skeleton className="h-64" />;
+  if (!metrics && metricsLoading) return <Skeleton className="h-64" />;
+  void metricsFetching;
 
   return (
     <div className="space-y-4">

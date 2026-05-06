@@ -13,9 +13,10 @@ import type { Metrics } from "../types";
 interface ModelsTabProps {
   metrics: Metrics | undefined;
   metricsLoading: boolean;
+  metricsFetching?: boolean;
 }
 
-export function ModelsTab({ metrics, metricsLoading }: ModelsTabProps) {
+export function ModelsTab({ metrics, metricsLoading, metricsFetching }: ModelsTabProps) {
   const [search, setSearch] = useState("");
   const filteredModels = useMemo(() => {
     if (!metrics?.by_model) return [];
@@ -24,7 +25,10 @@ export function ModelsTab({ metrics, metricsLoading }: ModelsTabProps) {
     return metrics.by_model.filter(m => m.model?.toLowerCase().includes(s));
   }, [metrics?.by_model, search]);
 
-  if (metricsLoading) return <Skeleton className="h-64" />;
+  // Skeleton only on the genuinely empty initial render — keep previous data
+  // on background refetch and let the parent show its refresh indicator.
+  if (!metrics && metricsLoading) return <Skeleton className="h-64" />;
+  void metricsFetching;
 
   return (
     <div className="space-y-4">

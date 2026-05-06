@@ -345,7 +345,11 @@ def _ensure_reasoning_completion_budget(
     if current_value is None:
         return None
 
-    minimum_safe_budget = 32
+    # Reasoning models (gpt-5, o1, o3) consume max_completion_tokens for hidden
+    # reasoning before producing visible output. A budget of 32 was fully consumed
+    # by reasoning_tokens, returning an empty completion and causing self-check
+    # rails to default-deny every input. 256 leaves room for both.
+    minimum_safe_budget = 256
     if current_value < minimum_safe_budget:
         params["max_completion_tokens"] = minimum_safe_budget
         return current_value
@@ -750,7 +754,21 @@ def _build_rails_from_config_path(config_dir: Path) -> Any:
                     logger.info(
                         "NeMo llm_call adjusted: raised max_completion_tokens for reasoning self-check stability "
                         f"for provider={provider}, model={resolved_model_name}, "
-                        f"original_max_completion_tokens={previous_budget}, new_max_completion_tokens=32"
+                        f"original_max_completion_tokens={previous_budget}, "
+                        f"new_max_completion_tokens={params.get('max_completion_tokens')}"
+                    )
+
+                if (
+                    _is_openai_reasoning_family(
+                        provider=provider, model_name=str(resolved_model_name)
+                    )
+                    and "reasoning_effort" not in params
+                ):
+                    params["reasoning_effort"] = "minimal"
+                    logger.info(
+                        "NeMo llm_call adjusted: set reasoning_effort=minimal for reasoning-family model "
+                        f"to preserve completion-token budget for provider={provider}, "
+                        f"model={resolved_model_name}"
                     )
 
             try:
