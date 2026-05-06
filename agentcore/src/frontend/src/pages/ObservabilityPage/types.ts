@@ -1,4 +1,4 @@
-export type DateRangePreset = "today" | "7d" | "30d" | "90d" | "all";
+export type DateRangePreset = "today" | "7d" | "30d" | "90d" | "180d";
 export type LangfuseEnvironment = "uat" | "production";
 
 export interface Filters {

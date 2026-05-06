@@ -79,10 +79,9 @@ async def get_user_agents(
             fname = folders_by_id.get(fid).name if fid and fid in folders_by_id else None
             agent_to_folder[str(agent.id)] = (fid, fname)
 
-        # "All time" is bounded to 365 days to keep Langfuse trace fetches
-        # tractable. Without a bound, broad scans previously OOM-killed the
-        # langfuse-web pod.
-        from_ts, to_ts = compute_date_range(from_date, to_date, tz_offset, default_days=365)
+        # Backstop default window: 180 days (matches the frontend's longest
+        # preset). Prevents unbounded scans if a client omits from_date.
+        from_ts, to_ts = compute_date_range(from_date, to_date, tz_offset, default_days=180)
 
         traces, truncated = TraceStore.get_traces(
             clients=scoped_clients,
@@ -153,10 +152,9 @@ async def get_agent_detail(
         agents_by_id = {str(agent.id): agent}
         agents_by_name = {agent.name: agent}
 
-        # "All time" is bounded to 365 days to keep Langfuse trace fetches
-        # tractable. Without a bound, broad scans previously OOM-killed the
-        # langfuse-web pod.
-        from_ts, to_ts = compute_date_range(from_date, to_date, tz_offset, default_days=365)
+        # Backstop default window: 180 days (matches the frontend's longest
+        # preset). Prevents unbounded scans if a client omits from_date.
+        from_ts, to_ts = compute_date_range(from_date, to_date, tz_offset, default_days=180)
 
         traces, _ = TraceStore.get_traces(
             clients=scoped_clients,

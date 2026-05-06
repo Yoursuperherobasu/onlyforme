@@ -5,7 +5,7 @@ export const DATE_RANGE_LABELS: Record<DateRangePreset, string> = {
   "7d": "Last 7 days",
   "30d": "Last 30 days",
   "90d": "Last 90 days",
-  all: "All time",
+  "180d": "Last 180 days",
 };
 
 export function formatLocalDate(date: Date): string {
@@ -16,7 +16,6 @@ export function formatLocalDate(date: Date): string {
 }
 
 export function getDateRangeParams(preset: DateRangePreset): { from_date?: string; to_date?: string } {
-  if (preset === "all") return {};
   const now = new Date();
   const to_date = formatLocalDate(now);
   let from_date: string;
@@ -32,6 +31,9 @@ export function getDateRangeParams(preset: DateRangePreset): { from_date?: strin
       break;
     case "90d":
       from_date = formatLocalDate(new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000));
+      break;
+    case "180d":
+      from_date = formatLocalDate(new Date(now.getTime() - 180 * 24 * 60 * 60 * 1000));
       break;
     default:
       return {};
