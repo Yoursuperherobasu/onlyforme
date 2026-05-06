@@ -72,6 +72,8 @@ const AlertDropdown = forwardRef<HTMLDivElement, AlertDropdownType>(
     // Accumulate IDs visible in the current open session; committed to seenIds on close
     const pendingSeenRef = useRef<Set<string>>(new Set());
 
+    const serverTitles = new Set(serverNotifications.map((n) => n.title));
+
     const mergedNotifications = [
       ...serverNotifications.map((item) => {
         const loweredTitle = item.title.toLowerCase();
@@ -90,7 +92,7 @@ const AlertDropdown = forwardRef<HTMLDivElement, AlertDropdownType>(
           is_read: item.is_read ?? false,
         };
       }),
-      ...notificationList,
+      ...notificationList.filter((n) => !serverTitles.has(n.title)),
     ];
 
     const recentNotifications = mergedNotifications.filter((n) =>

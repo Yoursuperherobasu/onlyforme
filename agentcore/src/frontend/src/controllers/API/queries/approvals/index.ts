@@ -22,5 +22,6 @@ export {
   useGetApprovalNotifications,
   useMarkApprovalNotificationRead,
   useMarkAllApprovalNotificationsRead,
+  useDeleteAllApprovalNotifications,
 } from "./use-approval-notifications";
 export type { ApprovalNotification } from "./use-approval-notifications";

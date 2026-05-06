@@ -12,10 +12,12 @@ export function DefaultEdge({
   source,
   sourceX,
   sourceY,
+  sourcePosition,
   target,
   targetHandleId,
   targetX,
   targetY,
+  targetPosition,
   ...props
 }: EdgeProps) {
   const getNode = useAgentStore((state) => state.getNode);

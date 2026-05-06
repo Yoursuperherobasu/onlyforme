@@ -75,3 +75,28 @@ export const useMarkAllApprovalNotificationsRead: useMutationFunctionType<
 
   return mutation;
 };
+
+export const useDeleteAllApprovalNotifications: useMutationFunctionType<
+  undefined,
+  undefined
+> = (options?) => {
+  const { mutate, queryClient } = UseRequestProcessor();
+
+  const deleteAllFn = async (): Promise<void> => {
+    await api.delete(`${getURL("APPROVALS")}/notifications`);
+  };
+
+  const mutation: UseMutationResult<void, any, void> = mutate(
+    ["useDeleteAllApprovalNotifications"],
+    deleteAllFn,
+    {
+      ...options,
+      onSettled: (data, error, variables, context) => {
+        queryClient.refetchQueries({ queryKey: ["useGetApprovalNotifications"] });
+        options?.onSettled?.(data, error, variables, context);
+      },
+    },
+  );
+
+  return mutation;
+};

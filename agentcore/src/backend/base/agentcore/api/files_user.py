@@ -502,14 +502,26 @@ async def upload_user_file(
             if files:
                 counts = []
 
-                # Extract the count from the filename
+                # Extract the count from the filename, but only for files with the same extension
                 for my_file in files:
-                    match = re.search(r"\((\d+)\)(?=\.\w+$|$)", my_file.name)
-                    if match:
-                        counts.append(int(match.group(1)))
+                    # Extract the file extension from the path to ensure we only match files with the same extension
+                    my_file_path = my_file.path if hasattr(my_file, 'path') else ""
+                    my_file_ext = ""
+                    if "." in my_file_path:
+                        try:
+                            my_file_ext = my_file_path.rsplit(".", 1)[1].lower()
+                        except (ValueError, IndexError):
+                            my_file_ext = ""
+                    
+                    # Only count as a duplicate if it has the same extension
+                    if my_file_ext == file_extension.lower() if file_extension else (not my_file_ext):
+                        match = re.search(r"\((\d+)\)(?=\.\w+$|$)", my_file.name)
+                        if match:
+                            counts.append(int(match.group(1)))
 
                 count = max(counts) if counts else 0
-                root_filename = f"{root_filename} ({count + 1})"
+                if count > 0:
+                    root_filename = f"{root_filename} ({count + 1})"
 
             # Create the unique filename with extension for storage
             unique_filename = f"{root_filename}.{file_extension}" if file_extension else root_filename

@@ -100,25 +100,19 @@ export default function AgentBuilderPage({ view }: { view?: boolean }): JSX.Elem
   const { mutateAsync: getAgent } = useGetAgent();
 
   const handleSave = () => {
-    let saving = true;
-    let proceed = false;
-    setTimeout(() => {
-      saving = false;
-      if (proceed) {
-        blocker.proceed && blocker.proceed();
-        setSuccessData({
-          title: t("Agent saved successfully!"),
-        });
-      }
-    }, 1200);
+    let done = false;
+    const tryProceed = () => {
+      if (done || blocker.state !== "blocked") return;
+      done = true;
+      blocker.proceed!();
+      setSuccessData({ title: t("Agent saved successfully!") });
+    };
+
+    const timeoutId = setTimeout(tryProceed, 1200);
+
     saveAgent().then(() => {
-      if (!autoSaving || saving === false) {
-        blocker.proceed && blocker.proceed();
-        setSuccessData({
-          title: t("Agent saved successfully!"),
-        });
-      }
-      proceed = true;
+      clearTimeout(timeoutId);
+      tryProceed();
     });
   };
 
@@ -126,7 +120,7 @@ export default function AgentBuilderPage({ view }: { view?: boolean }): JSX.Elem
     if (isBuilding) {
       // Do nothing, let the blocker handle it
     } else if (changesNotSaved) {
-      if (blocker.proceed) blocker.proceed();
+      if (blocker.state === "blocked") blocker.proceed!();
     } else {
       navigate("/all");
     }
@@ -212,7 +206,7 @@ export default function AgentBuilderPage({ view }: { view?: boolean }): JSX.Elem
       if (isBuilding) {
         stopBuilding();
       } else if (!changesNotSaved) {
-        blocker.proceed && blocker.proceed();
+        if (blocker.state === "blocked") blocker.proceed!();
       }
     }
   }, [blocker.state, isBuilding, stopBuilding, changesNotSaved, isReadOnlyMode]);

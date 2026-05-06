@@ -15,6 +15,7 @@ import {
   useGetApprovalNotifications,
   useMarkAllApprovalNotificationsRead,
   useMarkApprovalNotificationRead,
+  useDeleteAllApprovalNotifications,
 } from "@/controllers/API/queries/approvals";
 import useAlertStore from "@/stores/alertStore";
 import AgentMenu from "./components/AgentMenu";
@@ -41,6 +42,7 @@ export default function AppHeader(): JSX.Element {
   });
   const { mutate: markApprovalNotificationRead } = useMarkApprovalNotificationRead();
   const { mutate: markAllApprovalNotificationsRead } = useMarkAllApprovalNotificationsRead();
+  const { mutate: deleteAllApprovalNotifications } = useDeleteAllApprovalNotifications();
 
   useEffect(() => {
     // Listen for sidebar state changes via custom event
@@ -156,7 +158,7 @@ export default function AppHeader(): JSX.Element {
           markServerNotificationRead={(id) =>
             markApprovalNotificationRead({ notificationId: id })
           }
-          markAllServerNotificationsRead={() => markAllApprovalNotificationsRead(undefined)}
+          markAllServerNotificationsRead={() => deleteAllApprovalNotifications(undefined)}
         >
           <Button
             ref={notificationRef}

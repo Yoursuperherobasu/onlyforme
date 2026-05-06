@@ -209,6 +209,24 @@ async def mark_all_approval_notifications_read(
     return None
 
 
+@router.delete("/notifications", status_code=204)
+async def delete_all_approval_notifications(
+    session: DbSession,
+    current_user: CurrentActiveUser,
+):
+    rows = (
+        await session.exec(
+            select(ApprovalNotification).where(
+                ApprovalNotification.recipient_user_id == current_user.id,
+            )
+        )
+    ).all()
+    for row in rows:
+        await session.delete(row)
+    await session.commit()
+    return None
+
+
 @router.post("/notifications/general", status_code=201)
 async def create_general_notification(
     body: GeneralNotificationCreate,
