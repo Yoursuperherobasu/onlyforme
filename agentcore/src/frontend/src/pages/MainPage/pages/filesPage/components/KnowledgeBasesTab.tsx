@@ -745,7 +745,6 @@ const KnowledgeBasesTab = ({
                   title={params.value}
                 >
                   {params.value}
-                  {type ? `.${type}` : ""}
                 </span>
               </div>
               <ShadTooltip content={t("Delete file")} side="left">
@@ -977,7 +976,7 @@ const KnowledgeBasesTab = ({
       size="small-h-full"
       open={isUploadModalOpen}
       setOpen={(next) => {
-        // Don't let the user dismiss the modal mid-upload — the underlying
+        // Don't let the user dismiss the modal mid-upload â the underlying
         // request is still in flight and another click would re-trigger it.
         if (isUploading && !next) return;
         setIsUploadModalOpen(next);
