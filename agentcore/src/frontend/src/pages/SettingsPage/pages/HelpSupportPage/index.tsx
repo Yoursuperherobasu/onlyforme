@@ -299,28 +299,27 @@ export default function HelpSupportPage() {
         )}
       </div>
 
-      {/* ── Footer (max 2 lines) ─────────────────────────────────── */}
+      {/* ── Footer ───────────────────────────────────────────────── */}
       <div className="flex-shrink-0 border-t bg-muted/20 px-4 py-2 sm:px-6 md:px-8">
-        <p className="text-center text-xs text-muted-foreground">
-          <span className="font-semibold">{t("Support:")}</span>{" "}
+        <p className="mx-auto max-w-5xl text-center text-xs leading-relaxed text-muted-foreground">
+          {t("For support or assistance with MiCore, contact")}{" "}
           <a
-            href="mailto:support@micore.ai"
+            href="mailto:MiCore.support@motherson.com"
             className="font-semibold text-foreground underline-offset-2 hover:underline"
           >
-            support@micore.ai
+            MiCore.support@motherson.com
           </a>
-          <span className="mx-2 text-muted-foreground/50">·</span>
-          <span className="font-semibold">{t("Escalation:")}</span>{" "}
+          {"; "}
+          {t("for escalations, reach out to")}{" "}
           <a
-            href="mailto:escalation@micore.ai"
+            href="mailto:Saurav.Mehta@motherson.com"
             className="font-semibold text-foreground underline-offset-2 hover:underline"
           >
-            escalation@micore.ai
+            Saurav.Mehta@motherson.com
           </a>
-        </p>
-        <p className="mt-0.5 text-center text-[11px] text-muted-foreground/70">
+          {". "}
           {t(
-            "Include project name, screenshots, logs, and issue description for quicker resolution.",
+            "Please include relevant details such as project name, screenshots, logs, and issue description for quicker resolution.",
           )}
         </p>
       </div>

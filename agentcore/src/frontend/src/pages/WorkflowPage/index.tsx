@@ -1442,11 +1442,10 @@ export default function WorkflowsView({
         .wf-mirror-bar::-webkit-scrollbar-thumb:hover { background: hsl(var(--foreground) / 0.8); }
         .wf-mirror-bar { scrollbar-width: thin; scrollbar-color: hsl(var(--muted-foreground)) hsl(var(--muted)); }
       `}</style>
-      <div className="flex-1 flex flex-col overflow-hidden">
-      <div ref={tableScrollRef} className="wf-table-scroll flex-1 overflow-auto">
-        <div className="pt-4 px-4 sm:pt-6 sm:px-6 w-full">
-        <div style={{ width: "max-content", minWidth: "100%" }} className="rounded-lg border bg-card">
-  <table style={{ width: "max-content", minWidth: "100%" }} className="table-fixed text-sm">
+      <div className="flex-1 flex flex-col overflow-hidden p-4 sm:p-6 gap-3">
+        <div className="flex-1 min-h-0 flex flex-col overflow-hidden rounded-lg border bg-card">
+          <div ref={tableScrollRef} className="wf-table-scroll flex-1 overflow-auto">
+            <table style={{ width: "max-content", minWidth: "100%" }} className="table-fixed text-sm">
             <colgroup>
               <col className="w-[20rem]" />
               <col className="w-[6.5rem]" />
@@ -1842,9 +1841,12 @@ export default function WorkflowsView({
               )}
             </tbody>
           </table>
+          </div>
+          <div ref={mirrorRef} className="wf-mirror-bar flex-shrink-0 overflow-x-scroll overflow-y-hidden border-t" style={{ height: 12 }}>
+            <div ref={phantomRef} style={{ height: 1 }} />
+          </div>
         </div>
-        </div>
-        <div className="px-4 sm:px-6 pt-4 pb-4 flex items-center justify-between">
+        <div className="flex items-center justify-between flex-shrink-0">
           <div className="text-sm text-muted-foreground">
             {t("Rows per page")}
           </div>
@@ -1857,10 +1859,6 @@ export default function WorkflowsView({
             </button>
           </div>
         </div>
-      </div>
-      <div ref={mirrorRef} className="wf-mirror-bar flex-shrink-0 overflow-x-scroll overflow-y-hidden" style={{ height: 12 }}>
-        <div ref={phantomRef} style={{ height: 1 }} />
-      </div>
       </div>
 
       <Dialog
