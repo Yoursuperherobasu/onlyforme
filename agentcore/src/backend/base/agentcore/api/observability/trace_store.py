@@ -300,12 +300,15 @@ def _fetch_scoped_traces(
     # old (UUID) and new (username + user_uuid metadata) trace shapes.
 
     def _fetch_client_traces_broad(client_obj: Any, broad_limit: int) -> list[Any]:
-        page_size = min(100, max(1, broad_limit))
+        # 50 × ~2KB/trace (with fields=core,metrics) ≈ 100KB per response —
+        # safely under the Next.js 4MB Pages-API cap on Langfuse.
+        page_size = min(50, max(1, broad_limit))
         max_pages = max(1, (broad_limit + page_size - 1) // page_size)
 
         if hasattr(client_obj, "fetch_traces"):
             try:
                 rows: list[Any] = []
+                supports_fields = True
                 for page in range(1, max_pages + 1):
                     kwargs: dict[str, Any] = {"limit": page_size, "order_by": "timestamp.desc"}
                     if from_timestamp:
@@ -316,7 +319,14 @@ def _fetch_scoped_traces(
                         kwargs["name"] = name
                     if environment:
                         kwargs["environment"] = environment
-                    resp = client_obj.fetch_traces(**kwargs, page=page)
+                    if supports_fields:
+                        kwargs["fields"] = "core,metrics"
+                    try:
+                        resp = client_obj.fetch_traces(**kwargs, page=page)
+                    except TypeError:
+                        supports_fields = False
+                        kwargs.pop("fields", None)
+                        resp = client_obj.fetch_traces(**kwargs, page=page)
                     page_rows = _response_to_traces(resp)
                     if not page_rows:
                         break
@@ -334,6 +344,7 @@ def _fetch_scoped_traces(
             if trace_api and hasattr(trace_api, "list"):
                 try:
                     rows = []
+                    supports_fields = True
                     for page in range(1, max_pages + 1):
                         kwargs = {"limit": page_size, "page": page, "order_by": "timestamp.desc"}
                         if from_timestamp:
@@ -344,7 +355,14 @@ def _fetch_scoped_traces(
                             kwargs["name"] = name
                         if environment:
                             kwargs["environment"] = environment
-                        resp = trace_api.list(**kwargs)
+                        if supports_fields:
+                            kwargs["fields"] = "core,metrics"
+                        try:
+                            resp = trace_api.list(**kwargs)
+                        except TypeError:
+                            supports_fields = False
+                            kwargs.pop("fields", None)
+                            resp = trace_api.list(**kwargs)
                         page_rows = _response_to_traces(resp)
                         if not page_rows:
                             break
@@ -358,7 +376,10 @@ def _fetch_scoped_traces(
 
         return []
 
-    broad_limit = 5000 if fetch_all else min(limit, 500)
+    # Cap fetch_all to 1000 traces (20 pages × 50). Prior 5000 caused Langfuse
+    # web pods to OOM under load. Combined with fields=core,metrics this keeps
+    # the broad-scan response set well within memory.
+    broad_limit = 1000 if fetch_all else min(limit, 200)
 
     # Fan out per-client Langfuse fetches in parallel — Langfuse SDK is sync
     # so a thread pool collapses N sequential HTTPs into ~1 round-trip.
@@ -434,8 +455,8 @@ def fetch_traces_from_langfuse(
     The `tags`, `session_id`, and `_date_fallback_depth` parameters are
     accepted for backward compatibility but unused.
     """
-    effective_limit = 5000 if fetch_all else limit
-    page_size = min(100, effective_limit)
+    effective_limit = 1000 if fetch_all else limit
+    page_size = min(50, effective_limit)
     max_pages = max(1, (effective_limit + page_size - 1) // page_size)
     target_uid = str(user_id)
 
@@ -459,9 +480,18 @@ def fetch_traces_from_langfuse(
                 filter_kwargs["name"] = name
             if environment:
                 filter_kwargs["environment"] = environment
+            supports_fields = True
 
             for page in range(1, max_pages + 1):
-                response = call_with_rate_limit_retry(client.fetch_traces, **filter_kwargs, page=page)
+                page_kwargs = dict(filter_kwargs)
+                if supports_fields:
+                    page_kwargs["fields"] = "core,metrics"
+                try:
+                    response = call_with_rate_limit_retry(client.fetch_traces, **page_kwargs, page=page)
+                except TypeError:
+                    supports_fields = False
+                    page_kwargs.pop("fields", None)
+                    response = call_with_rate_limit_retry(client.fetch_traces, **page_kwargs, page=page)
                 page_traces = _response_to_traces(response)
                 if not page_traces:
                     break
@@ -481,6 +511,7 @@ def fetch_traces_from_langfuse(
         if trace_api and hasattr(trace_api, "list"):
             try:
                 all_traces = []
+                supports_fields = True
                 for page in range(1, max_pages + 1):
                     kwargs: dict[str, Any] = {"limit": page_size, "page": page}
                     if from_timestamp:
@@ -491,10 +522,23 @@ def fetch_traces_from_langfuse(
                         kwargs["name"] = name
                     if environment:
                         kwargs["environment"] = environment
+                    if supports_fields:
+                        kwargs["fields"] = "core,metrics"
                     try:
                         response = call_with_rate_limit_retry(trace_api.list, **kwargs)
                     except TypeError:
-                        break
+                        # TypeError here may be from `fields` kwarg on older SDKs
+                        # (retry without it) or from a deeper signature mismatch
+                        # (then bail out).
+                        if supports_fields:
+                            supports_fields = False
+                            kwargs.pop("fields", None)
+                            try:
+                                response = call_with_rate_limit_retry(trace_api.list, **kwargs)
+                            except TypeError:
+                                break
+                        else:
+                            break
                     page_traces = _response_to_traces(response)
                     if not page_traces:
                         break

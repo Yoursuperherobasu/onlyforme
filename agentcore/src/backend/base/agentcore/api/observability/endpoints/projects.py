@@ -71,7 +71,10 @@ async def get_user_projects(
         agents_by_name = {f.name: f for f in user_agents}
         agent_to_folder = {str(a.id): str(a.folder_id) for a in user_agents if a.folder_id}
 
-        from_ts, to_ts = compute_date_range(from_date, to_date, tz_offset, default_days=None)
+        # "All time" is bounded to 365 days to keep Langfuse trace fetches
+        # tractable. Without a bound, broad scans previously OOM-killed the
+        # langfuse-web pod.
+        from_ts, to_ts = compute_date_range(from_date, to_date, tz_offset, default_days=365)
 
         traces, truncated = TraceStore.get_traces(
             clients=scoped_clients,
@@ -151,7 +154,10 @@ async def get_project_detail(
                 **scope_warning_payload(scope_warnings),
             )
 
-        from_ts, to_ts = compute_date_range(from_date, to_date, tz_offset, default_days=None)
+        # "All time" is bounded to 365 days to keep Langfuse trace fetches
+        # tractable. Without a bound, broad scans previously OOM-killed the
+        # langfuse-web pod.
+        from_ts, to_ts = compute_date_range(from_date, to_date, tz_offset, default_days=365)
 
         traces, _ = TraceStore.get_traces(
             clients=scoped_clients,

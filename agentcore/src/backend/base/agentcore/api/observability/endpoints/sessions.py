@@ -57,7 +57,10 @@ async def get_user_sessions(
                 **scope_warning_payload(scope_warnings),
             )
 
-        from_ts, to_ts = compute_date_range(from_date, to_date, tz_offset, default_days=None)
+        # "All time" is bounded to 365 days to keep Langfuse trace fetches
+        # tractable. Without a bound, broad scans previously OOM-killed the
+        # langfuse-web pod.
+        from_ts, to_ts = compute_date_range(from_date, to_date, tz_offset, default_days=365)
 
         traces, truncated = TraceStore.get_traces(
             clients=scoped_clients,
@@ -111,7 +114,10 @@ async def get_session_detail(
         raise HTTPException(status_code=404, detail=(scope_warnings[0] if scope_warnings else "Session not found"))
 
     try:
-        from_ts, to_ts = compute_date_range(from_date, to_date, tz_offset, default_days=None)
+        # "All time" is bounded to 365 days to keep Langfuse trace fetches
+        # tractable. Without a bound, broad scans previously OOM-killed the
+        # langfuse-web pod.
+        from_ts, to_ts = compute_date_range(from_date, to_date, tz_offset, default_days=365)
 
         all_traces, _ = TraceStore.get_traces(
             clients=scoped_clients,
