@@ -15,4 +15,5 @@ export * from "./use-delete-role";
 export * from "./use-put-role-permissions";
 export * from "./use-post-request-password-reset";
 export * from "./use-post-reset-password";
+export * from "./use-post-validate-reset-token";
 export * from "./use-post-direct-password-reset";

@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.security import OAuth2PasswordRequestForm
 from agentcore.services.database.models.user.crud import get_user_by_username
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy import func, or_
+from sqlalchemy import func, or_, update
 
 import httpx
 from pydantic import BaseModel
@@ -44,6 +44,9 @@ class PasswordResetRequest(BaseModel):
 class PasswordResetConfirm(BaseModel):
     token: str
     new_password: str
+
+class PasswordResetTokenCheck(BaseModel):
+    token: str
 
 # ---- DIRECT RESET FALLBACK MODELS (remove when SMTP is ready on client) ----
 class DirectPasswordResetRequest(BaseModel):
@@ -461,6 +464,35 @@ async def request_password_reset(body: PasswordResetRequest, request: Request, d
     raise HTTPException(status_code=500, detail=f"Could not send reset email: {smtp_error}")
 
 
+@router.post("/validate-reset-token")
+async def validate_reset_token(body: PasswordResetTokenCheck, db: DbSession):
+    """Check if a password-reset token is still usable.
+
+    Used by the reset page on mount so the user sees an "Invalid or expired
+    reset link" message immediately on a stale link, rather than only after
+    submitting a new password.
+    """
+    now = datetime.now(timezone.utc)
+    token_hash = hashlib.sha256(body.token.encode()).hexdigest()
+
+    reset_record = (
+        await db.exec(
+            select(PasswordResetToken).where(
+                PasswordResetToken.token_hash == token_hash,
+            )
+        )
+    ).first()
+
+    if (
+        not reset_record
+        or reset_record.used_at is not None
+        or reset_record.expires_at <= now
+    ):
+        raise HTTPException(status_code=400, detail="Invalid or expired reset link")
+
+    return {"valid": True}
+
+
 @router.post("/reset-password")
 async def reset_password_with_token(body: PasswordResetConfirm, db: DbSession):
     now = datetime.now(timezone.utc)
@@ -470,22 +502,34 @@ async def reset_password_with_token(body: PasswordResetConfirm, db: DbSession):
         await db.exec(
             select(PasswordResetToken).where(
                 PasswordResetToken.token_hash == token_hash,
-                PasswordResetToken.used_at.is_(None),
-                PasswordResetToken.expires_at > now,
             )
         )
     ).first()
 
-    if not reset_record:
+    if (
+        not reset_record
+        or reset_record.used_at is not None
+        or reset_record.expires_at <= now
+    ):
         raise HTTPException(status_code=400, detail="Invalid or expired reset link")
 
     user = await get_user_by_id(db, reset_record.user_id)
     if not user or not user.is_active or user.deleted_at:
         raise HTTPException(status_code=400, detail="User not found or inactive")
 
-    # Mark token as used (single-use enforcement)
-    reset_record.used_at = now
-    db.add(reset_record)
+    # Atomic single-use claim. The UPDATE only matches rows where used_at is
+    # still NULL, so a second submission of the same link cannot succeed even
+    # under concurrency or stale ORM state.
+    claim_result = await db.execute(
+        update(PasswordResetToken)
+        .where(
+            PasswordResetToken.id == reset_record.id,
+            PasswordResetToken.used_at.is_(None),
+        )
+        .values(used_at=now)
+    )
+    if (claim_result.rowcount or 0) == 0:
+        raise HTTPException(status_code=400, detail="Invalid or expired reset link")
 
     user.password = get_password_hash(body.new_password)
     user.updated_at = now

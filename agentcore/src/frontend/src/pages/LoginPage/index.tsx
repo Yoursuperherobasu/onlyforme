@@ -1,4 +1,5 @@
 import * as Form from "@radix-ui/react-form";
+import { Eye, EyeOff } from "lucide-react";
 import { useContext, useState } from "react";
 import { Link } from "react-router-dom";
 import { useLoginUser } from "@/controllers/API/queries/auth";
@@ -39,6 +40,7 @@ export default function LoginPage(): JSX.Element {
   const [inputState, setInputState] =
     useState<loginInputStateType>(CONTROL_LOGIN_STATE);
   const [showPasswordForm, setShowPasswordForm] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
 
   const { password, username } = inputState;
 
@@ -296,17 +298,35 @@ export default function LoginPage(): JSX.Element {
                       </Form.Control>
                     </Form.Field>
                     <Form.Field name="password">
-                      <Form.Control asChild>
-                        <input
-                          name="password"
-                          type="password"
-                          autoComplete="current-password"
-                          placeholder={t("Password")}
-                          value={password}
-                          onChange={handleInput}
-                          className="w-full h-11 px-4 rounded-lg border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#da2128]/30"
-                        />
-                      </Form.Control>
+                      <div className="relative">
+                        <Form.Control asChild>
+                          <input
+                            name="password"
+                            type={showPassword ? "text" : "password"}
+                            autoComplete="current-password"
+                            placeholder={t("Password")}
+                            value={password}
+                            onChange={handleInput}
+                            className="w-full h-11 pl-4 pr-11 rounded-lg border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#da2128]/30"
+                          />
+                        </Form.Control>
+                        <button
+                          type="button"
+                          onClick={() => setShowPassword((v) => !v)}
+                          aria-label={
+                            showPassword
+                              ? t("Hide password")
+                              : t("Show password")
+                          }
+                          className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                        >
+                          {showPassword ? (
+                            <EyeOff className="h-4 w-4" />
+                          ) : (
+                            <Eye className="h-4 w-4" />
+                          )}
+                        </button>
+                      </div>
                     </Form.Field>
                     <Button
                       type="submit"

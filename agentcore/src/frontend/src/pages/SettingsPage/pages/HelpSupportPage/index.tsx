@@ -230,7 +230,8 @@ export default function HelpSupportPage() {
               </p>
               {searchValue && (
                 <span className="rounded-full bg-muted px-2.5 py-0.5 text-xxs font-medium text-muted-foreground">
-                  {filteredQuestions.length} {t("result")}{filteredQuestions.length !== 1 ? "s" : ""}
+                  {filteredQuestions.length} {t("result")}
+                  {filteredQuestions.length !== 1 ? "s" : ""}
                 </span>
               )}
             </div>
@@ -296,6 +297,32 @@ export default function HelpSupportPage() {
             )}
           </div>
         )}
+      </div>
+
+      {/* ── Footer (max 2 lines) ─────────────────────────────────── */}
+      <div className="flex-shrink-0 border-t bg-muted/20 px-4 py-2 sm:px-6 md:px-8">
+        <p className="text-center text-xs text-muted-foreground">
+          <span className="font-semibold">{t("Support:")}</span>{" "}
+          <a
+            href="mailto:support@micore.ai"
+            className="font-semibold text-foreground underline-offset-2 hover:underline"
+          >
+            support@micore.ai
+          </a>
+          <span className="mx-2 text-muted-foreground/50">·</span>
+          <span className="font-semibold">{t("Escalation:")}</span>{" "}
+          <a
+            href="mailto:escalation@micore.ai"
+            className="font-semibold text-foreground underline-offset-2 hover:underline"
+          >
+            escalation@micore.ai
+          </a>
+        </p>
+        <p className="mt-0.5 text-center text-[11px] text-muted-foreground/70">
+          {t(
+            "Include project name, screenshots, logs, and issue description for quicker resolution.",
+          )}
+        </p>
       </div>
 
       {/* Create Dialog */}
