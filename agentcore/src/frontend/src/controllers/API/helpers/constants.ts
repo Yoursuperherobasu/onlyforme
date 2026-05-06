@@ -51,6 +51,7 @@ export const URLs = {
   SEMANTIC_SEARCH: `semantic-search/search`,
   REQUEST_PASSWORD_RESET: `request-password-reset`,
   RESET_PASSWORD: `reset-password`,
+  VALIDATE_RESET_TOKEN: `validate-reset-token`,
   DIRECT_PASSWORD_RESET: `direct-password-reset`,
 } as const;
 

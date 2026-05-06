@@ -243,8 +243,9 @@ export default function VectorDBView(): JSX.Element {
         .vdb-mirror-bar::-webkit-scrollbar-thumb:hover { background: hsl(var(--foreground) / 0.8); }
         .vdb-mirror-bar { scrollbar-width: thin; scrollbar-color: hsl(var(--muted-foreground)) hsl(var(--muted)); }
       `}</style>
-      <div className="flex-1 flex flex-col overflow-hidden">
-      <div ref={tableScrollRef} className="vdb-table-scroll flex-1 overflow-auto">
+      <div className="flex-1 flex flex-col overflow-hidden p-4 sm:p-6 gap-3">
+        <div className="flex-1 min-h-0 flex flex-col overflow-hidden rounded-lg border bg-card">
+          <div ref={tableScrollRef} className="vdb-table-scroll flex-1 overflow-auto">
         {isLoading ? (
           <div className="flex h-full w-full items-center justify-center">
             <Loading />
@@ -252,12 +253,10 @@ export default function VectorDBView(): JSX.Element {
         ) : (
           <>
             {!!error && (
-              <div className="mb-4 rounded-md border border-destructive/20 bg-destructive/5 px-4 py-3 text-sm text-destructive">
+              <div className="mx-4 mt-4 rounded-md border border-destructive/20 bg-destructive/5 px-4 py-3 text-sm text-destructive">
                 {t("Failed to load vector databases from database.")}
               </div>
             )}
-            <div className="pt-4 px-4 sm:pt-6 sm:px-6 w-full">
-            <div className="min-w-[900px] w-full rounded-lg border border-border bg-card">
               <table className="w-full min-w-[900px]">
                 <thead className="sticky top-0 z-10 bg-card shadow-sm">
                   <tr className="border-b border-border">
@@ -436,20 +435,19 @@ export default function VectorDBView(): JSX.Element {
                   )}
                 </tbody>
               </table>
-            </div>
-            </div>
-            <div className="px-4 sm:px-6 pt-4 pb-4 text-center text-sm text-muted-foreground">
-              {t("Showing {{shown}} of {{total}} vector databases", {
-                shown: filteredVectorDBs.length,
-                total: displayVectorDBs.length,
-              })}
-            </div>
           </>
         )}
-      </div>
-      <div ref={mirrorRef} className="vdb-mirror-bar flex-shrink-0 overflow-x-scroll overflow-y-hidden" style={{ height: 12 }}>
-        <div ref={phantomRef} style={{ height: 1 }} />
-      </div>
+          </div>
+          <div ref={mirrorRef} className="vdb-mirror-bar flex-shrink-0 overflow-x-scroll overflow-y-hidden border-t" style={{ height: 12 }}>
+            <div ref={phantomRef} style={{ height: 1 }} />
+          </div>
+        </div>
+        <div className="text-center text-sm text-muted-foreground flex-shrink-0">
+          {t("Showing {{shown}} of {{total}} vector databases", {
+            shown: filteredVectorDBs.length,
+            total: displayVectorDBs.length,
+          })}
+        </div>
       </div>
     </div>
   );

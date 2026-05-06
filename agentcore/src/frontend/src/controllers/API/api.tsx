@@ -25,6 +25,19 @@ import { useLogout, useRefreshAccessToken } from "./queries/auth";
 let refreshAccessTokenPromise: Promise<unknown> | null = null;
 let isHandlingSessionExpiry = false;
 
+// Routes that render without an authenticated session. The 401-refresh-retry
+// machinery and the session-expiry redirect must short-circuit on these,
+// otherwise authenticated queries fired by parent layouts (AppInitPage)
+// will cascade into a forced redirect to /login.
+function isPublicAuthPath(): boolean {
+  const path = window.location.pathname;
+  return (
+    path.includes("login") ||
+    path.includes("reset-password") ||
+    path.includes("forgot-password")
+  );
+}
+
 /* =========================================================
    AXIOS INSTANCE
 ========================================================= */
@@ -41,8 +54,10 @@ function forceSessionExpiryLogout() {
     return;
   }
 
-  // Already on login page — nothing to do, avoid a reload loop
-  if (window.location.pathname.includes("login")) {
+  // Already on a public auth page (login / reset-password / forgot-password)
+  // — nothing to do, avoid a reload loop that would kick the user off the
+  // password reset form.
+  if (isPublicAuthPath()) {
     return;
   }
 
@@ -251,7 +266,7 @@ function ApiInterceptor() {
   }, [accessToken, setErrorData, customHeaders]);
 
   function checkErrorCount() {
-    if (window.location.pathname.includes("login")) return;
+    if (isPublicAuthPath()) return;
 
     const currentErrorCount =
       useAuthStore.getState().authenticationErrorCount ?? 0;
@@ -270,7 +285,7 @@ function ApiInterceptor() {
   }
 
   async function tryToRenewAccessToken(error: AxiosError) {
-    if (window.location.pathname.includes("login")) return null;
+    if (isPublicAuthPath()) return null;
     if (error.config?.headers) {
       for (const [key, value] of Object.entries(customHeaders)) {
         error.config.headers[key] = value;

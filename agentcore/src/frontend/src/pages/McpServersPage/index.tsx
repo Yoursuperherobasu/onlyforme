@@ -408,8 +408,9 @@ export default function MCPServersPage() {
         .mcp-mirror-bar::-webkit-scrollbar-thumb:hover { background: hsl(var(--foreground) / 0.8); }
         .mcp-mirror-bar { scrollbar-width: thin; scrollbar-color: hsl(var(--muted-foreground)) hsl(var(--muted)); }
       `}</style>
-      <div className="flex-1 flex flex-col overflow-hidden">
-      <div ref={tableScrollRef} className="mcp-table-scroll flex-1 overflow-auto">
+      <div className="flex-1 flex flex-col overflow-hidden p-4 sm:p-6 gap-3">
+        <div className="flex-1 min-h-0 flex flex-col overflow-hidden rounded-lg border bg-card">
+          <div ref={tableScrollRef} className="mcp-table-scroll flex-1 overflow-auto">
         {isLoading ? (
           <div className="flex h-full w-full items-center justify-center">
             <Loading />
@@ -427,9 +428,6 @@ export default function MCPServersPage() {
             </div>
           </div>
         ) : (
-          <>
-            <div className="pt-4 px-4 sm:pt-6 sm:px-6">
-            <div className="w-max min-w-[1000px] rounded-lg border border-border bg-card">
               <table className="w-full min-w-[1000px]">
                 <thead className="sticky top-0 z-10 bg-card shadow-sm">
                   <tr className="border-b border-border">
@@ -746,20 +744,18 @@ export default function MCPServersPage() {
                   ))}
                 </tbody>
               </table>
-            </div>
-            </div>
-            <div className="px-4 sm:px-6 pt-4 pb-4 text-center text-sm text-muted-foreground">
-              {t("Showing {{shown}} of {{total}} servers", {
-                shown: filteredServers?.length || 0,
-                total: servers?.length || 0,
-              })}
-            </div>
-          </>
         )}
-      </div>
-      <div ref={mirrorRef} className="mcp-mirror-bar flex-shrink-0 overflow-x-scroll overflow-y-hidden" style={{ height: 12 }}>
-        <div ref={phantomRef} style={{ height: 1 }} />
-      </div>
+          </div>
+          <div ref={mirrorRef} className="mcp-mirror-bar flex-shrink-0 overflow-x-scroll overflow-y-hidden border-t" style={{ height: 12 }}>
+            <div ref={phantomRef} style={{ height: 1 }} />
+          </div>
+        </div>
+        <div className="text-center text-sm text-muted-foreground flex-shrink-0">
+          {t("Showing {{shown}} of {{total}} servers", {
+            shown: filteredServers?.length || 0,
+            total: servers?.length || 0,
+          })}
+        </div>
       </div>
 
       {/* Modals */}

@@ -230,7 +230,8 @@ export default function HelpSupportPage() {
               </p>
               {searchValue && (
                 <span className="rounded-full bg-muted px-2.5 py-0.5 text-xxs font-medium text-muted-foreground">
-                  {filteredQuestions.length} {t("result")}{filteredQuestions.length !== 1 ? "s" : ""}
+                  {filteredQuestions.length} {t("result")}
+                  {filteredQuestions.length !== 1 ? "s" : ""}
                 </span>
               )}
             </div>
@@ -296,6 +297,31 @@ export default function HelpSupportPage() {
             )}
           </div>
         )}
+      </div>
+
+      {/* ── Footer ───────────────────────────────────────────────── */}
+      <div className="flex-shrink-0 border-t bg-muted/20 px-4 py-2 sm:px-6 md:px-8">
+        <p className="mx-auto max-w-5xl text-center text-xs leading-relaxed text-muted-foreground">
+          {t("For support or assistance with MiCore, contact")}{" "}
+          <a
+            href="mailto:MiCore.support@motherson.com"
+            className="font-semibold text-foreground underline-offset-2 hover:underline"
+          >
+            MiCore.support@motherson.com
+          </a>
+          {"; "}
+          {t("for escalations, reach out to")}{" "}
+          <a
+            href="mailto:Saurav.Mehta@motherson.com"
+            className="font-semibold text-foreground underline-offset-2 hover:underline"
+          >
+            Saurav.Mehta@motherson.com
+          </a>
+          {". "}
+          {t(
+            "Please include relevant details such as project name, screenshots, logs, and issue description for quicker resolution.",
+          )}
+        </p>
       </div>
 
       {/* Create Dialog */}
