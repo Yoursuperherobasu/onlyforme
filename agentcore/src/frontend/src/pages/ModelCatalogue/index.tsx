@@ -193,20 +193,8 @@ export default function ModelCatalogue(): JSX.Element {
     [visibilityOptions.departments],
   );
 
-  // TODO: remove dummy data once real models are onboarded
-  const DUMMY_MODELS: ModelType[] = [
-    { id: "d1", display_name: "GPT-4 Turbo", model_name: "gpt-4-turbo-preview", provider: "openai", model_type: "llm", environment: "prod", environments: ["prod"], visibility_scope: "organization", is_active: true, approval_status: "approved", description: "Most capable GPT-4 model for complex tasks" } as any,
-    { id: "d2", display_name: "GPT-3.5 Turbo", model_name: "gpt-3.5-turbo", provider: "openai", model_type: "llm", environment: "uat", environments: ["uat"], visibility_scope: "department", is_active: true, approval_status: "approved", description: "Fast and cost-effective model" } as any,
-    { id: "d3", display_name: "Claude 3 Sonnet", model_name: "claude-3-sonnet-20240229", provider: "anthropic", model_type: "llm", environment: "prod", environments: ["prod"], visibility_scope: "organization", is_active: true, approval_status: "approved", description: "Balanced performance and speed" } as any,
-    { id: "d4", display_name: "Claude 3 Haiku", model_name: "claude-3-haiku-20240307", provider: "anthropic", model_type: "llm", environment: "uat", environments: ["uat"], visibility_scope: "private", is_active: false, approval_status: "pending", description: "Fastest Claude model for lightweight tasks" } as any,
-    { id: "d5", display_name: "Gemini Pro", model_name: "gemini-pro", provider: "google", model_type: "llm", environment: "prod", environments: ["prod", "uat"], visibility_scope: "organization", is_active: true, approval_status: "approved", description: "Google's advanced multimodal model" } as any,
-    { id: "d6", display_name: "Gemini Flash", model_name: "gemini-1.5-flash", provider: "google", model_type: "llm", environment: "uat", environments: ["uat"], visibility_scope: "department", is_active: true, approval_status: "approved", description: "High-speed Gemini model for quick responses" } as any,
-    { id: "d7", display_name: "Azure GPT-4o", model_name: "gpt-4o", provider: "azure", model_type: "llm", environment: "prod", environments: ["prod"], visibility_scope: "organization", is_active: true, approval_status: "approved", description: "Omni model via Azure OpenAI service" } as any,
-    { id: "d8", display_name: "Mixtral 8x7B", model_name: "mixtral-8x7b-32768", provider: "groq", model_type: "llm", environment: "uat", environments: ["uat"], visibility_scope: "department", is_active: true, approval_status: "rejected", description: "High-throughput MoE model via Groq" } as any,
-    { id: "d9", display_name: "text-embedding-3-large", model_name: "text-embedding-3-large", provider: "openai", model_type: "embedding", environment: "prod", environments: ["prod"], visibility_scope: "organization", is_active: true, approval_status: "approved", description: "High-quality text embeddings" } as any,
-    { id: "d10", display_name: "Custom LLaMA 3", model_name: "llama3-70b-custom", provider: "openai_compatible", model_type: "llm", environment: "uat", environments: ["uat"], visibility_scope: "private", is_active: true, approval_status: "approved", description: "Internally hosted LLaMA 3 70B via custom endpoint" } as any,
-  ];
-  const displayModels = (models ?? []).length > 0 ? (models ?? []) : DUMMY_MODELS;
+
+  const displayModels = models ?? [];
   const defaultProviders = (Object.keys(PROVIDER_LABELS) as ProviderFilter[]).filter(
     (p) => p !== "all",
   );
@@ -523,8 +511,8 @@ export default function ModelCatalogue(): JSX.Element {
         ) : (
           <>
             <div className="pt-4 px-4 sm:pt-6 sm:px-6 w-full">
-            <div className="min-w-[1100px] w-full rounded-lg border border-border bg-card">
-              <table className="w-full min-w-[1100px]">
+            <div style={{ width: "max-content", minWidth: "100%" }} className="rounded-lg border border-border bg-card">
+  <table style={{ width: "max-content", minWidth: "100%" }} className="">
                 <thead className="sticky top-0 z-10 bg-card shadow-sm">
                   <tr className="border-b border-border">
                     {[
