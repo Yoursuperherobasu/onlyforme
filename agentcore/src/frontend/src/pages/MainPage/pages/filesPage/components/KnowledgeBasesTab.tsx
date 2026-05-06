@@ -730,6 +730,11 @@ const KnowledgeBasesTab = ({
 
           const type =
             params.data.path?.split(".").pop()?.toLowerCase() ?? "";
+          const baseName =
+            type && params.value?.toLowerCase().endsWith(`.${type}`)
+              ? params.value.slice(0, -(type.length + 1))
+              : params.value;
+          const displayName = type ? `${baseName}.${type}` : params.value;
           return (
             <div className="flex w-full items-center justify-between">
               <div className="flex min-w-0 items-center gap-3 pl-10 font-medium">
@@ -742,9 +747,9 @@ const KnowledgeBasesTab = ({
                 />
                 <span
                   className="truncate text-sm"
-                  title={params.value}
+                  title={displayName}
                 >
-                  {params.value}
+                  {displayName}
                 </span>
               </div>
               <ShadTooltip content={t("Delete file")} side="left">
