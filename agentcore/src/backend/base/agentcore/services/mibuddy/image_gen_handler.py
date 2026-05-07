@@ -61,6 +61,45 @@ def is_image_modification_request(prompt: str, has_previous_image: bool) -> bool
     return has_modifier or has_pronoun
 
 
+async def session_has_recent_image(session_id: str) -> bool:
+    """Cheap check: does the latest assistant message in the session contain image markdown?
+
+    Lexical-only — does not download bytes. Used by the orchestrator routing
+    layer to short-circuit ambiguous edit requests ("replace human with robot")
+    into the image_gen path before the stateless intent classifier mis-labels
+    them as general_chat.
+    """
+    import re
+    try:
+        from sqlmodel import select
+        from agentcore.services.deps import session_scope
+        from agentcore.services.database.models.orch_conversation.model import OrchConversationTable
+    except Exception as e:
+        logger.debug(f"[ImageGen] Could not import DB deps for image presence check: {e}")
+        return False
+
+    try:
+        async with session_scope() as db:
+            stmt = (
+                select(OrchConversationTable)
+                .where(
+                    OrchConversationTable.session_id == session_id,
+                    OrchConversationTable.sender.in_(("agent", "model")),
+                )
+                .order_by(OrchConversationTable.timestamp.desc())
+                .limit(1)
+            )
+            row = (await db.exec(stmt)).first()
+    except Exception as e:
+        logger.debug(f"[ImageGen] session_has_recent_image query failed: {e}")
+        return False
+
+    if not row:
+        return False
+    text = getattr(row, "text", "") or ""
+    return bool(re.search(r"!\[[^\]]*\]\([^)]+\)", text))
+
+
 async def _get_last_generated_image(session_id: str, user_id: str) -> bytes | None:
     """Fetch the most recent AI-generated image from the session as raw bytes.
 
