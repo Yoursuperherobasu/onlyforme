@@ -12,6 +12,7 @@ from uuid import UUID
 from loguru import logger
 
 from agentcore.services.base import Service
+from agentcore.services.permissions import has_scope, parse_oauth_scopes
 
 
 # ---------------------------------------------------------------------------
@@ -949,13 +950,22 @@ class TriggerService(Service):
                     trigger_config=config,
                 )
 
-                # 7. Mark processed emails as read if configured
+                # 7. Mark processed emails as read if configured.
+                # Skip the PATCH when the linked account's app reg lacks
+                # Mail.ReadWrite — the trigger itself only needs Mail.Read,
+                # so the email-monitoring loop continues normally.
                 if mark_as_read:
-                    await self._mark_emails_as_read(
-                        [m.get("id") for m in new_messages if m.get("id")],
-                        access_token,
-                        task_id,
-                    )
+                    if has_scope(acct.get("granted_scopes", []), "Mail.ReadWrite"):
+                        await self._mark_emails_as_read(
+                            [m.get("id") for m in new_messages if m.get("id")],
+                            access_token,
+                            task_id,
+                        )
+                    else:
+                        logger.info(
+                            f"Email monitor {task_id}: skipping mark-as-read "
+                            f"(Mail.ReadWrite not granted on the connector's app registration)"
+                        )
 
                 await self._persist_seen_files(trigger_config_id)
 
@@ -1073,6 +1083,11 @@ class TriggerService(Service):
         import httpx
 
         token_url = f"https://login.microsoftonline.com/{config.get('tenant_id')}/oauth2/v2.0/token"
+        # Use ``.default`` so Azure AD returns a token containing whatever
+        # scopes the app reg has been admin-consented for, instead of failing
+        # with AADSTS65001 when fewer scopes are granted than we historically
+        # requested. Granted scopes from the response feed back into the
+        # account dict so trigger logic (e.g. mark-as-read) can self-gate.
         async with httpx.AsyncClient() as client:
             resp = await client.post(
                 token_url,
@@ -1081,7 +1096,7 @@ class TriggerService(Service):
                     "client_secret": config.get("client_secret"),
                     "refresh_token": refresh_token,
                     "grant_type": "refresh_token",
-                    "scope": "Mail.Read Mail.ReadWrite Mail.Send User.Read offline_access",
+                    "scope": "https://graph.microsoft.com/.default offline_access",
                 },
                 timeout=15,
             )
@@ -1093,6 +1108,9 @@ class TriggerService(Service):
         acct["access_token"] = data["access_token"]
         acct["refresh_token"] = data.get("refresh_token", refresh_token)
         acct["token_expires_at"] = time.time() + data.get("expires_in", 3600)
+        refreshed_scopes = parse_oauth_scopes(data.get("scope"))
+        if refreshed_scopes:
+            acct["granted_scopes"] = refreshed_scopes
 
         # Persist refreshed tokens back to DB
         await self._persist_outlook_tokens(config, connector_id)

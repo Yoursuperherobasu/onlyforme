@@ -14,10 +14,21 @@ from urllib.parse import quote, urlencode
 import httpx
 from loguru import logger
 
+from agentcore.services.permissions import (
+    ConnectorPermissionError,
+    parse_oauth_scopes,
+    require_scope,
+)
+
 GRAPH_BASE = "https://graph.microsoft.com/v1.0"
 TOKEN_URL = "https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token"
 AUTHORIZE_URL = "https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/authorize"
-MAIL_SCOPES = "Mail.Read Mail.ReadWrite Mail.Send User.Read offline_access"
+# ``.default`` lets Azure AD return a token with whatever scopes the app reg
+# was admin-consented for, instead of failing with AADSTS65001 when our
+# requested list exceeds what's been consented. The granted scopes are then
+# read from the token response and stored on the client so write methods can
+# self-gate.
+MAIL_SCOPES = "https://graph.microsoft.com/.default offline_access"
 
 
 class OutlookGraphMailClient:
@@ -35,6 +46,7 @@ class OutlookGraphMailClient:
         access_token: str | None = None,
         refresh_token: str | None = None,
         token_expires_at: float | None = None,
+        granted_scopes: list[str] | None = None,
     ):
         self._tenant_id = tenant_id
         self._client_id = client_id
@@ -42,6 +54,10 @@ class OutlookGraphMailClient:
         self._access_token = access_token
         self._refresh_token = refresh_token
         self._token_expires_at = token_expires_at or 0.0
+        # Actually-granted scopes from the OAuth token response. Empty list is
+        # treated as a permissive fallback by require_scope() so legacy callers
+        # that don't pass this still work as before.
+        self._granted_scopes: list[str] = list(granted_scopes) if granted_scopes else []
 
     # ── OAuth helpers ────────────────────────────────────────
 
@@ -84,6 +100,9 @@ class OutlookGraphMailClient:
         self._access_token = data["access_token"]
         self._refresh_token = data.get("refresh_token")
         self._token_expires_at = time.time() + data.get("expires_in", 3600)
+        granted = parse_oauth_scopes(data.get("scope"))
+        if granted:
+            self._granted_scopes = granted
         return data
 
     async def _refresh_access_token(self) -> str:
@@ -109,6 +128,9 @@ class OutlookGraphMailClient:
         self._access_token = data["access_token"]
         self._refresh_token = data.get("refresh_token", self._refresh_token)
         self._token_expires_at = time.time() + data.get("expires_in", 3600)
+        granted = parse_oauth_scopes(data.get("scope"))
+        if granted:
+            self._granted_scopes = granted
         logger.debug("Outlook access token refreshed")
         return self._access_token
 
@@ -133,7 +155,17 @@ class OutlookGraphMailClient:
             "access_token": self._access_token,
             "refresh_token": self._refresh_token,
             "token_expires_at": self._token_expires_at,
+            "granted_scopes": list(self._granted_scopes),
         }
+
+    @property
+    def granted_scopes(self) -> list[str]:
+        """The actually-granted Mail scopes from the OAuth token response.
+
+        Empty list = unknown/legacy → callers using require_scope/has_scope get
+        the permissive fallback (treats all permissions as granted).
+        """
+        return list(self._granted_scopes)
 
     # ── Mail read ────────────────────────────────────────────
 
@@ -219,7 +251,8 @@ class OutlookGraphMailClient:
     # ── Mail reply / send ────────────────────────────────────
 
     async def reply_to_message(self, message_id: str, body: str) -> None:
-        """Reply to a message (sender only)."""
+        """Reply to a message (sender only). Requires Mail.Send."""
+        require_scope(self._granted_scopes, "Mail.Send")
         headers = await self._headers()
         safe_id = quote(message_id, safe="")
         async with httpx.AsyncClient() as client:
@@ -232,7 +265,8 @@ class OutlookGraphMailClient:
             resp.raise_for_status()
 
     async def reply_all_to_message(self, message_id: str, body: str) -> None:
-        """Reply-all to a message."""
+        """Reply-all to a message. Requires Mail.Send."""
+        require_scope(self._granted_scopes, "Mail.Send")
         headers = await self._headers()
         safe_id = quote(message_id, safe="")
         async with httpx.AsyncClient() as client:
@@ -251,7 +285,8 @@ class OutlookGraphMailClient:
         body: str,
         cc_recipients: list[str] | None = None,
     ) -> None:
-        """Send a new email (for custom recipient mode)."""
+        """Send a new email (for custom recipient mode). Requires Mail.Send."""
+        require_scope(self._granted_scopes, "Mail.Send")
         headers = await self._headers()
         message: dict[str, Any] = {
             "subject": subject,

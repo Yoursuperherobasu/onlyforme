@@ -21,6 +21,14 @@ from agentcore.inputs.inputs import (
     MultilineInput,
 )
 from agentcore.schema.message import Message
+from agentcore.services.permissions import (
+    ConnectorPermissionError,
+    graph_permission_error_message,
+    has_scope,
+    is_graph_permission_error,
+    parse_oauth_scopes,
+    require_scope,
+)
 from agentcore.template.field.base import Output
 from agentcore.logging import logger
 
@@ -73,7 +81,13 @@ _EMAIL_PROVIDERS = {"outlook"}
 
 GRAPH_BASE = "https://graph.microsoft.com/v1.0"
 TOKEN_URL = "https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token"
-MAIL_SCOPES = "Mail.Read Mail.ReadWrite Mail.Send User.Read offline_access"
+# ``.default`` lets Azure AD return whatever scopes the app reg has been
+# admin-consented for (no AADSTS65001 when fewer scopes are granted). The
+# actually-granted scopes flow through from the token response into the
+# linked account dict's ``granted_scopes`` field; write tool methods (send_reply,
+# reply_all, send_mail) check that list and fail fast with a clear message
+# rather than calling Graph and getting an opaque 403.
+MAIL_SCOPES = "https://graph.microsoft.com/.default offline_access"
 
 
 def _fetch_outlook_connectors() -> list[str]:
@@ -195,6 +209,9 @@ def _refresh_token_sync(config: dict, acct: dict, force: bool = False) -> str:
     acct["access_token"] = data["access_token"]
     acct["refresh_token"] = data.get("refresh_token", refresh_token)
     acct["token_expires_at"] = time.time() + data.get("expires_in", 3600)
+    refreshed_scopes = parse_oauth_scopes(data.get("scope"))
+    if refreshed_scopes:
+        acct["granted_scopes"] = refreshed_scopes
 
     logger.info(f"Token refreshed successfully (expires_in={data.get('expires_in', 3600)}s)")
 
@@ -690,7 +707,11 @@ class OutlookMailComponent(Node):
         return Message(text=header + "\n".join(lines))
 
     def send_reply(self) -> Message:
-        """Reply to an email via the linked Outlook mailbox."""
+        """Reply to an email via the linked Outlook mailbox.
+
+        Requires Mail.Send. If the linked account's granted_scopes lacks it,
+        returns a clean error Message rather than attempting the Graph call.
+        """
         from urllib.parse import quote
 
         raw_id = self.message_id.strip() if self.message_id else ""
@@ -716,7 +737,11 @@ class OutlookMailComponent(Node):
         try:
             config = self._get_selected_config()
             acct = self._resolve_account(config)
+            require_scope(acct.get("granted_scopes", []), "Mail.Send")
             access_token = _refresh_token_sync(config, acct)
+        except ConnectorPermissionError as e:
+            self.status = f"Error: {e!s}"
+            return Message(text=f"Cannot send reply: {e!s}. The Azure AD app registration was not granted Mail.Send. Ask your admin to grant Mail.Send permission, then re-link the mailbox.")
         except Exception as e:
             self.status = f"Error: {e!s}"
             return Message(text=f"Failed to connect to Outlook: {e!s}")
@@ -753,6 +778,21 @@ class OutlookMailComponent(Node):
                 return Message(text=f"Authentication failed after retry: {e!s}. Re-link the mailbox on the Connectors page.")
 
         if resp.status_code not in (200, 202):
+            # If Graph itself rejects with a permission error (e.g. admin
+            # revoked Mail.Send since the connector was linked, or the local
+            # gate was permissive due to legacy / empty granted_scopes), turn
+            # the response into the same descriptive message the eager gate
+            # would have produced.
+            if is_graph_permission_error(resp.status_code, resp.text):
+                self.status = f"Reply blocked: Mail.Send not granted"
+                return Message(
+                    text=graph_permission_error_message(
+                        "Mail.Send",
+                        operation="reply",
+                        graph_status=resp.status_code,
+                        graph_body=resp.text,
+                    )
+                )
             self.status = f"Reply failed ({resp.status_code})"
             error_detail = resp.text[:300] if resp.text else "No details"
             return Message(
@@ -764,7 +804,11 @@ class OutlookMailComponent(Node):
         return Message(text=f"Reply sent successfully from {account_email} (ref: {raw_id}).")
 
     def reply_all(self) -> Message:
-        """Reply-all to an email via the linked Outlook mailbox."""
+        """Reply-all to an email via the linked Outlook mailbox.
+
+        Requires Mail.Send. If the linked account's granted_scopes lacks it,
+        returns a clean error Message rather than attempting the Graph call.
+        """
         from urllib.parse import quote
 
         raw_id = self.message_id.strip() if self.message_id else ""
@@ -789,7 +833,11 @@ class OutlookMailComponent(Node):
         try:
             config = self._get_selected_config()
             acct = self._resolve_account(config)
+            require_scope(acct.get("granted_scopes", []), "Mail.Send")
             access_token = _refresh_token_sync(config, acct)
+        except ConnectorPermissionError as e:
+            self.status = f"Error: {e!s}"
+            return Message(text=f"Cannot reply-all: {e!s}. The Azure AD app registration was not granted Mail.Send. Ask your admin to grant Mail.Send permission, then re-link the mailbox.")
         except Exception as e:
             self.status = f"Error: {e!s}"
             return Message(text=f"Failed to connect to Outlook: {e!s}")
@@ -824,6 +872,16 @@ class OutlookMailComponent(Node):
                 return Message(text=f"Authentication failed after retry: {e!s}. Re-link the mailbox on the Connectors page.")
 
         if resp.status_code not in (200, 202):
+            if is_graph_permission_error(resp.status_code, resp.text):
+                self.status = f"Reply-all blocked: Mail.Send not granted"
+                return Message(
+                    text=graph_permission_error_message(
+                        "Mail.Send",
+                        operation="reply-all",
+                        graph_status=resp.status_code,
+                        graph_body=resp.text,
+                    )
+                )
             self.status = f"Reply-all failed ({resp.status_code})"
             error_detail = resp.text[:300] if resp.text else "No details"
             return Message(text=f"Reply-all failed ({resp.status_code}): {error_detail}")
@@ -833,7 +891,11 @@ class OutlookMailComponent(Node):
         return Message(text=f"Reply-all sent successfully from {account_email} (ref: {raw_id}).")
 
     def send_mail(self) -> Message:
-        """Send a new email via the linked Outlook mailbox."""
+        """Send a new email via the linked Outlook mailbox.
+
+        Requires Mail.Send. If the linked account's granted_scopes lacks it,
+        returns a clean error Message rather than attempting the Graph call.
+        """
         to_raw = self.to_recipients.strip() if self.to_recipients else ""
         subject = self.email_subject.strip() if self.email_subject else ""
         body = self.email_body.strip() if self.email_body else ""
@@ -858,7 +920,11 @@ class OutlookMailComponent(Node):
         try:
             config = self._get_selected_config()
             acct = self._resolve_account(config)
+            require_scope(acct.get("granted_scopes", []), "Mail.Send")
             access_token = _refresh_token_sync(config, acct)
+        except ConnectorPermissionError as e:
+            self.status = f"Error: {e!s}"
+            return Message(text=f"Cannot send mail: {e!s}. The Azure AD app registration was not granted Mail.Send. Ask your admin to grant Mail.Send permission, then re-link the mailbox.")
         except Exception as e:
             self.status = f"Error: {e!s}"
             return Message(text=f"Failed to connect to Outlook: {e!s}")
@@ -900,6 +966,16 @@ class OutlookMailComponent(Node):
                 return Message(text=f"Authentication failed after retry: {e!s}. Re-link the mailbox on the Connectors page.")
 
         if resp.status_code not in (200, 202):
+            if is_graph_permission_error(resp.status_code, resp.text):
+                self.status = f"Send blocked: Mail.Send not granted"
+                return Message(
+                    text=graph_permission_error_message(
+                        "Mail.Send",
+                        operation="send mail",
+                        graph_status=resp.status_code,
+                        graph_body=resp.text,
+                    )
+                )
             self.status = f"Send failed ({resp.status_code})"
             error_detail = resp.text[:300] if resp.text else "No details"
             return Message(text=f"Send mail failed ({resp.status_code}): {error_detail}")

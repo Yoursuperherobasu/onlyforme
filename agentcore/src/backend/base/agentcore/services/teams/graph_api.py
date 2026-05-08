@@ -14,18 +14,33 @@ import time
 import httpx
 from loguru import logger
 
+from agentcore.services.permissions import (
+    ConnectorPermissionError,
+    parse_oauth_scopes,
+    require_scope,
+)
+
 
 class TeamsGraphAPIClient:
     """Client for Microsoft Graph API Teams app catalog operations.
 
     Uses delegated tokens obtained via OAuth Authorization Code flow.
-    Requires AppCatalog.ReadWrite.All delegated permission.
+    Requires ``AppCatalog.ReadWrite.All`` delegated permission for publishing
+    flows; bot messaging is independent and does not call Graph at all.
+
+    Modular permissions:
+        We request the special ``.default`` scope so Azure AD returns whatever
+        the app reg has been admin-consented for, instead of failing with
+        AADSTS65001 when AppCatalog.ReadWrite.All has not been granted. The
+        actually-granted scopes are read from the token response and stored
+        on the client; ``upload_app_to_catalog`` and other write methods then
+        gate themselves via :func:`require_scope`.
     """
 
     GRAPH_BASE = "https://graph.microsoft.com/v1.0"
     TOKEN_URL = "https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token"
     AUTHORIZE_URL = "https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/authorize"
-    SCOPES = "AppCatalog.ReadWrite.All offline_access"
+    SCOPES = "https://graph.microsoft.com/.default offline_access"
 
     def __init__(
         self,
@@ -35,6 +50,7 @@ class TeamsGraphAPIClient:
         access_token: str | None = None,
         refresh_token: str | None = None,
         token_expires_at: float | None = None,
+        granted_scopes: list[str] | None = None,
     ):
         self._tenant_id = tenant_id
         self._client_id = client_id
@@ -42,6 +58,11 @@ class TeamsGraphAPIClient:
         self._access_token = access_token
         self._refresh_token = refresh_token
         self._token_expires_at = token_expires_at or 0.0
+        # Granted delegated scopes from the token response; empty list = legacy
+        # / unknown → require_scope() falls back to permissive (treat all as
+        # granted) for backwards compatibility with tokens stored before this
+        # field was tracked.
+        self._granted_scopes: list[str] = list(granted_scopes) if granted_scopes else []
 
     def get_authorize_url(self, redirect_uri: str, state: str) -> str:
         """Generate the Microsoft OAuth authorization URL."""
@@ -86,8 +107,14 @@ class TeamsGraphAPIClient:
             self._access_token = data["access_token"]
             self._refresh_token = data.get("refresh_token")
             self._token_expires_at = time.time() + data.get("expires_in", 3600)
+            granted = parse_oauth_scopes(data.get("scope"))
+            if granted:
+                self._granted_scopes = granted
 
-            logger.info("Successfully exchanged authorization code for tokens")
+            logger.info(
+                f"Successfully exchanged authorization code for tokens "
+                f"(granted_scopes={self._granted_scopes or '<none returned>'})"
+            )
             return data
 
     async def _refresh_access_token(self) -> str:
@@ -119,6 +146,9 @@ class TeamsGraphAPIClient:
             if "refresh_token" in data:
                 self._refresh_token = data["refresh_token"]
             self._token_expires_at = time.time() + data.get("expires_in", 3600)
+            granted = parse_oauth_scopes(data.get("scope"))
+            if granted:
+                self._granted_scopes = granted
 
             logger.info("Successfully refreshed access token")
             return self._access_token
@@ -148,12 +178,28 @@ class TeamsGraphAPIClient:
         return bool(self._access_token or self._refresh_token)
 
     def get_token_data(self) -> dict:
-        """Get current token data for storage."""
+        """Get current token data for storage.
+
+        Includes ``granted_scopes`` so the caller (TeamsService) can persist
+        it alongside the token in Redis and consult it later for permission
+        gating without re-decoding tokens.
+        """
         return {
             "access_token": self._access_token,
             "refresh_token": self._refresh_token,
             "expires_at": self._token_expires_at,
+            "granted_scopes": list(self._granted_scopes),
         }
+
+    @property
+    def granted_scopes(self) -> list[str]:
+        """Granted delegated scopes from the most recent token response.
+
+        Empty list = unknown/legacy → callers using ``require_scope`` /
+        ``has_scope`` get the permissive fallback (all permissions treated as
+        granted) so existing connections keep working unchanged.
+        """
+        return list(self._granted_scopes)
 
     async def upload_app_to_catalog(self, zip_package: bytes) -> str:
         """Upload a Teams app package to the organization app catalog.
@@ -162,7 +208,13 @@ class TeamsGraphAPIClient:
         Content-Type: application/zip
 
         Returns: The external teams app ID assigned by Microsoft.
+
+        Raises:
+            ConnectorPermissionError: when the connected user's token does not
+                include ``AppCatalog.ReadWrite.All`` (admin not consented or
+                user not in the right role). API layer translates this to 403.
         """
+        require_scope(self._granted_scopes, "AppCatalog.ReadWrite.All")
         headers = await self._get_headers()
         headers["Content-Type"] = "application/zip"
 
@@ -196,7 +248,12 @@ class TeamsGraphAPIClient:
 
         POST /appCatalogs/teamsApps/{teamsAppId}/appDefinitions
         Content-Type: application/zip
+
+        Raises:
+            ConnectorPermissionError: when ``AppCatalog.ReadWrite.All`` is not
+                in the user's granted scopes.
         """
+        require_scope(self._granted_scopes, "AppCatalog.ReadWrite.All")
         headers = await self._get_headers()
         headers["Content-Type"] = "application/zip"
 
@@ -221,7 +278,12 @@ class TeamsGraphAPIClient:
         """Remove an app from the catalog.
 
         DELETE /appCatalogs/teamsApps/{teamsAppId}
+
+        Raises:
+            ConnectorPermissionError: when ``AppCatalog.ReadWrite.All`` is not
+                in the user's granted scopes.
         """
+        require_scope(self._granted_scopes, "AppCatalog.ReadWrite.All")
         headers = await self._get_headers()
 
         url = f"{self.GRAPH_BASE}/appCatalogs/teamsApps/{teams_app_external_id}"

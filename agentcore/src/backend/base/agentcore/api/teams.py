@@ -22,6 +22,7 @@ import secrets
 import time
 from uuid import UUID
 
+import httpx
 from fastapi import APIRouter, HTTPException, Query, Request, Response, status
 from fastapi.responses import HTMLResponse, RedirectResponse
 from loguru import logger
@@ -40,6 +41,12 @@ from agentcore.services.database.models.teams_app.model import (
     TeamsPublishStatusEnum,
 )
 from agentcore.services.deps import get_teams_service
+from agentcore.services.permissions import (
+    ConnectorPermissionError,
+    graph_permission_error_message,
+    has_scope,
+    is_graph_permission_error,
+)
 
 router = APIRouter(prefix="/teams", tags=["Teams"])
 
@@ -287,6 +294,8 @@ async def teams_oauth_callback(
 
     # Exchange code for tokens
     try:
+        from agentcore.services.permissions import parse_oauth_scopes
+
         redirect_uri = teams_service.get_redirect_uri()
         graph_client = teams_service.get_graph_client()
         token_data = await graph_client.exchange_code_for_tokens(code, redirect_uri)
@@ -296,14 +305,23 @@ async def teams_oauth_callback(
         if not access_token:
             logger.error(f"Token response missing access_token: {list(token_data.keys())}")
             return _oauth_popup_response("error", error="invalid_token", description="Microsoft returned an invalid token response.")
+        # Capture the actually-granted scopes from Microsoft's response so we
+        # can later check whether the user/admin consented to
+        # AppCatalog.ReadWrite.All. When missing, publish/unpublish/sync
+        # endpoints return clean 403s and the frontend disables the buttons.
+        granted_scopes = parse_oauth_scopes(token_data.get("scope"))
         stored_data = {
             "access_token": access_token,
             "refresh_token": token_data.get("refresh_token"),
             "expires_at": time.time() + token_data.get("expires_in", 3600),
+            "granted_scopes": granted_scopes,
         }
         await teams_service.store_user_tokens(user_id_str, stored_data)
 
-        logger.info(f"Stored Graph API tokens for user {user_id_str}")
+        logger.info(
+            f"Stored Graph API tokens for user {user_id_str} "
+            f"(granted_scopes={granted_scopes or '<none returned>'})"
+        )
         return _oauth_popup_response("success")
 
     except Exception as e:
@@ -343,12 +361,32 @@ setTimeout(function() {{ window.close(); }}, 1000);
 async def teams_oauth_status(
     current_user: CurrentActiveUser,
 ) -> dict:
-    """Check if the current user has connected their Microsoft account."""
+    """Check if the current user has connected their Microsoft account.
+
+    Also reports ``publishing_available`` — true when the stored token
+    includes ``AppCatalog.ReadWrite.All``. The frontend uses this to disable
+    the Publish/Sync/Unpublish buttons with a clear tooltip when the
+    connected account did not consent to the publish permission.
+    """
     teams_service = get_teams_service()
     tokens = await teams_service.get_user_tokens(str(current_user.id))
 
+    connected = tokens is not None and bool(
+        tokens.get("access_token") or tokens.get("refresh_token")
+    )
+    granted_scopes = (tokens or {}).get("granted_scopes") or []
+    # Permissive fallback when granted_scopes is empty (legacy tokens stored
+    # before this field was tracked) — treat as available so the user can try
+    # and the backend will return a clean 403 if it actually fails.
+    publishing_available = (
+        connected
+        and (not granted_scopes or has_scope(granted_scopes, "AppCatalog.ReadWrite.All"))
+    )
+
     return {
-        "connected": tokens is not None and bool(tokens.get("access_token") or tokens.get("refresh_token")),
+        "connected": connected,
+        "granted_scopes": granted_scopes,
+        "publishing_available": publishing_available,
     }
 
 
@@ -515,7 +553,43 @@ async def publish_agent_to_teams(
 
     except HTTPException:
         raise
+    except ConnectorPermissionError as e:
+        # The connected user's Microsoft account did not consent to
+        # AppCatalog.ReadWrite.All (e.g. Motherson admin chose not to grant
+        # the publish permission). Return a clean 403 — do NOT create a
+        # FAILED record because nothing was actually attempted on Graph.
+        logger.warning(f"Teams publish blocked by missing scope: {e}")
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                f"{e!s}. Teams publishing requires AppCatalog.ReadWrite.All "
+                "delegated permission with admin consent. Ask your tenant admin "
+                "to grant it, then reconnect your Microsoft account."
+            ),
+        ) from e
     except Exception as e:
+        # Stale-revocation safety net: local gate passed (granted_scopes was
+        # full at OAuth time) but Microsoft now rejects with 403 — usually
+        # because admin revoked AppCatalog.ReadWrite.All since the token was
+        # issued. Translate to a clean 403 with no FAILED DB record because
+        # nothing was actually committed in the catalog.
+        if isinstance(e, httpx.HTTPStatusError) and is_graph_permission_error(
+            e.response.status_code, e.response.text
+        ):
+            logger.warning(
+                f"Teams publish: Graph rejected with permission error "
+                f"({e.response.status_code}) — likely AppCatalog.ReadWrite.All revoked"
+            )
+            raise HTTPException(
+                status_code=403,
+                detail=graph_permission_error_message(
+                    "AppCatalog.ReadWrite.All",
+                    operation="publish to Teams",
+                    graph_status=e.response.status_code,
+                    graph_body=e.response.text,
+                ),
+            ) from e
+
         logger.exception(f"Failed to publish agent {request.agent_id} to Teams: {e}")
 
         from datetime import datetime, timezone
@@ -585,7 +659,37 @@ async def unpublish_agent_from_teams(
             message="Successfully unpublished from Teams",
         )
 
+    except ConnectorPermissionError as e:
+        # Cannot delete from catalog without AppCatalog.ReadWrite.All. We
+        # don't flip the DB status here either — the app is still in the
+        # catalog. Tell the user clearly so they ask their admin.
+        logger.warning(f"Teams unpublish blocked by missing scope: {e}")
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                f"{e!s}. Removing a Teams app from the catalog requires "
+                "AppCatalog.ReadWrite.All. Ask your tenant admin to grant it, "
+                "then reconnect your Microsoft account."
+            ),
+        ) from e
     except Exception as e:
+        # Stale-revocation safety net (same pattern as publish).
+        if isinstance(e, httpx.HTTPStatusError) and is_graph_permission_error(
+            e.response.status_code, e.response.text
+        ):
+            logger.warning(
+                f"Teams unpublish: Graph rejected with permission error "
+                f"({e.response.status_code}) — likely AppCatalog.ReadWrite.All revoked"
+            )
+            raise HTTPException(
+                status_code=403,
+                detail=graph_permission_error_message(
+                    "AppCatalog.ReadWrite.All",
+                    operation="unpublish from Teams",
+                    graph_status=e.response.status_code,
+                    graph_body=e.response.text,
+                ),
+            ) from e
         logger.exception(f"Failed to unpublish agent {agent_id} from Teams: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to unpublish: {e!s}") from e
 
@@ -694,7 +798,33 @@ async def sync_teams_app(
 
     except HTTPException:
         raise
+    except ConnectorPermissionError as e:
+        logger.warning(f"Teams sync blocked by missing scope: {e}")
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                f"{e!s}. Updating a Teams app requires AppCatalog.ReadWrite.All. "
+                "Ask your tenant admin to grant it, then reconnect your Microsoft account."
+            ),
+        ) from e
     except Exception as e:
+        # Stale-revocation safety net (same pattern as publish/unpublish).
+        if isinstance(e, httpx.HTTPStatusError) and is_graph_permission_error(
+            e.response.status_code, e.response.text
+        ):
+            logger.warning(
+                f"Teams sync: Graph rejected with permission error "
+                f"({e.response.status_code}) — likely AppCatalog.ReadWrite.All revoked"
+            )
+            raise HTTPException(
+                status_code=403,
+                detail=graph_permission_error_message(
+                    "AppCatalog.ReadWrite.All",
+                    operation="sync Teams app",
+                    graph_status=e.response.status_code,
+                    graph_body=e.response.text,
+                ),
+            ) from e
         logger.exception(f"Failed to sync Teams app for agent {agent_id}: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to sync: {e!s}") from e
 

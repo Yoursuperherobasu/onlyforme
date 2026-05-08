@@ -45,4 +45,17 @@ export interface TeamsHealthResponse {
 
 export interface TeamsOAuthStatusResponse {
   connected: boolean;
+  /**
+   * The Microsoft Graph delegated scopes the connected user's token actually
+   * has. May be an empty array for legacy tokens stored before the backend
+   * started capturing this — treat empty as "permissive" (publishing
+   * allowed) so existing connections keep working.
+   */
+  granted_scopes?: string[];
+  /**
+   * Convenience flag: true when the user is connected AND the stored token
+   * includes ``AppCatalog.ReadWrite.All`` (or the granted_scopes list is
+   * empty / legacy). False blocks Publish/Sync/Unpublish in the UI.
+   */
+  publishing_available?: boolean;
 }

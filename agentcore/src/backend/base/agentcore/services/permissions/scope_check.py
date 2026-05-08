@@ -1,0 +1,191 @@
+"""Permission scope checks for Microsoft Graph connectors (Outlook / SharePoint / Teams).
+
+The connectors auto-discover what permissions the Azure AD app registration has been
+granted by parsing data Microsoft already returns:
+
+- **Delegated flows (Outlook, Teams)**: the OAuth token response contains a ``scope``
+  field listing the *actually granted* scopes (which may be fewer than what we asked
+  for if the app reg was set up with reduced permissions).
+- **App-only flows (SharePoint)**: the access token JWT contains a ``roles`` claim
+  with the granted Application permissions.
+
+Each connector persists the discovered list (``granted_scopes`` or ``granted_roles``)
+into its existing ``provider_config`` JSON column. Read paths never check this list —
+they always run. Write paths call :func:`require_scope` which raises
+:class:`ConnectorPermissionError` (translated to HTTP 403 at the API boundary) when
+the required permission is missing.
+
+Permissive fallback: when the granted list is empty (e.g. legacy connectors created
+before this module existed, or token-response parsing failed), every check passes.
+This guarantees zero regression for existing deployments — the gates only activate
+once a connector has been (re)linked under the new code path.
+"""
+
+from __future__ import annotations
+
+import base64
+import binascii
+import json
+from collections.abc import Iterable
+
+from loguru import logger
+
+
+class ConnectorPermissionError(Exception):
+    """Raised when a connector lacks an Azure AD permission required for an operation.
+
+    Attributes:
+        scope: the missing Microsoft Graph permission (e.g. ``"Mail.Send"``).
+    """
+
+    def __init__(self, scope: str, message: str | None = None) -> None:
+        self.scope = scope
+        super().__init__(
+            message
+            or f"{scope} permission not granted on this connector's app registration"
+        )
+
+
+def parse_jwt_roles(access_token: str) -> list[str]:
+    """Decode the payload segment of a JWT access token and return the ``roles`` claim.
+
+    Used for app-only (client_credentials) tokens issued by Azure AD, where the
+    granted Application permissions are surfaced as the ``roles`` claim. We do NOT
+    verify the signature — the token already came over HTTPS from
+    ``login.microsoftonline.com`` and is not used for authorization on our side; we
+    only read the claim to learn which write features should be exposed.
+
+    Returns an empty list on any decode failure (malformed token, missing claim,
+    base64 padding error). Callers treat empty as "permissive fallback".
+    """
+    if not access_token:
+        return []
+    try:
+        segments = access_token.split(".")
+        if len(segments) < 2:
+            logger.warning("JWT roles decode: token has fewer than 2 segments")
+            return []
+        payload_b64 = segments[1]
+        # urlsafe_b64decode requires correct padding
+        payload_b64 += "=" * (-len(payload_b64) % 4)
+        payload_bytes = base64.urlsafe_b64decode(payload_b64)
+        payload = json.loads(payload_bytes)
+    except (ValueError, binascii.Error, json.JSONDecodeError) as exc:
+        logger.warning(f"JWT roles decode failed: {exc!r}")
+        return []
+    roles = payload.get("roles", [])
+    if not isinstance(roles, list):
+        return []
+    # Coerce to list[str] and drop falsy entries
+    return [str(r) for r in roles if r]
+
+
+def parse_oauth_scopes(scope_str: str | None) -> list[str]:
+    """Parse the space-separated ``scope`` field from an OAuth token response.
+
+    Microsoft returns granted scopes in this format::
+
+        "Mail.Read User.Read profile openid email offline_access"
+
+    Returns ``[]`` for ``None`` or empty input.
+    """
+    if not scope_str:
+        return []
+    return [s.strip() for s in scope_str.split() if s.strip()]
+
+
+def require_scope(granted: Iterable[str] | None, required: str) -> None:
+    """Raise :class:`ConnectorPermissionError` if ``required`` is not in ``granted``.
+
+    Permissive fallback: when ``granted`` is empty/None (legacy connector with no
+    discovered scope list yet), the call is a no-op — we treat all permissions as
+    granted to preserve backwards compatibility.
+    """
+    granted_list = list(granted) if granted else []
+    if not granted_list:
+        return  # permissive fallback for legacy / pre-discovery state
+    if required not in granted_list:
+        raise ConnectorPermissionError(required)
+
+
+def has_scope(granted: Iterable[str] | None, required: str) -> bool:
+    """Non-raising variant of :func:`require_scope`, for UI/output filtering.
+
+    Returns ``True`` for the permissive-fallback case (empty ``granted``) so that
+    legacy connectors continue to expose all features.
+    """
+    granted_list = list(granted) if granted else []
+    if not granted_list:
+        return True  # permissive fallback
+    return required in granted_list
+
+
+# ── Graph error translation ────────────────────────────────────────────────
+
+
+_GRAPH_403_BODY_HINTS = (
+    "insufficient privileges",
+    "forbidden",
+    "accessdenied",
+    "access denied",
+    "authorization_requestdenied",
+    "applicationprivilegerequired",
+)
+
+
+def is_graph_permission_error(status: int, body: str | bytes = "") -> bool:
+    """Detect a Microsoft Graph response that indicates a missing permission.
+
+    A bare 403 always counts. We additionally inspect the response body for
+    Graph's documented permission-denial codes/strings so that 401s carrying
+    ``"Insufficient privileges"`` are also caught (rare but observed when
+    admin consent is partial).
+    """
+    if status == 403:
+        return True
+    if status not in (401, 403):
+        return False
+    if isinstance(body, bytes):
+        try:
+            body = body.decode("utf-8", "replace")
+        except Exception:
+            return False
+    text = (body or "").lower()
+    return any(hint in text for hint in _GRAPH_403_BODY_HINTS)
+
+
+def graph_permission_error_message(
+    required_scope: str,
+    *,
+    operation: str = "operation",
+    graph_status: int | None = None,
+    graph_body: str | bytes = "",
+) -> str:
+    """Build a user-friendly message when Graph rejects with a permission error.
+
+    Use this at the *boundary* (API handlers, tool methods) when our local
+    ``require_scope`` gate passed but Microsoft still returned 403 — typically
+    because the admin revoked the permission since the token was issued, or
+    the locally-stored ``granted_scopes`` list is empty (legacy / permissive
+    fallback) and we can't tell ahead of time.
+
+    The message names the likely missing scope, explains the recovery path,
+    and includes a short Graph snippet for support diagnostics — all without
+    leaking the full raw upstream JSON.
+    """
+    if isinstance(graph_body, bytes):
+        try:
+            graph_body = graph_body.decode("utf-8", "replace")
+        except Exception:
+            graph_body = ""
+    snippet = (graph_body or "").strip()
+    snippet = snippet[:200] + ("…" if len(snippet) > 200 else "")
+    status_part = f" (Graph returned {graph_status})" if graph_status else ""
+    suffix = f" Graph response: {snippet}" if snippet else ""
+    return (
+        f"Cannot complete {operation}: the connector's app registration is "
+        f"missing the {required_scope} permission, or it was revoked after "
+        f"the connector was linked{status_part}. Ask your tenant admin to "
+        f"grant {required_scope} (with admin consent), then disconnect and "
+        f"reconnect the account.{suffix}"
+    )

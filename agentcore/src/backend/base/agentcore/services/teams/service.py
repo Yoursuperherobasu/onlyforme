@@ -230,10 +230,16 @@ class TeamsService(Service):
         access_token: str | None = None,
         refresh_token: str | None = None,
         token_expires_at: float | None = None,
+        granted_scopes: list[str] | None = None,
     ) -> TeamsGraphAPIClient:
         """Create a Graph API client with delegated tokens.
 
         Each call creates a new instance since tokens are per-user.
+
+        ``granted_scopes`` is the list of permissions Microsoft actually
+        granted to the user's access token. Forwarded to the Graph client so
+        write methods (publish/unpublish/sync) can self-gate when
+        ``AppCatalog.ReadWrite.All`` was not consented.
         """
         from agentcore.services.teams.graph_api import TeamsGraphAPIClient
 
@@ -255,6 +261,7 @@ class TeamsService(Service):
             access_token=access_token,
             refresh_token=refresh_token,
             token_expires_at=token_expires_at,
+            granted_scopes=granted_scopes,
         )
         logger.info("Microsoft Graph API client initialized")
         return graph_client
@@ -272,4 +279,5 @@ class TeamsService(Service):
             access_token=tokens.get("access_token"),
             refresh_token=tokens.get("refresh_token"),
             token_expires_at=tokens.get("expires_at"),
+            granted_scopes=tokens.get("granted_scopes"),
         )

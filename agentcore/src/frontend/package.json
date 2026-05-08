@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "dependencies": {
-    "@azure/msal-browser": "^4.27.0",
+    "@azure/msal-browser": "^4.30.0",
     "@azure/msal-react": "^3.0.23",
     "@chakra-ui/number-input": "^2.1.2",
     "@chakra-ui/system": "^2.6.2",

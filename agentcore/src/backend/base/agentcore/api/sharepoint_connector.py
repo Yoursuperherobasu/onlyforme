@@ -27,6 +27,11 @@ from agentcore.api.connector_catalogue import (
 )
 from agentcore.api.utils import CurrentActiveUser, DbSession
 from agentcore.services.database.models.connector_catalogue.model import ConnectorCatalogue
+from agentcore.services.permissions import (
+    ConnectorPermissionError,
+    graph_permission_error_message,
+    is_graph_permission_error,
+)
 from agentcore.services.sharepoint.graph_sharepoint import SharePointGraphClient
 
 router = APIRouter(prefix="/sharepoint", tags=["SharePoint Connector"])
@@ -190,6 +195,94 @@ async def _retry_on_transient(client: SharePointGraphClient, coro_factory, max_r
 
 # ── Endpoints ────────────────────────────────────────────────────
 
+
+@router.get("/{connector_id}/capabilities")
+async def get_capabilities(
+    connector_id: UUID,
+    current_user: CurrentActiveUser,
+    session: DbSession,
+) -> dict:
+    """Probe the SharePoint connector's actual Graph capabilities.
+
+    Acquires an app-only token, decodes its ``roles`` claim, and runs a
+    minimum read probe (``list_drives``) to *verify* read access — rather
+    than assuming it. The frontend uses the returned ``can_read`` /
+    ``can_write`` to hide controls when the connector is reduced.
+
+    All three checks are explicit:
+        * ``token_acquired``  — Did the client_credentials exchange succeed?
+        * ``can_read``        — Did a real Graph call succeed?
+        * ``can_write``       — Is ``Sites.ReadWrite.All`` in the JWT roles?
+    """
+    row = await _load_connector(connector_id, current_user, session)
+    config = _get_decrypted_config(row)
+    client = _build_graph_client(config)
+
+    token_acquired = False
+    roles: list[str] = []
+    can_read = False
+    read_probe_error: str | None = None
+
+    # Step 1: acquire token (also decodes roles)
+    try:
+        await client._acquire_token()
+        token_acquired = True
+        roles = client.granted_roles
+    except httpx.HTTPStatusError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Token acquisition failed ({exc.response.status_code}): {exc.response.text[:300]}",
+        )
+    except Exception as exc:
+        logger.warning(f"SharePoint capabilities — token acquisition failed for {connector_id}: {exc}")
+        # Without a token we cannot determine anything. Return permissive
+        # defaults (frontend shows all controls; backend gates fire on use).
+        return {
+            "connector_id": str(connector_id),
+            "granted_roles": [],
+            "token_acquired": False,
+            "can_read": True,   # permissive fallback
+            "can_write": True,  # permissive fallback
+            "read_probe_error": str(exc),
+        }
+
+    # Step 2: real read probe — list_drives is the cheapest read call
+    try:
+        await client.list_drives()
+        can_read = True
+    except httpx.HTTPStatusError as exc:
+        if is_graph_permission_error(exc.response.status_code, exc.response.text):
+            read_probe_error = (
+                f"Graph rejected list_drives with {exc.response.status_code} — "
+                f"the app registration likely lacks Sites.Read.All (or "
+                f"Sites.Selected was not granted on this site)."
+            )
+        else:
+            read_probe_error = f"Graph error {exc.response.status_code}: {exc.response.text[:200]}"
+        can_read = False
+    except Exception as exc:
+        read_probe_error = f"Probe failed: {exc!s}"
+        can_read = False
+
+    # Step 3: write capability — derived from JWT roles claim
+    if roles:
+        can_write = "Sites.ReadWrite.All" in roles
+    else:
+        # JWT decode returned empty (unusual). Permissive fallback so the UI
+        # shows controls; backend will produce a clean 403 if write actually
+        # fails on Graph.
+        can_write = True
+
+    return {
+        "connector_id": str(connector_id),
+        "granted_roles": roles,
+        "token_acquired": token_acquired,
+        "can_read": can_read,
+        "can_write": can_write,
+        "read_probe_error": read_probe_error,
+    }
+
+
 @router.get("/{connector_id}/libraries")
 async def list_libraries(
     connector_id: UUID,
@@ -348,7 +441,25 @@ async def upload_file(
         result = await _retry_on_transient(
             client, lambda: client.upload_file(drive_id, req.folder_path, req.filename, content_bytes)
         )
+    except ConnectorPermissionError as exc:
+        # The app reg lacks Sites.ReadWrite.All — surface a clean 403 with a
+        # message the client can show, instead of letting Graph return an
+        # opaque "Insufficient privileges" upstream error.
+        raise HTTPException(status_code=403, detail=str(exc))
     except httpx.HTTPStatusError as exc:
+        # Stale-revocation safety net: detect Graph permission errors that
+        # slipped past our local gate (e.g. permissive fallback for legacy
+        # connectors, admin revoked Sites.ReadWrite.All since token issued).
+        if is_graph_permission_error(exc.response.status_code, exc.response.text):
+            raise HTTPException(
+                status_code=403,
+                detail=graph_permission_error_message(
+                    "Sites.ReadWrite.All",
+                    operation="upload",
+                    graph_status=exc.response.status_code,
+                    graph_body=exc.response.text,
+                ),
+            )
         raise HTTPException(
             status_code=400,
             detail=f"Graph API error {exc.response.status_code}: {exc.response.text[:300]}",
@@ -436,7 +547,19 @@ async def create_folder(
         result = await _retry_on_transient(
             client, lambda: client.create_folder(drive_id, req.parent_path, req.folder_name)
         )
+    except ConnectorPermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
     except httpx.HTTPStatusError as exc:
+        if is_graph_permission_error(exc.response.status_code, exc.response.text):
+            raise HTTPException(
+                status_code=403,
+                detail=graph_permission_error_message(
+                    "Sites.ReadWrite.All",
+                    operation="create folder",
+                    graph_status=exc.response.status_code,
+                    graph_body=exc.response.text,
+                ),
+            )
         raise HTTPException(
             status_code=400,
             detail=f"Graph API error {exc.response.status_code}: {exc.response.text[:300]}",

@@ -23,6 +23,7 @@ import { useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useSearchParams } from "react-router-dom";
 import OutlookConnectorForm from "./components/OutlookConnectorForm";
+import SharePointCapabilityBanner from "./components/SharePointCapabilityBanner";
 import { ENABLE_OUTLOOK_CONNECTOR } from "@/customization/feature-flags";
 import { Button } from "@/components/ui/button";
 import {
@@ -1770,6 +1771,16 @@ export default function ConnectorsCatalogueView(): JSX.Element {
                       placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
                     />
                   </div>
+
+                  {/* Surface what this connector's app reg is actually
+                      allowed to do. The probe runs an app-only token request
+                      + a real list_drives() call, so users see the true
+                      read/write state up-front instead of discovering it
+                      after a failed upload. Only shown when editing an
+                      existing connector (we need an ID to probe). */}
+                  {editingConnector?.id && (
+                    <SharePointCapabilityBanner connectorId={editingConnector.id} />
+                  )}
                 </>
               )}
 

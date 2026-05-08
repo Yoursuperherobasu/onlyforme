@@ -45,6 +45,12 @@ const TeamsPublishModal = ({ open, setOpen }: TeamsPublishModalProps) => {
   );
   const [msConnected, setMsConnected] = useState(false);
   const [checkingConnection, setCheckingConnection] = useState(false);
+  // Whether the connected user's token includes AppCatalog.ReadWrite.All.
+  // When false, we keep the OAuth flow available (so users can connect /
+  // disconnect) but disable Publish/Sync/Unpublish with a clear tooltip.
+  // Defaults to true so legacy tokens (no granted_scopes field stored)
+  // behave permissively — backend returns clean 403 if it actually fails.
+  const [publishingAvailable, setPublishingAvailable] = useState(true);
 
   const publishMutation = usePostPublishToTeams();
   const unpublishMutation = useDeleteUnpublishFromTeams();
@@ -70,6 +76,10 @@ const TeamsPublishModal = ({ open, setOpen }: TeamsPublishModalProps) => {
       if (event.data?.type === "teams-oauth-success") {
         setMsConnected(true);
         setStatusMessage("Microsoft account connected successfully!");
+        // Re-fetch status so we learn whether the freshly-issued token
+        // actually contains AppCatalog.ReadWrite.All (it may not, if the
+        // tenant admin only consented to read-level scopes).
+        checkOAuthStatus();
       } else if (event.data?.type === "teams-oauth-error") {
         setStatusMessage(
           `Connection failed: ${event.data.description || event.data.error}`,
@@ -86,10 +96,14 @@ const TeamsPublishModal = ({ open, setOpen }: TeamsPublishModalProps) => {
     oauthStatusMutation.mutate(undefined, {
       onSuccess: (data) => {
         setMsConnected(data.connected);
+        // publishing_available may be omitted in older builds — default to
+        // true (permissive) when the field is not present.
+        setPublishingAvailable(data.publishing_available ?? true);
         setCheckingConnection(false);
       },
       onError: () => {
         setMsConnected(false);
+        setPublishingAvailable(true); // permissive fallback on error
         setCheckingConnection(false);
       },
     });
@@ -406,14 +420,24 @@ const TeamsPublishModal = ({ open, setOpen }: TeamsPublishModalProps) => {
             <>
               <button
                 onClick={handleSync}
-                disabled={loading || !msConnected}
+                disabled={loading || !msConnected || !publishingAvailable}
+                title={
+                  !publishingAvailable && msConnected
+                    ? "AppCatalog.ReadWrite.All is not granted on the connected Microsoft account. Ask your tenant admin to grant it."
+                    : undefined
+                }
                 className="rounded-md border border-border px-4 py-2 text-sm font-medium text-foreground hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {loading ? "Syncing..." : "Re-sync"}
               </button>
               <button
                 onClick={handleUnpublish}
-                disabled={loading}
+                disabled={loading || !publishingAvailable}
+                title={
+                  !publishingAvailable && msConnected
+                    ? "AppCatalog.ReadWrite.All is not granted — cannot remove from the Teams catalog."
+                    : undefined
+                }
                 className="rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {loading ? "Removing..." : "Unpublish"}
@@ -422,13 +446,37 @@ const TeamsPublishModal = ({ open, setOpen }: TeamsPublishModalProps) => {
           ) : (
             <button
               onClick={handlePublish}
-              disabled={loading || !displayName.trim() || !msConnected}
+              disabled={
+                loading ||
+                !displayName.trim() ||
+                !msConnected ||
+                !publishingAvailable
+              }
+              title={
+                !publishingAvailable && msConnected
+                  ? "Publishing requires AppCatalog.ReadWrite.All. Ask your tenant admin to grant it, then reconnect your Microsoft account."
+                  : undefined
+              }
               className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {loading ? "Publishing..." : "Publish to Teams"}
             </button>
           )}
         </div>
+
+        {/* Permission hint when connected but missing publish scope */}
+        {msConnected && !publishingAvailable && (
+          <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+            <strong>Publishing not available:</strong> The connected Microsoft
+            account&apos;s token is missing the{" "}
+            <code>AppCatalog.ReadWrite.All</code> permission. Agents that are
+            already published continue to receive bot messages normally — but
+            this flow can&apos;t install a new app, re-sync it, or remove it
+            from the Teams catalog. Ask your Azure AD admin to grant this
+            delegated permission (with admin consent), then disconnect and
+            reconnect your Microsoft account.
+          </div>
+        )}
       </div>
     </>
   );

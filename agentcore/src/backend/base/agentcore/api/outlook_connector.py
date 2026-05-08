@@ -31,6 +31,13 @@ from agentcore.api.connector_catalogue import (
 )
 from agentcore.api.utils import CurrentActiveUser, DbSession
 from agentcore.services.database.models.connector_catalogue.model import ConnectorCatalogue
+from agentcore.services.permissions import (
+    ConnectorPermissionError,
+    graph_permission_error_message,
+    is_graph_permission_error,
+    parse_oauth_scopes,
+    require_scope,
+)
 
 router = APIRouter(prefix="/outlook", tags=["Outlook Connector"])
 
@@ -39,7 +46,12 @@ router = APIRouter(prefix="/outlook", tags=["Outlook Connector"])
 GRAPH_BASE = "https://graph.microsoft.com/v1.0"
 TOKEN_URL = "https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token"
 AUTHORIZE_URL = "https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/authorize"
-MAIL_SCOPES = "Mail.Read Mail.ReadWrite Mail.Send User.Read offline_access"
+# We request the special ``.default`` scope so Azure AD returns a token containing
+# whatever permissions the app registration has been admin-consented for —
+# without failing with AADSTS65001 when the app reg lacks Mail.ReadWrite/Mail.Send.
+# The actually-granted permissions are captured from the token response's ``scope``
+# field and stored on the linked account so write endpoints can gate themselves.
+MAIL_SCOPES = "https://graph.microsoft.com/.default offline_access"
 
 # ── OAuth state store (Redis, TTL-based) ──────────────────────────
 _STATE_TTL_SECONDS = 600  # 10 minutes
@@ -191,6 +203,11 @@ async def _refresh_token_if_needed(config: dict, acct: dict, force: bool = False
     acct["access_token"] = data["access_token"]
     acct["refresh_token"] = data.get("refresh_token", refresh_token)
     acct["token_expires_at"] = time.time() + data.get("expires_in", 3600)
+    # Refresh granted_scopes from the response so newly-granted permissions
+    # (or revocations) flow in without requiring the user to re-link.
+    refreshed_scopes = parse_oauth_scopes(data.get("scope"))
+    if refreshed_scopes:
+        acct["granted_scopes"] = refreshed_scopes
     return data["access_token"], True
 
 
@@ -349,6 +366,13 @@ async def oauth_callback(
     access_token = token_data["access_token"]
     refresh_token = token_data.get("refresh_token", "")
     expires_in = token_data.get("expires_in", 3600)
+    # Microsoft returns the actually-granted scopes in the ``scope`` field of the
+    # token response. We persist this list per-account so write endpoints (send,
+    # reply, replyAll) and playground tools can self-gate when a permission like
+    # Mail.Send was not admin-consented on the app registration. Empty list
+    # (older tokens / unusual responses) triggers the permissive fallback in
+    # require_scope/has_scope so legacy connectors keep working unchanged.
+    granted_scopes = parse_oauth_scopes(token_data.get("scope"))
 
     # Get user profile from Graph /me
     async with httpx.AsyncClient(timeout=10) as client:
@@ -394,6 +418,7 @@ async def oauth_callback(
         "refresh_token": refresh_token,
         "token_expires_at": time.time() + expires_in,
         "linked_at": now_iso,
+        "granted_scopes": granted_scopes,
     }
 
     # Update existing or append new
@@ -451,6 +476,10 @@ async def list_accounts(
             "display_name": acct.get("display_name", ""),
             "linked_at": acct.get("linked_at", ""),
             "token_expires_at": acct.get("token_expires_at"),
+            # Surface the actually-granted scopes so the frontend can hide
+            # write controls when Mail.Send / Mail.ReadWrite were not consented
+            # on the app registration. Empty list = permissive fallback.
+            "granted_scopes": acct.get("granted_scopes", []),
         })
     return accounts
 
@@ -610,7 +639,15 @@ async def reply_mail(
     current_user: CurrentActiveUser,
     session: DbSession,
 ) -> dict:
-    """Reply to an email via Microsoft Graph."""
+    """Reply to an email via Microsoft Graph.
+
+    All three reply modes (sender / reply_all / custom) ultimately call Graph
+    endpoints that require the ``Mail.Send`` permission. If the app registration
+    was not granted that permission (read-only deployment), we return a clean
+    403 here rather than letting the call propagate to Graph and surface as an
+    opaque upstream error. Permissive fallback applies for legacy linked
+    accounts that pre-date scope discovery.
+    """
     row = await _load_connector(connector_id, current_user, session)
     config = _get_decrypted_config(row)
 
@@ -620,6 +657,12 @@ async def reply_mail(
             status_code=404,
             detail=f"Account '{req.account_email}' not linked",
         )
+
+    # Permission gate: block here when Mail.Send is not in the granted scopes.
+    try:
+        require_scope(acct.get("granted_scopes", []), "Mail.Send")
+    except ConnectorPermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
 
     # Refresh token if needed
     access_token, was_refreshed = await _refresh_token_if_needed(config, acct)
@@ -653,6 +696,21 @@ async def reply_mail(
         resp = await _graph_post(url, payload)
 
         if resp.status_code not in (200, 202):
+            # Stale-revocation safety net: if Graph itself returns 403, translate
+            # it to the same descriptive permission message the local gate would
+            # have produced. Covers (a) admin revoked Mail.Send mid-session and
+            # (b) legacy connectors with empty granted_scopes (permissive
+            # fallback bypassed our gate but Graph still rejects).
+            if is_graph_permission_error(resp.status_code, resp.text):
+                raise HTTPException(
+                    status_code=403,
+                    detail=graph_permission_error_message(
+                        "Mail.Send",
+                        operation="reply",
+                        graph_status=resp.status_code,
+                        graph_body=resp.text,
+                    ),
+                )
             raise HTTPException(
                 status_code=400,
                 detail=f"Reply failed ({resp.status_code}): {resp.text[:300]}",
@@ -665,6 +723,16 @@ async def reply_mail(
         resp = await _graph_post(url, payload)
 
         if resp.status_code not in (200, 202):
+            if is_graph_permission_error(resp.status_code, resp.text):
+                raise HTTPException(
+                    status_code=403,
+                    detail=graph_permission_error_message(
+                        "Mail.Send",
+                        operation="reply-all",
+                        graph_status=resp.status_code,
+                        graph_body=resp.text,
+                    ),
+                )
             raise HTTPException(
                 status_code=400,
                 detail=f"Reply-all failed ({resp.status_code}): {resp.text[:300]}",
@@ -703,6 +771,16 @@ async def reply_mail(
         resp = await _graph_post(url, {"message": message, "saveToSentItems": True})
 
         if resp.status_code not in (200, 202):
+            if is_graph_permission_error(resp.status_code, resp.text):
+                raise HTTPException(
+                    status_code=403,
+                    detail=graph_permission_error_message(
+                        "Mail.Send",
+                        operation="send mail",
+                        graph_status=resp.status_code,
+                        graph_body=resp.text,
+                    ),
+                )
             raise HTTPException(
                 status_code=400,
                 detail=f"Send failed ({resp.status_code}): {resp.text[:300]}",

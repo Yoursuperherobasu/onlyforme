@@ -23,6 +23,14 @@ from agentcore.inputs.inputs import (
     MultilineInput,
 )
 from agentcore.schema.message import Message
+from agentcore.services.permissions import (
+    ConnectorPermissionError,
+    graph_permission_error_message,
+    has_scope,
+    is_graph_permission_error,
+    parse_jwt_roles,
+    require_scope,
+)
 from agentcore.template.field.base import Output
 from agentcore.logging import logger
 
@@ -198,8 +206,16 @@ def _acquire_token_sync(config: dict) -> str:
     data = resp.json()
     config["_sp_access_token"] = data["access_token"]
     config["_sp_token_expires_at"] = time.time() + data.get("expires_in", 3600)
+    # Decode the access token's ``roles`` claim once per acquisition so write
+    # tool methods (upload_document, create_folder) can self-gate against it.
+    # No signature verification — token came over HTTPS from Microsoft and is
+    # only consulted here to learn which permissions were granted.
+    config["_sp_granted_roles"] = parse_jwt_roles(data["access_token"])
 
-    logger.info("SharePoint client-credentials token acquired")
+    logger.info(
+        f"SharePoint client-credentials token acquired "
+        f"(granted_roles={config.get('_sp_granted_roles') or '<none decoded>'})"
+    )
     return data["access_token"]
 
 
@@ -914,7 +930,14 @@ class SharePointDocumentComponent(Node):
         return Message(text=result)
 
     def upload_document(self) -> Message:
-        """Upload a text file to SharePoint."""
+        """Upload a text file to SharePoint.
+
+        Requires the connector's app reg to have ``Sites.ReadWrite.All``
+        Application permission. When that permission is missing, the granted
+        scopes (decoded from the access token's ``roles`` claim) won't include
+        it and we return a clean error Message rather than calling Graph and
+        getting a 403.
+        """
         filename = self.upload_filename.strip() if self.upload_filename else ""
         content = self.upload_content.strip() if self.upload_content else ""
 
@@ -928,6 +951,10 @@ class SharePointDocumentComponent(Node):
 
         try:
             config, access_token, site_id, drive_id = self._get_client_context()
+            require_scope(config.get("_sp_granted_roles", []), "Sites.ReadWrite.All")
+        except ConnectorPermissionError as e:
+            self.status = f"Error: {e!s}"
+            return Message(text=f"Cannot upload: {e!s}. The Azure AD app registration was not granted Sites.ReadWrite.All. Ask your admin to grant the Application permission, then retry.")
         except Exception as e:
             self.status = f"Error: {e!s}"
             return Message(text=f"Failed to connect to SharePoint: {e!s}")
@@ -975,6 +1002,20 @@ class SharePointDocumentComponent(Node):
             return Message(text=f"Upload request failed: {e!s}")
 
         if resp.status_code not in (200, 201):
+            # Stale-revocation safety net: if Graph itself rejects with a
+            # permission error (admin revoked Sites.ReadWrite.All since token
+            # was issued, or our local roles list was empty/permissive),
+            # produce the same descriptive message the eager gate would have.
+            if is_graph_permission_error(resp.status_code, resp.text):
+                self.status = "Upload blocked: Sites.ReadWrite.All not granted"
+                return Message(
+                    text=graph_permission_error_message(
+                        "Sites.ReadWrite.All",
+                        operation="upload",
+                        graph_status=resp.status_code,
+                        graph_body=resp.text,
+                    )
+                )
             self.status = f"Upload failed ({resp.status_code})"
             return Message(text=f"Upload failed ({resp.status_code}): {resp.text[:300]}")
 
@@ -1043,7 +1084,12 @@ class SharePointDocumentComponent(Node):
         return Message(text=header + "\n".join(lines))
 
     def create_folder(self) -> Message:
-        """Create a new folder in the SharePoint library (Step 8)."""
+        """Create a new folder in the SharePoint library (Step 8).
+
+        Requires Sites.ReadWrite.All — gated against the granted_roles
+        decoded from the access token, with a permissive fallback for legacy
+        connectors where the role list could not be determined.
+        """
         folder_name = self.folder_name.strip() if self.folder_name else ""
         if not folder_name:
             self.status = "Error: no folder_name"
@@ -1061,6 +1107,10 @@ class SharePointDocumentComponent(Node):
 
         try:
             config, access_token, site_id, drive_id = self._get_client_context()
+            require_scope(config.get("_sp_granted_roles", []), "Sites.ReadWrite.All")
+        except ConnectorPermissionError as e:
+            self.status = f"Error: {e!s}"
+            return Message(text=f"Cannot create folder: {e!s}. The Azure AD app registration was not granted Sites.ReadWrite.All. Ask your admin to grant the Application permission, then retry.")
         except Exception as e:
             self.status = f"Error: {e!s}"
             return Message(text=f"Failed to connect to SharePoint: {e!s}")
@@ -1086,6 +1136,16 @@ class SharePointDocumentComponent(Node):
             return Message(text=f"Failed to create folder: {e!s}")
 
         if resp.status_code not in (200, 201):
+            if is_graph_permission_error(resp.status_code, resp.text):
+                self.status = "Create folder blocked: Sites.ReadWrite.All not granted"
+                return Message(
+                    text=graph_permission_error_message(
+                        "Sites.ReadWrite.All",
+                        operation="create folder",
+                        graph_status=resp.status_code,
+                        graph_body=resp.text,
+                    )
+                )
             self.status = f"Create folder failed ({resp.status_code})"
             return Message(text=f"Failed to create folder ({resp.status_code}): {resp.text[:300]}")
 

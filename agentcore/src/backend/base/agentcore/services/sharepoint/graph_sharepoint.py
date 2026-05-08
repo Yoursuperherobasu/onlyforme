@@ -16,6 +16,12 @@ from urllib.parse import quote, urlparse
 import httpx
 from loguru import logger
 
+from agentcore.services.permissions import (
+    ConnectorPermissionError,
+    parse_jwt_roles,
+    require_scope,
+)
+
 GRAPH_BASE = "https://graph.microsoft.com/v1.0"
 TOKEN_URL = "https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token"
 
@@ -65,6 +71,11 @@ class SharePointGraphClient:
         self._client: httpx.AsyncClient | None = None
         # Drive ID cache (Step 3)
         self._drive_cache: dict[str, str] = {}
+        # Granted Application permissions, decoded from the access token's
+        # ``roles`` claim each time we acquire a fresh token. Empty list means
+        # "unknown" → require_scope() falls back to permissive (treats all
+        # permissions as granted) so legacy connectors keep working unchanged.
+        self._granted_roles: list[str] = []
 
     # ── Shared HTTP client (Step 2) ────────────────────────────────
 
@@ -184,8 +195,25 @@ class SharePointGraphClient:
 
         self._access_token = data["access_token"]
         self._token_expires_at = time.time() + data.get("expires_in", 3600)
-        logger.debug("SharePoint client-credentials token acquired")
+        # App-only Azure AD tokens are JWTs; the ``roles`` claim lists the
+        # granted Application permissions (e.g. ["Sites.Read.All"]). We decode
+        # without signature verification — the token came over HTTPS from
+        # login.microsoftonline.com and is only used here to learn what we're
+        # allowed to do. require_scope() in write methods consults this list.
+        self._granted_roles = parse_jwt_roles(self._access_token)
+        logger.debug(
+            f"SharePoint token acquired (granted_roles={self._granted_roles or '<none decoded>'})"
+        )
         return self._access_token
+
+    @property
+    def granted_roles(self) -> list[str]:
+        """Granted Application permissions from the most recent access token.
+
+        Empty list = unknown/legacy → callers using require_scope/has_scope get
+        the permissive fallback (treats all permissions as granted).
+        """
+        return list(self._granted_roles)
 
     async def _headers(self) -> dict[str, str]:
         """Return Authorization header with a valid Bearer token."""
@@ -363,9 +391,17 @@ class SharePointGraphClient:
 
         Returns:
             The created driveItem metadata dict.
+
+        Raises:
+            ConnectorPermissionError: when the access token does not include
+                ``Sites.ReadWrite.All`` (i.e. the app reg is read-only).
         """
         _validate_path(folder_path, "folder_path")
         _validate_path(filename, "filename")
+
+        # Ensure we have a token (and thus granted_roles) before checking
+        await self._acquire_token()
+        require_scope(self._granted_roles, "Sites.ReadWrite.All")
 
         # Delegate large files to upload session (Step 7)
         if len(content) > 4 * 1024 * 1024:
@@ -396,7 +432,17 @@ class SharePointGraphClient:
 
         Creates an upload session and sends content in 3.2MB chunks
         (aligned to Graph API's 320KiB boundary requirement).
+
+        Raises:
+            ConnectorPermissionError: when the access token does not include
+                ``Sites.ReadWrite.All`` (read-only deployment).
         """
+        # The createUploadSession endpoint requires write permission. Fail
+        # fast here so we don't burn an upload session (which Microsoft would
+        # otherwise abandon and rate-limit).
+        await self._acquire_token()
+        require_scope(self._granted_roles, "Sites.ReadWrite.All")
+
         # Build the item path for the upload session
         if folder_path and folder_path.strip("/"):
             safe_folder = quote(folder_path.strip("/"), safe="/")
@@ -487,9 +533,15 @@ class SharePointGraphClient:
 
         Returns:
             The created driveItem metadata dict.
+
+        Raises:
+            ConnectorPermissionError: when the access token does not include
+                ``Sites.ReadWrite.All`` (read-only deployment).
         """
         _validate_path(parent_path, "parent_path")
         _validate_path(folder_name, "folder_name")
+        await self._acquire_token()
+        require_scope(self._granted_roles, "Sites.ReadWrite.All")
 
         if parent_path and parent_path.strip("/"):
             safe_parent = quote(parent_path.strip("/"), safe="/")
