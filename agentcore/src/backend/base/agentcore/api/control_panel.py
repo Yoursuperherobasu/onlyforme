@@ -1200,20 +1200,17 @@ async def promote_uat_to_prod(
         is_admin = role in ADMIN_ROLES
         is_org_wide_admin = role in {"root", "super_admin", "admin"}
 
-        # PROD always requires a dept for super/org-wide admins (UAT may be departmentless).
         # Prefer body.department_id, fall back to UAT deployment dept or agent dept.
+        # Org-wide admins (super_admin/root/admin) may promote without a dept —
+        # mirrors the direct publish flow which allows departmentless PROD publish
+        # (e.g. PUBLIC org-wide PROD by a super admin).
         department_id = body.department_id or uat_dep.dept_id or agent.dept_id
         department = None
         if department_id:
             department = (await session.exec(select(Department).where(Department.id == department_id))).first()
             if not department:
                 raise HTTPException(status_code=400, detail="Department not found for this deployment.")
-        elif is_org_wide_admin:
-            raise HTTPException(
-                status_code=400,
-                detail="department_id is required when promoting a departmentless UAT deployment to PROD.",
-            )
-        elif not is_admin:
+        elif not is_org_wide_admin and not is_admin:
             raise HTTPException(status_code=400, detail="Department is required for PROD promotion.")
 
         existing_prod_version = (
