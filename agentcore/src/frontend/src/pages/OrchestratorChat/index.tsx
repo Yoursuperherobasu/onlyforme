@@ -2050,12 +2050,51 @@ export default function AgentOrchestrator() {
     synth.speak(utterance);
   }, []);
 
-  /* ------------------ EXPORT MESSAGE (DOCX / PDF) ------------------ */
+  /* ------------------ EXPORT MESSAGE (DOCX / PDF / TEXT) ------------------ */
+
+  // Strip raw HTML tags + decode common entities. LLM responses can embed
+  // <h1>/<p>/<br/> directly; without this the markdown→HTML escape step would
+  // render them as literal "<h1>" text in Word/PDF output.
+  const stripHtml = useCallback((s: string): string => {
+    return s
+      .replace(/<\s*br\s*\/?\s*>/gi, "\n")
+      .replace(/<\s*\/\s*(p|div|li|h[1-6]|tr)\s*>/gi, "\n")
+      .replace(/<[^>]+>/g, "")
+      .replace(/&nbsp;/gi, " ")
+      .replace(/&amp;/gi, "&")
+      .replace(/&lt;/gi, "<")
+      .replace(/&gt;/gi, ">")
+      .replace(/&quot;/gi, '"')
+      .replace(/&#39;/gi, "'");
+  }, []);
+
+  // Markdown + HTML → clean plain text. Emojis preserved.
+  const toPlainText = useCallback((input: string): string => {
+    return stripHtml(input)
+      .replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1")
+      .replace(/\[([^\]]+)\]\(([^)]+)\)/g, "$1 ($2)")
+      .replace(/```[a-zA-Z0-9_-]*\n?([\s\S]*?)```/g, "$1")
+      .replace(/`([^`]+)`/g, "$1")
+      .replace(/^\s{0,3}#{1,6}\s+/gm, "")
+      .replace(/^\s*>\s?/gm, "")
+      .replace(/\*\*([^*]+)\*\*/g, "$1")
+      .replace(/__([^_]+)__/g, "$1")
+      .replace(/(^|\W)\*([^*\n]+)\*(\W|$)/g, "$1$2$3")
+      .replace(/(^|\W)_([^_\n]+)_(\W|$)/g, "$1$2$3")
+      .replace(/~~([^~]+)~~/g, "$1")
+      .replace(/^\s*[-*+]\s+/gm, "• ")
+      .replace(/^\s*\|.*\|\s*$/gm, (m) =>
+        m.replace(/^\s*\|/, "").replace(/\|\s*$/, "").replace(/\s*\|\s*/g, "\t"))
+      .replace(/^\s*[-:|\s]+\s*$/gm, "")
+      .replace(/\r\n/g, "\n")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim();
+  }, [stripHtml]);
 
   const renderMarkdownToHtml = useCallback((md: string): string => {
     // Lightweight markdown → HTML (headings, bold, italic, code, links, lists, line breaks)
     const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-    let html = esc(md);
+    let html = esc(stripHtml(md));
     html = html.replace(/```([\s\S]*?)```/g, (_, code) => `<pre><code>${code}</code></pre>`);
     html = html.replace(/`([^`]+)`/g, "<code>$1</code>");
     html = html.replace(/^###### (.*)$/gm, "<h6>$1</h6>");
@@ -2072,7 +2111,7 @@ export default function AgentOrchestrator() {
     html = html.replace(/\n{2,}/g, "</p><p>");
     html = html.replace(/\n/g, "<br/>");
     return `<p>${html}</p>`;
-  }, []);
+  }, [stripHtml]);
 
   const handleExportDocx = useCallback((text: string) => {
     if (!text) return;
@@ -2098,14 +2137,16 @@ export default function AgentOrchestrator() {
 
   const handleExportText = useCallback((text: string) => {
     if (!text) return;
-    const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
+    const clean = toPlainText(text);
+    if (!clean) return;
+    const blob = new Blob([clean], { type: "text/plain;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
     a.download = `response-${Date.now()}.txt`;
     a.click();
     URL.revokeObjectURL(url);
-  }, []);
+  }, [toPlainText]);
 
   const handleCopyMessage = useCallback(async (text: string, msgId: string) => {
     if (!text) return;
