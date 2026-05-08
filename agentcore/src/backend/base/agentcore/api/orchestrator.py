@@ -1374,6 +1374,36 @@ async def _route_request(
             "intent": "image_generation_explicit" if body.model_id else "image_generation",
         }
 
+    # Image-edit short-circuit: the stateless intent classifier mis-labels
+    # ambiguous edit phrasings ("replace human with robot", "make him taller")
+    # as general_chat when the prompt doesn't mention the word "image". If the
+    # prior assistant message in this session contains image markdown AND the
+    # current prompt has a modification keyword or pronoun reference, route
+    # straight to image_gen so handle_image_generation() can pull the prior
+    # image as a reference and call Nano Banana with it.
+    if body.session_id:
+        from agentcore.services.mibuddy.image_gen_handler import (
+            is_image_modification_request,
+            session_has_recent_image,
+        )
+        if is_image_modification_request(body.input_value, has_previous_image=True):
+            try:
+                if await session_has_recent_image(body.session_id):
+                    logger.info(
+                        f"[ORCH] Image-edit short-circuit: prior image in session + edit phrasing "
+                        f"'{body.input_value[:60]}' → image_gen"
+                    )
+                    return {
+                        "mode": "image_gen",
+                        "agent_id": None,
+                        "deployment_id": None,
+                        "deployment": None,
+                        "model_id": body.model_id,
+                        "intent": "image_generation",
+                    }
+            except Exception as exc:  # noqa: BLE001
+                logger.debug(f"[ORCH] Image-edit short-circuit check failed (non-critical): {exc}")
+
     # Mode 2/3: No @agent — run intent classification
     from agentcore.services.mibuddy.intent_classifier import IntentClassifier, Intent
 
