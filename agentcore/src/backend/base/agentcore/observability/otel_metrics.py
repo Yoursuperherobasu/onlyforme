@@ -111,10 +111,11 @@ def setup_otel_metrics(app) -> None:
             path = route.path if route else (request.scope.get("path") or request.url.path)
             method = request.method or "UNKNOWN"
             status_code = str(response.status_code)
-            labels = {"method": method, "route": path, "status_code": status_code}
+            counter_labels = {"method": method, "route": path, "status_code": status_code}
+            histogram_labels = {"route": path}
             try:
-                _request_counter.add(1, labels)
-                _request_duration_histogram.record(duration_ms, labels)
+                _request_counter.add(1, counter_labels)
+                _request_duration_histogram.record(duration_ms, histogram_labels)
             except Exception:
                 pass
             if response.status_code >= 400:
