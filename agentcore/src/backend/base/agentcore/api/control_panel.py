@@ -1350,7 +1350,27 @@ async def promote_uat_to_prod(
         session.add(agent)
 
         if visibility_enum == ProdDeploymentVisibilityEnum.PRIVATE:
-            if department_id is None and normalized_recipient_emails:
+            invalid_emails = [email for email in normalized_recipient_emails if not EMAIL_REGEX.match(email)]
+            if invalid_emails:
+                raise HTTPException(status_code=400, detail=f"Invalid email format: {', '.join(invalid_emails)}")
+
+            # Super admin private promote can take any combination of dept and
+            # emails. When neither is supplied, share with the super admin
+            # themselves so the deployment isn't orphaned.
+            #   - dept only            → dept members get access via dept_ids
+            #   - emails only          → recipients validated against the org
+            #   - dept + emails        → both; emails validated against the org
+            #     (regardless of which dept they belong to)
+            #   - none (super admin)   → auto-share with the super admin
+            #
+            # Non-super-admin: dept is required. Recipient validation stays
+            # dept-scoped to preserve the existing department-admin/dev flow.
+            non_super_admin_no_dept = (
+                not is_org_wide_admin
+                and department_id is None
+                and normalized_recipient_emails
+            )
+            if non_super_admin_no_dept:
                 raise HTTPException(
                     status_code=400,
                     detail=(
@@ -1358,34 +1378,43 @@ async def promote_uat_to_prod(
                         "Promote privately without recipients or use a department-scoped deployment."
                     ),
                 )
-            invalid_emails = [email for email in normalized_recipient_emails if not EMAIL_REGEX.match(email)]
-            if invalid_emails:
-                raise HTTPException(status_code=400, detail=f"Invalid email format: {', '.join(invalid_emails)}")
+
+            recipients_to_process: list[str] = list(normalized_recipient_emails)
+            auto_self_share = (
+                is_org_wide_admin
+                and department_id is None
+                and not normalized_recipient_emails
+            )
+            if auto_self_share:
+                self_email = (
+                    (getattr(current_user, "email", None) or current_user.username or "")
+                    .strip()
+                    .lower()
+                )
+                if self_email and self_email not in recipients_to_process:
+                    recipients_to_process.append(self_email)
 
             now = datetime.now(timezone.utc)
-            # new_record.id is available after the flush above; scope to this PROD deployment only.
             existing_rows = (
                 await session.exec(
                     select(AgentPublishRecipient).where(
                         AgentPublishRecipient.deploy_id == new_record.id,
-                        AgentPublishRecipient.dept_id == department_id,
                     )
                 )
-            ).all() if department_id else []
+            ).all() if recipients_to_process else []
             existing_by_email = {row.recipient_email: row for row in existing_rows}
-            next_emails = set(normalized_recipient_emails)
-
+            next_emails = set(recipients_to_process)
             for row in existing_rows:
                 if row.recipient_email not in next_emails:
                     await session.delete(row)
 
-            if normalized_recipient_emails:
+            if recipients_to_process:
                 user_rows = (
                     await session.exec(
                         select(User).where(
                             or_(
-                                func.lower(User.username).in_(normalized_recipient_emails),
-                                func.lower(User.email).in_(normalized_recipient_emails),
+                                func.lower(User.username).in_(recipients_to_process),
+                                func.lower(User.email).in_(recipients_to_process),
                             )
                         )
                     )
@@ -1398,7 +1427,7 @@ async def promote_uat_to_prod(
                         users_by_email[str(user.email).strip().lower()] = user
 
                 missing_users = [
-                    email for email in normalized_recipient_emails if email not in users_by_email
+                    email for email in recipients_to_process if email not in users_by_email
                 ]
                 if missing_users:
                     raise HTTPException(
@@ -1406,34 +1435,92 @@ async def promote_uat_to_prod(
                         detail=f"User not found for emails: {', '.join(missing_users)}",
                     )
 
-                memberships = (
-                    await session.exec(
-                        select(UserDepartmentMembership).where(
-                            UserDepartmentMembership.user_id.in_(
-                                [users_by_email[email].id for email in normalized_recipient_emails]
-                            ),
-                            UserDepartmentMembership.department_id == department_id,
-                            UserDepartmentMembership.status == "active",
+                recipient_user_ids = [users_by_email[email].id for email in recipients_to_process]
+
+                # Resolve a dept_id per recipient so the NOT NULL on
+                # AgentPublishRecipient.dept_id is satisfied. For super admins,
+                # this is the user's own dept in the agent's org. For
+                # non-super-admins, it's the supplied department_id.
+                per_user_dept_id: dict = {}
+
+                if is_org_wide_admin and uat_dep.org_id:
+                    org_membership_ids = (
+                        await session.exec(
+                            select(UserOrganizationMembership.user_id).where(
+                                UserOrganizationMembership.user_id.in_(recipient_user_ids),
+                                UserOrganizationMembership.org_id == uat_dep.org_id,
+                                UserOrganizationMembership.status.in_(["accepted", "active"]),
+                            )
                         )
-                    )
-                ).all()
-                allowed_user_ids = {membership.user_id for membership in memberships}
+                    ).all()
+                    allowed_user_ids = set(org_membership_ids)
+                    invalid_membership_msg = "Users not in your organization"
+
+                    dept_rows = (
+                        await session.exec(
+                            select(
+                                UserDepartmentMembership.user_id,
+                                UserDepartmentMembership.department_id,
+                            )
+                            .where(
+                                UserDepartmentMembership.user_id.in_(recipient_user_ids),
+                                UserDepartmentMembership.org_id == uat_dep.org_id,
+                                UserDepartmentMembership.status == "active",
+                            )
+                            .order_by(UserDepartmentMembership.created_at)
+                        )
+                    ).all()
+                    for uid, did in dept_rows:
+                        per_user_dept_id.setdefault(uid, did)
+                else:
+                    memberships = (
+                        await session.exec(
+                            select(UserDepartmentMembership).where(
+                                UserDepartmentMembership.user_id.in_(recipient_user_ids),
+                                UserDepartmentMembership.department_id == department_id,
+                                UserDepartmentMembership.status == "active",
+                            )
+                        )
+                    ).all()
+                    allowed_user_ids = {m.user_id for m in memberships}
+                    invalid_membership_msg = "Users not in department"
+                    for m in memberships:
+                        per_user_dept_id[m.user_id] = m.department_id
+
                 invalid_membership = [
                     email
-                    for email in normalized_recipient_emails
+                    for email in recipients_to_process
                     if users_by_email[email].id not in allowed_user_ids
                 ]
                 if invalid_membership:
                     raise HTTPException(
                         status_code=400,
-                        detail=f"Users not in department: {', '.join(invalid_membership)}",
+                        detail=f"{invalid_membership_msg}: {', '.join(invalid_membership)}",
                     )
 
-                for email in normalized_recipient_emails:
+                missing_dept = [
+                    email
+                    for email in recipients_to_process
+                    if users_by_email[email].id not in per_user_dept_id
+                ]
+                if missing_dept:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            "Recipients have no active department in this organization: "
+                            f"{', '.join(missing_dept)}"
+                        ),
+                    )
+
+                for email in recipients_to_process:
                     user = users_by_email[email]
+                    effective_dept_id = (
+                        department_id if department_id is not None else per_user_dept_id[user.id]
+                    )
                     existing = existing_by_email.get(email)
                     if existing:
                         existing.recipient_user_id = user.id
+                        existing.dept_id = effective_dept_id
                         existing.updated_at = now
                         session.add(existing)
                         continue
@@ -1442,7 +1529,7 @@ async def promote_uat_to_prod(
                             agent_id=uat_dep.agent_id,
                             deploy_id=new_record.id,
                             org_id=uat_dep.org_id,
-                            dept_id=department_id,
+                            dept_id=effective_dept_id,
                             recipient_user_id=user.id,
                             recipient_email=email,
                             created_by=current_user.id,
