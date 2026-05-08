@@ -772,10 +772,17 @@ async def _validate_and_store_publish_recipients(
     *,
     session: DbSession,
     agent: Agent,
-    department_id: UUID,
+    deploy_id: UUID,
+    department_id: UUID | None,
     current_user: CurrentActiveUser,
     recipient_emails: list[str],
 ) -> None:
+    """Validate recipients and write `AgentPublishRecipient` rows for a deployment.
+
+    Mirrors `control_panel.update_agent_sharing_options` so publish-time and
+    control-panel-time sharing produce identical rows. Caller is responsible
+    for committing — this function only adds to the session.
+    """
     if not recipient_emails:
         return
 
@@ -813,6 +820,11 @@ async def _validate_and_store_publish_recipients(
     recipient_user_ids = {matched_users_by_email[email].id for email in recipient_emails}
     current_role = str(getattr(current_user, "role", "")).lower()
     is_org_wide_admin = current_role in {"root", "super_admin", "admin"}
+    # Per-user dept_id resolution for org-wide super-admin publishes.
+    # The recipient table requires NOT NULL dept_id, but a super-admin's
+    # org-wide publish has no caller-supplied department. Each recipient
+    # gets stored against their own active dept in the agent's org.
+    per_user_dept_id: dict[UUID, UUID] = {}
     if is_org_wide_admin:
         org_id = await _resolve_publish_lookup_org_id(
             session,
@@ -836,6 +848,24 @@ async def _validate_and_store_publish_recipients(
         ).all()
         allowed_user_ids = set(memberships)
         invalid_membership_message = "Users not in your organization"
+
+        if department_id is None:
+            dept_rows = (
+                await session.exec(
+                    select(
+                        UserDepartmentMembership.user_id,
+                        UserDepartmentMembership.department_id,
+                    )
+                    .where(
+                        UserDepartmentMembership.user_id.in_(list(recipient_user_ids)),
+                        UserDepartmentMembership.org_id == org_id,
+                        UserDepartmentMembership.status == "active",
+                    )
+                    .order_by(UserDepartmentMembership.created_at)
+                )
+            ).all()
+            for uid, did in dept_rows:
+                per_user_dept_id.setdefault(uid, did)
     else:
         memberships = (
             await session.exec(
@@ -862,14 +892,32 @@ async def _validate_and_store_publish_recipients(
             detail=f"{invalid_membership_message}: {', '.join(not_in_department)}",
         )
 
+    if department_id is None:
+        missing_dept = sorted(
+            {
+                email
+                for email in recipient_emails
+                if matched_users_by_email[email].id not in per_user_dept_id
+            }
+        )
+        if missing_dept:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    "Recipients have no active department in this organization: "
+                    f"{', '.join(missing_dept)}"
+                ),
+            )
+
     now = datetime.now(timezone.utc)
     for email in recipient_emails:
         user = matched_users_by_email[email]
+        effective_dept_id = department_id if department_id is not None else per_user_dept_id[user.id]
         existing = (
             await session.exec(
                 select(AgentPublishRecipient).where(
-                    AgentPublishRecipient.agent_id == agent.id,
-                    AgentPublishRecipient.dept_id == department_id,
+                    AgentPublishRecipient.deploy_id == deploy_id,
+                    AgentPublishRecipient.dept_id == effective_dept_id,
                     AgentPublishRecipient.recipient_email == email,
                 )
             )
@@ -886,8 +934,9 @@ async def _validate_and_store_publish_recipients(
         session.add(
             AgentPublishRecipient(
                 agent_id=agent.id,
+                deploy_id=deploy_id,
                 org_id=agent.org_id,
-                dept_id=department_id,
+                dept_id=effective_dept_id,
                 recipient_user_id=user.id,
                 recipient_email=email,
                 created_by=current_user.id,
@@ -2308,13 +2357,8 @@ async def publish_agent(
                     "Publish privately without recipients or publish into a department."
                 ),
             )
-        await _validate_and_store_publish_recipients(
-            session=session,
-            agent=agent,
-            department_id=resolved_department_id,
-            current_user=current_user,
-            recipient_emails=recipient_emails,
-        )
+        # Recipients are written AFTER each deploy row exists so deploy_id
+        # can be set on the recipient rows (mirrors control_panel sharing).
 
         # Freeze snapshot — immutable copy of the current agent flow
         snapshot = agent.data.copy()
@@ -2411,6 +2455,16 @@ async def publish_agent(
             for rec in existing_records:
                 rec.is_active = False
                 session.add(rec)
+
+            await session.flush()
+            await _validate_and_store_publish_recipients(
+                session=session,
+                agent=agent,
+                deploy_id=new_record.id,
+                department_id=resolved_department_id,
+                current_user=current_user,
+                recipient_emails=recipient_emails,
+            )
 
             await session.commit()
             await session.refresh(new_record)
@@ -2645,6 +2699,16 @@ async def publish_agent(
                 # Shadow deployment: keep previous versions active so
                 # multiple versions can run side-by-side.
 
+                await session.flush()
+                await _validate_and_store_publish_recipients(
+                    session=session,
+                    agent=agent,
+                    deploy_id=new_record.id,
+                    department_id=resolved_department_id,
+                    current_user=current_user,
+                    recipient_emails=recipient_emails,
+                )
+
                 await session.commit()
                 await session.refresh(new_record)
 
@@ -2804,6 +2868,15 @@ async def publish_agent(
                 session.add(agent)
 
                 await session.flush()  # get new_record.id
+
+                await _validate_and_store_publish_recipients(
+                    session=session,
+                    agent=agent,
+                    deploy_id=new_record.id,
+                    department_id=resolved_department_id,
+                    current_user=current_user,
+                    recipient_emails=recipient_emails,
+                )
 
                 # Create approval_request targeting the supplied department admin
                 approval = ApprovalRequest(
