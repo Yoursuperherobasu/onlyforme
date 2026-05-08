@@ -128,7 +128,7 @@ KPI_PRESETS = [
         "id": "avg_response_time",
         "name": "Avg Response Time",
         "section": "Experience",
-        "query": "avg(rate(http_server_request_duration_ms_milliseconds_sum[5m]) / clamp_min(rate(http_server_request_duration_ms_milliseconds_count[5m]), 0.001))",
+        "query": "sum(rate(http_server_request_duration_ms_milliseconds_sum[5m])) / clamp_min(sum(rate(http_server_request_duration_ms_milliseconds_count[5m])), 0.001)",
         "unit": "ms",
         "thresholds": {"green": 200, "yellow": 500},
     },
@@ -238,7 +238,7 @@ CHART_PRESETS = [
         "name": "Response Time Trend",
         "type": "line",
         "queries": [
-            {"label": "Avg Response Time", "query": "avg(rate(http_server_request_duration_ms_milliseconds_sum[5m]) / clamp_min(rate(http_server_request_duration_ms_milliseconds_count[5m]), 0.001))"},
+            {"label": "Avg Response Time", "query": "sum(rate(http_server_request_duration_ms_milliseconds_sum[5m])) / clamp_min(sum(rate(http_server_request_duration_ms_milliseconds_count[5m])), 0.001)"},
         ],
         "unit": "ms",
     },
