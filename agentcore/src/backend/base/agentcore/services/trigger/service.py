@@ -953,7 +953,12 @@ class TriggerService(Service):
                 # 7. Mark processed emails as read if configured.
                 # Skip the PATCH when the linked account's app reg lacks
                 # Mail.ReadWrite — the trigger itself only needs Mail.Read,
-                # so the email-monitoring loop continues normally.
+                # so the email-monitoring loop continues normally. We log at
+                # WARNING level (not INFO) the first few times so operators
+                # see the misconfig in standard log dashboards, and we record
+                # a runtime_warning on the trigger config row so the
+                # scheduler UI can surface it to the end user without
+                # needing them to read backend logs.
                 if mark_as_read:
                     if has_scope(acct.get("granted_scopes"), "Mail.ReadWrite"):
                         await self._mark_emails_as_read(
@@ -961,11 +966,28 @@ class TriggerService(Service):
                             access_token,
                             task_id,
                         )
+                        # Clear any previous warning now that mark-as-read is working
+                        config.pop("_runtime_warning", None)
                     else:
-                        logger.info(
-                            f"Email monitor {task_id}: skipping mark-as-read "
-                            f"(Mail.ReadWrite not granted on the connector's app registration)"
+                        warning_msg = (
+                            "mark_as_read is enabled on this trigger but the "
+                            "connector's app registration was not granted "
+                            "Mail.ReadWrite. New emails are still being detected, "
+                            "but they will NOT be marked as read in the mailbox. "
+                            "Ask your admin to grant Mail.ReadWrite (delegated) "
+                            "and reconnect the mailbox, or disable mark_as_read on "
+                            "this trigger."
                         )
+                        logger.warning(
+                            f"Email monitor {task_id}: skipping mark-as-read — "
+                            f"Mail.ReadWrite not granted on this connector. "
+                            f"{warning_msg}"
+                        )
+                        config["_runtime_warning"] = {
+                            "code": "mark_as_read_skipped_no_permission",
+                            "message": warning_msg,
+                            "first_observed": datetime.now(timezone.utc).isoformat(),
+                        }
 
                 await self._persist_seen_files(trigger_config_id)
 
