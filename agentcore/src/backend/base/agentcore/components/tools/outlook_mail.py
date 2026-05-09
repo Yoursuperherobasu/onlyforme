@@ -221,6 +221,41 @@ def _refresh_token_sync(config: dict, acct: dict, force: bool = False) -> str:
     return data["access_token"]
 
 
+def _gate_with_refresh_retry(config: dict, acct: dict, scope_name: str) -> None:
+    """Permission-gate that picks up freshly-granted scopes without reconnect.
+
+    Pattern (mirrors the API path in api/outlook_connector.py reply_mail):
+
+        1. Check stored ``granted_scopes`` against ``scope_name``.
+        2. If denied, force a token refresh — admin may have granted the
+           permission since this mailbox was last linked. Microsoft returns
+           the up-to-date scope set in the refresh response, which our
+           ``_refresh_token_sync`` writes back into ``acct["granted_scopes"]``.
+        3. Re-check. If still denied, raise the (now well-grounded)
+           ``ConnectorPermissionError``.
+
+    Raises ``ConnectorPermissionError`` when the permission is genuinely
+    missing — even after a refresh. Other refresh exceptions (no refresh
+    token, network) are swallowed and we re-raise the original gate error so
+    the user sees the descriptive permission message rather than a transient
+    network blip.
+    """
+    try:
+        require_scope(acct.get("granted_scopes"), scope_name)
+        return  # allowed on first check, no refresh needed
+    except ConnectorPermissionError as original_denial:
+        try:
+            _refresh_token_sync(config, acct, force=True)
+        except Exception:
+            # Refresh itself failed (no refresh_token, network, etc).
+            # Surface the original permission denial — that's the actionable
+            # message for the user.
+            raise original_denial
+        # Re-check with refreshed granted_scopes; if still denied, raise the
+        # post-refresh ConnectorPermissionError (most recent state).
+        require_scope(acct.get("granted_scopes"), scope_name)
+
+
 def _persist_updated_config(config: dict) -> None:
     """Persist updated config (e.g. refreshed tokens) back to the DB.
 
@@ -737,7 +772,7 @@ class OutlookMailComponent(Node):
         try:
             config = self._get_selected_config()
             acct = self._resolve_account(config)
-            require_scope(acct.get("granted_scopes"), "Mail.Send")
+            _gate_with_refresh_retry(config, acct, "Mail.Send")
             access_token = _refresh_token_sync(config, acct)
         except ConnectorPermissionError as e:
             self.status = f"Error: {e!s}"
@@ -833,7 +868,7 @@ class OutlookMailComponent(Node):
         try:
             config = self._get_selected_config()
             acct = self._resolve_account(config)
-            require_scope(acct.get("granted_scopes"), "Mail.Send")
+            _gate_with_refresh_retry(config, acct, "Mail.Send")
             access_token = _refresh_token_sync(config, acct)
         except ConnectorPermissionError as e:
             self.status = f"Error: {e!s}"
@@ -920,7 +955,7 @@ class OutlookMailComponent(Node):
         try:
             config = self._get_selected_config()
             acct = self._resolve_account(config)
-            require_scope(acct.get("granted_scopes"), "Mail.Send")
+            _gate_with_refresh_retry(config, acct, "Mail.Send")
             access_token = _refresh_token_sync(config, acct)
         except ConnectorPermissionError as e:
             self.status = f"Error: {e!s}"
