@@ -659,15 +659,33 @@ async def reply_mail(
         )
 
     # Permission gate: block here when Mail.Send is not in the granted scopes.
+    # If the gate fails, try a forced token refresh first — admin may have just
+    # granted the permission and our stored ``granted_scopes`` is stale. Microsoft
+    # returns the up-to-date granted set in the refresh response, so a single
+    # round trip is enough to detect a freshly-granted scope without making the
+    # user reconnect.
     try:
-        require_scope(acct.get("granted_scopes", []), "Mail.Send")
+        require_scope(acct.get("granted_scopes"), "Mail.Send")
     except ConnectorPermissionError as exc:
-        raise HTTPException(status_code=403, detail=str(exc))
-
-    # Refresh token if needed
-    access_token, was_refreshed = await _refresh_token_if_needed(config, acct)
-    if was_refreshed:
-        await _save_updated_config(session, row, config, current_user.id)
+        try:
+            await _refresh_token_if_needed(config, acct, force=True)
+            await _save_updated_config(session, row, config, current_user.id)
+        except HTTPException:
+            # Refresh itself failed (no refresh_token, network, revoked token).
+            # Fall back to the original gate-denied 403 — the user must reconnect.
+            raise HTTPException(status_code=403, detail=str(exc))
+        # Re-check with the freshly-refreshed scopes.
+        try:
+            require_scope(acct.get("granted_scopes"), "Mail.Send")
+        except ConnectorPermissionError as exc2:
+            raise HTTPException(status_code=403, detail=str(exc2))
+        access_token = acct["access_token"]
+        was_refreshed = True
+    else:
+        # Gate passed on first try; refresh only if expired.
+        access_token, was_refreshed = await _refresh_token_if_needed(config, acct)
+        if was_refreshed:
+            await _save_updated_config(session, row, config, current_user.id)
 
     from urllib.parse import quote
 

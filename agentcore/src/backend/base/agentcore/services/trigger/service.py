@@ -955,7 +955,7 @@ class TriggerService(Service):
                 # Mail.ReadWrite — the trigger itself only needs Mail.Read,
                 # so the email-monitoring loop continues normally.
                 if mark_as_read:
-                    if has_scope(acct.get("granted_scopes", []), "Mail.ReadWrite"):
+                    if has_scope(acct.get("granted_scopes"), "Mail.ReadWrite"):
                         await self._mark_emails_as_read(
                             [m.get("id") for m in new_messages if m.get("id")],
                             access_token,

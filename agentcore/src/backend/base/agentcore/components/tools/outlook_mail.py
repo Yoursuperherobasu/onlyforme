@@ -737,7 +737,7 @@ class OutlookMailComponent(Node):
         try:
             config = self._get_selected_config()
             acct = self._resolve_account(config)
-            require_scope(acct.get("granted_scopes", []), "Mail.Send")
+            require_scope(acct.get("granted_scopes"), "Mail.Send")
             access_token = _refresh_token_sync(config, acct)
         except ConnectorPermissionError as e:
             self.status = f"Error: {e!s}"
@@ -833,7 +833,7 @@ class OutlookMailComponent(Node):
         try:
             config = self._get_selected_config()
             acct = self._resolve_account(config)
-            require_scope(acct.get("granted_scopes", []), "Mail.Send")
+            require_scope(acct.get("granted_scopes"), "Mail.Send")
             access_token = _refresh_token_sync(config, acct)
         except ConnectorPermissionError as e:
             self.status = f"Error: {e!s}"
@@ -920,7 +920,7 @@ class OutlookMailComponent(Node):
         try:
             config = self._get_selected_config()
             acct = self._resolve_account(config)
-            require_scope(acct.get("granted_scopes", []), "Mail.Send")
+            require_scope(acct.get("granted_scopes"), "Mail.Send")
             access_token = _refresh_token_sync(config, acct)
         except ConnectorPermissionError as e:
             self.status = f"Error: {e!s}"

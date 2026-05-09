@@ -938,13 +938,17 @@ async def _test_outlook_connection(config: dict) -> dict:
         client_secret = config.get("client_secret", "")
         if refresh_token and tenant_id and client_id and client_secret:
             token_url = f"https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token"
+            # Use ``.default`` so reduced-permission app registrations (e.g.
+            # Mail.Read only) don't get rejected with AADSTS65001 during the
+            # Test Connection refresh. The granted scope set is whatever
+            # admin-consented for the app, not the full hardcoded list.
             async with httpx.AsyncClient(timeout=15) as client:
                 refresh_resp = await client.post(token_url, data={
                     "client_id": client_id,
                     "client_secret": client_secret,
                     "refresh_token": refresh_token,
                     "grant_type": "refresh_token",
-                    "scope": "Mail.Read Mail.ReadWrite Mail.Send User.Read offline_access",
+                    "scope": "https://graph.microsoft.com/.default offline_access",
                 })
             if refresh_resp.status_code == 200:
                 token_data = refresh_resp.json()

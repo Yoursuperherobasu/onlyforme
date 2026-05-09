@@ -951,7 +951,7 @@ class SharePointDocumentComponent(Node):
 
         try:
             config, access_token, site_id, drive_id = self._get_client_context()
-            require_scope(config.get("_sp_granted_roles", []), "Sites.ReadWrite.All")
+            require_scope(config.get("_sp_granted_roles"), "Sites.ReadWrite.All")
         except ConnectorPermissionError as e:
             self.status = f"Error: {e!s}"
             return Message(text=f"Cannot upload: {e!s}. The Azure AD app registration was not granted Sites.ReadWrite.All. Ask your admin to grant the Application permission, then retry.")
@@ -1107,7 +1107,7 @@ class SharePointDocumentComponent(Node):
 
         try:
             config, access_token, site_id, drive_id = self._get_client_context()
-            require_scope(config.get("_sp_granted_roles", []), "Sites.ReadWrite.All")
+            require_scope(config.get("_sp_granted_roles"), "Sites.ReadWrite.All")
         except ConnectorPermissionError as e:
             self.status = f"Error: {e!s}"
             return Message(text=f"Cannot create folder: {e!s}. The Azure AD app registration was not granted Sites.ReadWrite.All. Ask your admin to grant the Application permission, then retry.")

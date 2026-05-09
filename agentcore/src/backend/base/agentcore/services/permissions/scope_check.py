@@ -97,13 +97,22 @@ def parse_oauth_scopes(scope_str: str | None) -> list[str]:
 def require_scope(granted: Iterable[str] | None, required: str) -> None:
     """Raise :class:`ConnectorPermissionError` if ``required`` is not in ``granted``.
 
-    Permissive fallback: when ``granted`` is empty/None (legacy connector with no
-    discovered scope list yet), the call is a no-op — we treat all permissions as
-    granted to preserve backwards compatibility.
+    Three distinct states (so legacy compatibility doesn't paper over real
+    permission gaps):
+
+    * ``granted is None``  — legacy connector (the ``granted_scopes`` field
+      didn't exist yet when the account was linked). Permissive fallback —
+      no-op, the operation is allowed. Graph 403 safety net catches genuine
+      lack of permission.
+    * ``granted == []``    — OAuth completed but Microsoft returned no scope
+      string (or the post-OAuth parse produced an empty list). This is a
+      *known-empty* state, not a *legacy-unknown* state, so we treat it
+      strictly: raise.
+    * ``granted == [...]`` — normal case, check membership.
     """
-    granted_list = list(granted) if granted else []
-    if not granted_list:
-        return  # permissive fallback for legacy / pre-discovery state
+    if granted is None:
+        return  # legacy / pre-feature connector — permissive fallback
+    granted_list = list(granted)
     if required not in granted_list:
         raise ConnectorPermissionError(required)
 
@@ -111,13 +120,13 @@ def require_scope(granted: Iterable[str] | None, required: str) -> None:
 def has_scope(granted: Iterable[str] | None, required: str) -> bool:
     """Non-raising variant of :func:`require_scope`, for UI/output filtering.
 
-    Returns ``True`` for the permissive-fallback case (empty ``granted``) so that
-    legacy connectors continue to expose all features.
+    Same three-state semantics as :func:`require_scope`: ``None`` is permissive
+    (legacy), ``[]`` is strict (OAuth returned nothing), populated list is
+    membership check.
     """
-    granted_list = list(granted) if granted else []
-    if not granted_list:
-        return True  # permissive fallback
-    return required in granted_list
+    if granted is None:
+        return True  # legacy permissive
+    return required in list(granted)
 
 
 # ── Graph error translation ────────────────────────────────────────────────
