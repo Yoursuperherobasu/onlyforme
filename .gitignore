@@ -9,6 +9,10 @@ TESTING_DOCUMENTATION.pdf
 RELEASE_NOTES_v1.3.md
 RELEASE_NOTES_v1.3.pdf
 PROD_CONFIGMAPS_REFERENCE.md
+MiCore-Rollback-Infra-PROD.md
+MiCore-Rollback-Infra-PROD.pdf
+MiCore-Testing-Documentation-PROD.md
+MiCore-Testing-Documentation-PROD.pdf
 AZURE_CLIENT_DEPLOYMENT_TRACKER.md
 AZURE_INFRASTRUCTURE_REFERENCE.md
 AZURE_PROD_UAT_INFRASTRUCTURE_REFERENCE.md
@@ -229,6 +233,21 @@ agentcore/agentcore-deployment.yaml
 
 # Basu personal reference files (never push)
 agentcore/Basu_only/
+
+# Local audit / scenario / simulator scripts — never push.
+# These are dev-only verification harnesses kept under Basu_only/, but the
+# patterns below act as a safety net for anything copied into the repo by
+# accident.
+**/*_audit.py
+**/*_audit.md
+**/scenario_*.py
+**/exhaustive_test.py
+**/comprehensive_test*.py
+**/outlook_e2e_simulator.py
+**/production_readiness.py
+**/test_scope_check_v2.py
+**/test_late_grant.py
+**/e2e_scenarios.py
 
 # Knowledge base storage (runtime data, not code)
 agentcore/src/backend/src/backend/knowledge_base_storage/
