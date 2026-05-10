@@ -460,18 +460,8 @@ async def oauth_callback(
     flag_modified(row, "provider_config")
     row.updated_at = datetime.now(timezone.utc)
     row.updated_by = user_id
-    # DEBUG: log what's about to be committed
-    logger.info(
-        f"[DEBUG-LINK] About to commit. row.provider_config keys={list(row.provider_config.keys())}, "
-        f"linked_accounts count={len(row.provider_config.get('linked_accounts', []))}, "
-        f"first_email={(row.provider_config.get('linked_accounts') or [{}])[0].get('email','<none>')}"
-    )
     try:
         await session.commit()
-        await session.refresh(row)
-        logger.info(
-            f"[DEBUG-LINK] After commit+refresh. linked_accounts count={len(row.provider_config.get('linked_accounts', []))}"
-        )
     except Exception as exc:
         await session.rollback()
         logger.error("Failed to save linked Outlook account: {}", exc)
