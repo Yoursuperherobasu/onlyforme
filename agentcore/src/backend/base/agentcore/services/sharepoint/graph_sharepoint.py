@@ -18,12 +18,25 @@ from loguru import logger
 
 from agentcore.services.permissions import (
     ConnectorPermissionError,
+    has_any_scope,
     parse_jwt_roles,
-    require_scope,
+    require_any_scope,
 )
 
 GRAPH_BASE = "https://graph.microsoft.com/v1.0"
 TOKEN_URL = "https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token"
+
+# Application permissions that authorise a SharePoint *write* (upload / create
+# folder / etc.) when present in the access token's ``roles`` claim. We accept
+# any of these — Microsoft Graph itself will gatekeep at request time if the
+# per-site grant doesn't cover the resource (relevant for ``Sites.Selected``).
+# Ordered: the "preferred" name comes first so error messages name the most
+# commonly-granted permission.
+SHAREPOINT_WRITE_SCOPES = (
+    "Sites.ReadWrite.All",
+    "Files.ReadWrite.All",
+    "Sites.Selected",
+)
 
 
 # ── Path traversal guard (Step 1) ─────────────────────────────────
@@ -294,10 +307,26 @@ class SharePointGraphClient:
         url = f"{GRAPH_BASE}/sites/{site_id}/drives"
         return await self._paginate(url)
 
-    async def resolve_drive_id(self, library_name: str = "Shared Documents") -> str:
+    async def resolve_drive_id(
+        self,
+        library_name: str = "Shared Documents",
+        *,
+        strict: bool = True,
+    ) -> str:
         """Find a drive ID by library display name (case-insensitive).
 
-        Falls back to the first drive if no match found. Results are cached (Step 3).
+        Args:
+            library_name: Display name of the document library. Default
+                ``"Shared Documents"`` is the canonical English-tenant name
+                for the built-in library.
+            strict: When ``True`` (default), raise :class:`ValueError` if no
+                library matches. When ``False``, fall back to the first
+                available drive after logging a warning — historical
+                behavior preserved for callers that legitimately want
+                lenient resolution (e.g. cross-language tenants where the
+                built-in library has a non-English name).
+
+        Results are cached per (library_name, strict) tuple.
         """
         cache_key = library_name.lower()
         if cache_key in self._drive_cache:
@@ -315,9 +344,21 @@ class SharePointGraphClient:
                 break
 
         if drive_id is None:
-            # Fallback: first drive
+            available = [d.get("name", "<unnamed>") for d in drives]
+            if strict:
+                # Honest failure — the user named a library that doesn't
+                # exist on this site. Silently substituting another drive
+                # produces results that look right but reference the wrong
+                # data (the bug surfaced during code review 2026-05-11).
+                msg = (
+                    f"Library '{library_name}' not found on this SharePoint "
+                    f"site. Available libraries: {', '.join(available) or '<none>'}"
+                )
+                raise ValueError(msg)
+            # Lenient fallback path (only when explicitly opted-in)
             logger.warning(
-                f"Library '{library_name}' not found, using first drive: {drives[0].get('name')}"
+                f"Library '{library_name}' not found, using first drive: "
+                f"{drives[0].get('name')} (strict=False)"
             )
             drive_id = drives[0]["id"]
 
@@ -401,7 +442,7 @@ class SharePointGraphClient:
 
         # Ensure we have a token (and thus granted_roles) before checking
         await self._acquire_token()
-        require_scope(self._granted_roles, "Sites.ReadWrite.All")
+        require_any_scope(self._granted_roles, SHAREPOINT_WRITE_SCOPES)
 
         # Delegate large files to upload session (Step 7)
         if len(content) > 4 * 1024 * 1024:
@@ -441,7 +482,7 @@ class SharePointGraphClient:
         # fast here so we don't burn an upload session (which Microsoft would
         # otherwise abandon and rate-limit).
         await self._acquire_token()
-        require_scope(self._granted_roles, "Sites.ReadWrite.All")
+        require_any_scope(self._granted_roles, SHAREPOINT_WRITE_SCOPES)
 
         # Build the item path for the upload session
         if folder_path and folder_path.strip("/"):
@@ -541,7 +582,7 @@ class SharePointGraphClient:
         _validate_path(parent_path, "parent_path")
         _validate_path(folder_name, "folder_name")
         await self._acquire_token()
-        require_scope(self._granted_roles, "Sites.ReadWrite.All")
+        require_any_scope(self._granted_roles, SHAREPOINT_WRITE_SCOPES)
 
         if parent_path and parent_path.strip("/"):
             safe_parent = quote(parent_path.strip("/"), safe="/")

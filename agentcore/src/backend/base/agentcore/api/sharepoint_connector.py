@@ -30,9 +30,13 @@ from agentcore.services.database.models.connector_catalogue.model import Connect
 from agentcore.services.permissions import (
     ConnectorPermissionError,
     graph_permission_error_message,
+    has_any_scope,
     is_graph_permission_error,
 )
-from agentcore.services.sharepoint.graph_sharepoint import SharePointGraphClient
+from agentcore.services.sharepoint.graph_sharepoint import (
+    SHAREPOINT_WRITE_SCOPES,
+    SharePointGraphClient,
+)
 
 router = APIRouter(prefix="/sharepoint", tags=["SharePoint Connector"])
 
@@ -147,6 +151,35 @@ def _build_graph_client(config: dict) -> SharePointGraphClient:
         _client_cache[cache_key] = client
 
     return client
+
+
+async def _gate_with_refresh_retry(
+    client: SharePointGraphClient,
+    coro_factory,
+):
+    """Run a SharePoint write coroutine with force-refresh on local-gate denial.
+
+    Pattern mirrors the Outlook ``_gate_with_refresh_retry`` helper. When the
+    locally-cached ``granted_roles`` is stale (admin granted Sites.ReadWrite.All
+    *after* the token was issued, but the in-process token cache hasn't
+    expired yet), the first call raises ``ConnectorPermissionError`` even
+    though Graph would now accept the operation. Force-refresh the token,
+    re-decode the roles claim, and re-try once.
+
+    If the second attempt still raises, that means the role really isn't
+    granted — surface the original exception so the caller can render the
+    canonical 403 message.
+    """
+    try:
+        return await coro_factory()
+    except ConnectorPermissionError:
+        # Local gate denied — re-acquire token in case admin granted the role
+        # since the last token issue. invalidate_token() zeros the cached
+        # access token; the next call to _acquire_token() pulls a fresh one
+        # and re-runs parse_jwt_roles on it.
+        client.invalidate_token()
+        # The retry will go through the same gate again with fresh roles.
+        return await coro_factory()
 
 
 async def _retry_on_transient(client: SharePointGraphClient, coro_factory, max_retries: int = 3):
@@ -264,14 +297,12 @@ async def get_capabilities(
         read_probe_error = f"Probe failed: {exc!s}"
         can_read = False
 
-    # Step 3: write capability — derived from JWT roles claim
-    if roles:
-        can_write = "Sites.ReadWrite.All" in roles
-    else:
-        # JWT decode returned empty (unusual). Permissive fallback so the UI
-        # shows controls; backend will produce a clean 403 if write actually
-        # fails on Graph.
-        can_write = True
+    # Step 3: write capability — derived from JWT roles claim.
+    # A write is authorised by ANY of: Sites.ReadWrite.All, Files.ReadWrite.All,
+    # or Sites.Selected (per-site grants outside the JWT). ``has_any_scope``
+    # encodes the same tristate as has_scope: None=legacy permissive,
+    # []=strict deny, [...]=intersection check.
+    can_write = has_any_scope(roles or None, SHAREPOINT_WRITE_SCOPES) if roles else True
 
     return {
         "connector_id": str(connector_id),
@@ -438,18 +469,25 @@ async def upload_file(
         drive_id = await _retry_on_transient(
             client, lambda: client.resolve_drive_id(req.library)
         )
-        result = await _retry_on_transient(
-            client, lambda: client.upload_file(drive_id, req.folder_path, req.filename, content_bytes)
+        # Use _gate_with_refresh_retry so an admin who granted
+        # Sites.ReadWrite.All (or Files.ReadWrite.All) *after* the token
+        # was issued doesn't have to wait for the ~1h token TTL to expire
+        # before the user can upload.
+        result = await _gate_with_refresh_retry(
+            client,
+            lambda: client.upload_file(drive_id, req.folder_path, req.filename, content_bytes),
         )
     except ConnectorPermissionError as exc:
-        # The app reg lacks Sites.ReadWrite.All — surface a clean 403 with a
-        # message the client can show, instead of letting Graph return an
-        # opaque "Insufficient privileges" upstream error.
+        # Local gate denied even after force-refresh — the role really
+        # isn't granted. Surface a clean 403 with a message the client
+        # can show, instead of letting Graph return an opaque
+        # "Insufficient privileges" upstream error.
         raise HTTPException(status_code=403, detail=str(exc))
     except httpx.HTTPStatusError as exc:
         # Stale-revocation safety net: detect Graph permission errors that
-        # slipped past our local gate (e.g. permissive fallback for legacy
-        # connectors, admin revoked Sites.ReadWrite.All since token issued).
+        # slipped past our local gate (legacy permissive fallback, admin
+        # revoked write since token issued, or Sites.Selected without
+        # per-site grant on this site).
         if is_graph_permission_error(exc.response.status_code, exc.response.text):
             raise HTTPException(
                 status_code=403,
@@ -544,8 +582,10 @@ async def create_folder(
         drive_id = await _retry_on_transient(
             client, lambda: client.resolve_drive_id(req.library)
         )
-        result = await _retry_on_transient(
-            client, lambda: client.create_folder(drive_id, req.parent_path, req.folder_name)
+        # Same force-refresh-on-deny pattern as upload — handles late-grant.
+        result = await _gate_with_refresh_retry(
+            client,
+            lambda: client.create_folder(drive_id, req.parent_path, req.folder_name),
         )
     except ConnectorPermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc))

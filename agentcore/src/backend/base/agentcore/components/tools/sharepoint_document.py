@@ -26,10 +26,22 @@ from agentcore.schema.message import Message
 from agentcore.services.permissions import (
     ConnectorPermissionError,
     graph_permission_error_message,
+    has_any_scope,
     has_scope,
     is_graph_permission_error,
     parse_jwt_roles,
+    require_any_scope,
     require_scope,
+)
+
+# Application permissions that authorise a SharePoint *write* — duplicated
+# from services/sharepoint/graph_sharepoint.SHAREPOINT_WRITE_SCOPES to avoid
+# importing the async client into the sync tool component. Keep both lists in
+# sync if extended.
+SHAREPOINT_WRITE_SCOPES = (
+    "Sites.ReadWrite.All",
+    "Files.ReadWrite.All",
+    "Sites.Selected",
 )
 from agentcore.template.field.base import Output
 from agentcore.logging import logger
@@ -951,10 +963,15 @@ class SharePointDocumentComponent(Node):
 
         try:
             config, access_token, site_id, drive_id = self._get_client_context()
-            require_scope(config.get("_sp_granted_roles"), "Sites.ReadWrite.All")
+            require_any_scope(config.get("_sp_granted_roles"), SHAREPOINT_WRITE_SCOPES)
         except ConnectorPermissionError as e:
             self.status = f"Error: {e!s}"
-            return Message(text=f"Cannot upload: {e!s}. The Azure AD app registration was not granted Sites.ReadWrite.All. Ask your admin to grant the Application permission, then retry.")
+            return Message(text=(
+                f"Cannot upload: {e!s}. The Azure AD app registration was not "
+                f"granted any of {', '.join(SHAREPOINT_WRITE_SCOPES)}. Ask "
+                f"your admin to grant one of those Application permissions, "
+                f"then retry."
+            ))
         except Exception as e:
             self.status = f"Error: {e!s}"
             return Message(text=f"Failed to connect to SharePoint: {e!s}")
@@ -1107,10 +1124,15 @@ class SharePointDocumentComponent(Node):
 
         try:
             config, access_token, site_id, drive_id = self._get_client_context()
-            require_scope(config.get("_sp_granted_roles"), "Sites.ReadWrite.All")
+            require_any_scope(config.get("_sp_granted_roles"), SHAREPOINT_WRITE_SCOPES)
         except ConnectorPermissionError as e:
             self.status = f"Error: {e!s}"
-            return Message(text=f"Cannot create folder: {e!s}. The Azure AD app registration was not granted Sites.ReadWrite.All. Ask your admin to grant the Application permission, then retry.")
+            return Message(text=(
+                f"Cannot create folder: {e!s}. The Azure AD app registration "
+                f"was not granted any of {', '.join(SHAREPOINT_WRITE_SCOPES)}. "
+                f"Ask your admin to grant one of those Application "
+                f"permissions, then retry."
+            ))
         except Exception as e:
             self.status = f"Error: {e!s}"
             return Message(text=f"Failed to connect to SharePoint: {e!s}")

@@ -862,10 +862,39 @@ def _test_sharepoint_connection(config: dict) -> dict:
 
             latency_ms = round((time.time() - start) * 1000, 2)
             drive_count = len(drives_resp.json().get("value", []))
+            # Decode the JWT roles claim to surface the *granted* Application
+            # permissions. Previously Test Connection only proved read access
+            # (token + drive list), so a user could see "connected" while
+            # writes were silently impossible. Now we report write
+            # capability honestly based on the JWT roles.
+            from agentcore.services.permissions import (
+                has_any_scope as _has_any,
+                parse_jwt_roles as _parse_roles,
+            )
+            from agentcore.services.sharepoint.graph_sharepoint import (
+                SHAREPOINT_WRITE_SCOPES as _WRITE_SCOPES,
+            )
+            roles = _parse_roles(access_token)
+            can_write = _has_any(roles or None, _WRITE_SCOPES) if roles else None
+            write_note = (
+                " Write access verified (Sites.ReadWrite.All / Files.ReadWrite.All / Sites.Selected)."
+                if can_write
+                else (
+                    " Read-only: app registration lacks Sites.ReadWrite.All. "
+                    "Uploads and folder creation will return 403."
+                    if can_write is False
+                    else " Write capability unknown (no roles in token)."
+                )
+            )
             return {
                 "success": True,
-                "message": f"Connected successfully to SharePoint site: {site_name} ({drive_count} document libraries found)",
+                "message": (
+                    f"Connected successfully to SharePoint site: {site_name} "
+                    f"({drive_count} document libraries found)." + write_note
+                ),
                 "latency_ms": latency_ms,
+                "granted_roles": roles,
+                "can_write": can_write,
                 "tables_metadata": None,
             }
         except HTTPException:

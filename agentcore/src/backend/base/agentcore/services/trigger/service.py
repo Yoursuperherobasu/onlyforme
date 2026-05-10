@@ -577,7 +577,7 @@ class TriggerService(Service):
         stored in the trigger_config JSON.
         """
         import httpx
-        from urllib.parse import urlparse
+        from urllib.parse import quote, urlparse
 
         GRAPH = "https://graph.microsoft.com/v1.0"
 
@@ -626,7 +626,13 @@ class TriggerService(Service):
                 }, timeout=15)
             )
             if token_resp.status_code != 200:
-                logger.error(f"TriggerService: Graph token error for trigger {task_id}: {token_resp.text[:300]}")
+                msg = (
+                    f"SharePoint trigger could not acquire Graph token "
+                    f"({token_resp.status_code}). Check tenant_id, client_id, "
+                    f"and client_secret on the connector."
+                )
+                logger.error(f"TriggerService: {msg} (trigger {task_id}): {token_resp.text[:300]}")
+                await self._surface_trigger_warning(connector_id, msg)
                 return []
             access_token = token_resp.json()["access_token"]
             headers = {"Authorization": f"Bearer {access_token}"}
@@ -640,7 +646,13 @@ class TriggerService(Service):
                 lambda: httpx.get(site_api, headers=headers, timeout=15)
             )
             if site_resp.status_code != 200:
-                logger.error(f"TriggerService: failed to resolve site for trigger {task_id}: {site_resp.text[:300]}")
+                msg = (
+                    f"SharePoint trigger could not resolve site "
+                    f"({site_resp.status_code}). Check the site_url is correct "
+                    f"and the app registration has read access to this site."
+                )
+                logger.error(f"TriggerService: {msg} (trigger {task_id}): {site_resp.text[:300]}")
+                await self._surface_trigger_warning(connector_id, msg)
                 return []
             site_id = site_resp.json()["id"]
 
@@ -649,7 +661,13 @@ class TriggerService(Service):
                 lambda: httpx.get(f"{GRAPH}/sites/{site_id}/drives", headers=headers, timeout=15)
             )
             if drives_resp.status_code != 200:
-                logger.error(f"TriggerService: failed to list drives for trigger {task_id}")
+                msg = (
+                    f"SharePoint trigger could not list document libraries "
+                    f"({drives_resp.status_code}). The app registration likely "
+                    f"lacks Sites.Read.All."
+                )
+                logger.error(f"TriggerService: {msg} (trigger {task_id}): {drives_resp.text[:300]}")
+                await self._surface_trigger_warning(connector_id, msg)
                 return []
             drives = drives_resp.json().get("value", [])
             drive_id = None
@@ -657,23 +675,42 @@ class TriggerService(Service):
                 if d.get("name", "").lower() == library.lower():
                     drive_id = d["id"]
                     break
-            if not drive_id and drives:
-                drive_id = drives[0]["id"]
             if not drive_id:
-                logger.error(f"TriggerService: no drives found for trigger {task_id}")
+                # The user named a library that doesn't exist. Silently
+                # falling back to drives[0] would let the trigger scan the
+                # *wrong* document library — looks like it's working but
+                # surfaces unrelated files. Fail loud and surface a
+                # runtime warning the scheduler UI can render.
+                available = [d.get("name", "<unnamed>") for d in drives]
+                msg = (
+                    f"SharePoint library '{library}' not found on this site. "
+                    f"Available: {', '.join(available) or '<none>'}"
+                )
+                logger.error(f"TriggerService: {msg} (trigger {task_id})")
+                await self._surface_trigger_warning(connector_id, msg)
                 return []
 
-            # 4. List files
+            # 4. List files. URL-encode the folder path so special characters
+            # (spaces, #, %, &, accented chars) don't corrupt the Graph URL.
             if folder_path:
-                items_url = f"{GRAPH}/drives/{drive_id}/root:/{folder_path}:/children?$top=200"
+                safe_folder = quote(folder_path.strip("/"), safe="/")
+                items_url = f"{GRAPH}/drives/{drive_id}/root:/{safe_folder}:/children?$top=200"
             else:
                 items_url = f"{GRAPH}/drives/{drive_id}/root/children?$top=200"
             items_resp = await asyncio.to_thread(
                 lambda: httpx.get(items_url, headers=headers, timeout=15)
             )
             if items_resp.status_code != 200:
-                logger.error(f"TriggerService: failed to list items for trigger {task_id}: {items_resp.text[:300]}")
+                msg = (
+                    f"SharePoint trigger could not list files at folder_path="
+                    f"'{folder_path}' ({items_resp.status_code}). Check the "
+                    f"folder exists and the app registration has read access."
+                )
+                logger.error(f"TriggerService: {msg} (trigger {task_id}): {items_resp.text[:300]}")
+                await self._surface_trigger_warning(connector_id, msg)
                 return []
+            # Clear any prior runtime warning — this run succeeded.
+            await self._surface_trigger_warning(connector_id, None)
             items = items_resp.json().get("value", [])
 
             # Filter to files only
@@ -699,11 +736,63 @@ class TriggerService(Service):
                     })
                     seen[file_key] = None
 
-        except Exception:
+        except Exception as exc:
+            msg = f"SharePoint trigger scan failed unexpectedly: {exc!s}"
             logger.exception(f"Error scanning SharePoint for trigger {task_id}")
+            await self._surface_trigger_warning(connector_id, msg)
 
         self._seen_files[task_id] = seen
         return new_files
+
+    async def _surface_trigger_warning(
+        self, connector_id: str | None, message: str | None,
+    ) -> None:
+        """Persist (or clear) a runtime warning on a SharePoint connector.
+
+        Writes to ``provider_config._runtime_warning`` so the connector form
+        and the scheduler UI can render the actionable failure reason
+        instead of the user seeing "no files found" / silence. Mirrors the
+        Outlook ``mark-as-read`` warning pattern from iteration 3.
+
+        Passing ``message=None`` clears any existing warning — used after a
+        successful scan to signal that the prior failure has resolved.
+
+        Best-effort: any persistence failure is logged and swallowed so the
+        trigger lifecycle itself is never disrupted.
+        """
+        if not connector_id:
+            return
+        try:
+            from sqlalchemy.orm.attributes import flag_modified
+            from agentcore.services.deps import get_db_service
+            from agentcore.services.database.models.connector_catalogue.model import (
+                ConnectorCatalogue,
+            )
+            from uuid import UUID as _UUID
+
+            db_service = get_db_service()
+            async with db_service.with_async_session() as session:  # type: ignore[attr-defined]
+                row = await session.get(ConnectorCatalogue, _UUID(str(connector_id)))
+                if not row:
+                    return
+                cfg = dict(row.provider_config or {})
+                current = cfg.get("_runtime_warning")
+                if message is None:
+                    if current is None:
+                        return  # no warning to clear, no-op
+                    cfg.pop("_runtime_warning", None)
+                else:
+                    if current == message:
+                        return  # idempotent — same message already persisted
+                    cfg["_runtime_warning"] = message
+                row.provider_config = cfg
+                flag_modified(row, "provider_config")
+                await session.commit()
+        except Exception as persist_err:
+            logger.warning(
+                f"Could not persist SharePoint runtime warning to "
+                f"connector {connector_id}: {persist_err}"
+            )
 
     async def _move_processed_files(self, config: dict, files: list[dict]) -> None:
         """Move processed local files to a 'processed' subfolder."""

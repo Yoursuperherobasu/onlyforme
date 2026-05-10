@@ -73,6 +73,13 @@ def parse_jwt_roles(access_token: str) -> list[str]:
     except (ValueError, binascii.Error, json.JSONDecodeError) as exc:
         logger.warning(f"JWT roles decode failed: {exc!r}")
         return []
+    # JWT body must be an object; if Microsoft ever returns a non-object
+    # payload (array, scalar) fail closed to an empty list rather than
+    # raising AttributeError on .get(). This is defensive — Microsoft is
+    # consistent in practice, but ill-formed tokens shouldn't crash the
+    # caller.
+    if not isinstance(payload, dict):
+        return []
     roles = payload.get("roles", [])
     if not isinstance(roles, list):
         return []
@@ -160,6 +167,58 @@ def has_scope(granted: Iterable[str] | None, required: str) -> bool:
     if granted is None:
         return True  # legacy permissive
     return required in list(granted)
+
+
+def require_any_scope(
+    granted: Iterable[str] | None,
+    options: Iterable[str],
+) -> None:
+    """Raise :class:`ConnectorPermissionError` unless *any one* of ``options`` is
+    in ``granted``.
+
+    Useful when a single Graph operation can be authorised by more than one
+    Application or Delegated permission — for example, SharePoint writes
+    accept either ``Sites.ReadWrite.All`` (broad), ``Files.ReadWrite.All``
+    (file-scoped), or ``Sites.Selected`` (per-site grants applied outside
+    the JWT role list). ``require_scope`` is too strict for these cases.
+
+    Same three-state semantics as :func:`require_scope`:
+
+    * ``granted is None``  — legacy connector, permissive (no-op).
+    * ``granted == []``    — known-empty, fail strict against ``options[0]``
+      so callers see the canonical missing scope name in the error.
+    * ``granted == [...]`` — pass if intersect non-empty; else raise naming
+      the first option (the documented "preferred" permission).
+    """
+    options_list = list(options)
+    if not options_list:
+        msg = "require_any_scope: options must be non-empty"
+        raise ValueError(msg)
+    if granted is None:
+        return  # legacy permissive
+    granted_list = list(granted)
+    if any(opt in granted_list for opt in options_list):
+        return
+    # Surface the first/preferred option as the missing scope in the error.
+    raise ConnectorPermissionError(options_list[0])
+
+
+def has_any_scope(
+    granted: Iterable[str] | None,
+    options: Iterable[str],
+) -> bool:
+    """Non-raising variant of :func:`require_any_scope` for UI/output filtering.
+
+    Same three-state semantics — ``None`` is permissive (legacy True),
+    ``[]`` is strict (False), populated list is intersection check.
+    """
+    options_list = list(options)
+    if not options_list:
+        return False
+    if granted is None:
+        return True  # legacy permissive
+    granted_list = list(granted)
+    return any(opt in granted_list for opt in options_list)
 
 
 # ── Graph error translation ────────────────────────────────────────────────
