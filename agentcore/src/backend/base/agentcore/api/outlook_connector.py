@@ -17,6 +17,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import RedirectResponse
 from loguru import logger
 from pydantic import BaseModel
+from sqlalchemy.orm.attributes import flag_modified
 
 from agentcore.services.cache.redis_client import get_redis_client
 from agentcore.services.deps import get_settings_service
@@ -225,6 +226,12 @@ async def _save_updated_config(
         existing_config=row.provider_config or {},
         allow_secret_update=False,
     )
+    # JSON columns aren't mutation-tracked by SQLAlchemy by default. When the
+    # nested ``linked_accounts`` list is appended-to in the decrypted config
+    # and then re-assigned, SQLAlchemy can fail to detect the change and
+    # silently keeps the prior empty value. Force-mark the column dirty so
+    # the commit always serializes the freshly-built dict.
+    flag_modified(row, "provider_config")
     row.updated_at = datetime.now(timezone.utc)
     row.updated_by = current_user_id
     try:
@@ -290,7 +297,13 @@ async def start_oauth(
         "scope": MAIL_SCOPES,
         "state": state,
         "response_mode": "query",
-        "prompt": "select_account",
+        # Force the consent screen on every link so newly-added admin-consented
+        # scopes are reflected in the issued token. Without this, Microsoft's
+        # consumer STS caches a personal MSA user's previous consent and
+        # silently re-issues a token covering only the originally-consented
+        # subset (the bug we hit during 2026-05-11 UAT when Mail.Send was
+        # added to the app reg but kept getting refused).
+        "prompt": "consent",
     })
     authorize_url = f"{base}?{params}"
 
@@ -441,10 +454,24 @@ async def oauth_callback(
         existing_config=row.provider_config or {},
         allow_secret_update=False,
     )
+    # Force SQLAlchemy to detect the JSON column mutation — without this
+    # the freshly appended linked_accounts entry can be silently dropped
+    # because plain ``Column(JSON)`` doesn't track in-place changes.
+    flag_modified(row, "provider_config")
     row.updated_at = datetime.now(timezone.utc)
     row.updated_by = user_id
+    # DEBUG: log what's about to be committed
+    logger.info(
+        f"[DEBUG-LINK] About to commit. row.provider_config keys={list(row.provider_config.keys())}, "
+        f"linked_accounts count={len(row.provider_config.get('linked_accounts', []))}, "
+        f"first_email={(row.provider_config.get('linked_accounts') or [{}])[0].get('email','<none>')}"
+    )
     try:
         await session.commit()
+        await session.refresh(row)
+        logger.info(
+            f"[DEBUG-LINK] After commit+refresh. linked_accounts count={len(row.provider_config.get('linked_accounts', []))}"
+        )
     except Exception as exc:
         await session.rollback()
         logger.error("Failed to save linked Outlook account: {}", exc)

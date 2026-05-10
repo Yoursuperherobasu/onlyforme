@@ -80,18 +80,51 @@ def parse_jwt_roles(access_token: str) -> list[str]:
     return [str(r) for r in roles if r]
 
 
+_SCOPE_PREFIXES = (
+    "https://graph.microsoft.com/",
+    "https://outlook.office.com/",
+    "https://outlook.office365.com/",
+    "api://",  # custom-API scopes also normalize away the resource prefix
+)
+
+
 def parse_oauth_scopes(scope_str: str | None) -> list[str]:
     """Parse the space-separated ``scope`` field from an OAuth token response.
 
-    Microsoft returns granted scopes in this format::
+    Microsoft returns granted scopes in one of two equivalent forms depending
+    on the app registration's audience and access-token version:
 
-        "Mail.Read User.Read profile openid email offline_access"
+    * Short names (single-tenant work apps with v1 tokens)::
+          "Mail.Read User.Read offline_access"
+
+    * Full resource URIs (multi-tenant / personal-account apps with v2 tokens)::
+          "https://graph.microsoft.com/Mail.Read https://graph.microsoft.com/User.Read offline_access"
+
+    We normalize to the short form on parse so the comparison ``"Mail.Send" in
+    granted`` works regardless of which form Microsoft used. The same
+    permission must therefore be matched by exactly one string in the list,
+    not both forms. The literal ``.default`` token (from the OAuth request) is
+    dropped because it isn't a real granted scope — it's the request marker.
 
     Returns ``[]`` for ``None`` or empty input.
     """
     if not scope_str:
         return []
-    return [s.strip() for s in scope_str.split() if s.strip()]
+    normalized: list[str] = []
+    for raw in scope_str.split():
+        s = raw.strip()
+        if not s:
+            continue
+        # Strip Graph / Outlook / api:// resource prefix if present
+        for prefix in _SCOPE_PREFIXES:
+            if s.lower().startswith(prefix.lower()):
+                s = s[len(prefix):]
+                break
+        # Drop the .default request marker — not a real granted scope
+        if s == ".default":
+            continue
+        normalized.append(s)
+    return normalized
 
 
 def require_scope(granted: Iterable[str] | None, required: str) -> None:
