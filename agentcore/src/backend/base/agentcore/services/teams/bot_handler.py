@@ -33,6 +33,35 @@ _SAFE_USER_FACING_TYPES = (
 )
 
 
+# Adaptive Card body text rendering is capped by Teams; the documented
+# safe limit for a single TextBlock display is ~4000 characters, and the
+# whole card JSON payload is capped at ~28KB. Truncate long agent output
+# before it reaches the card so:
+#   1. The card always renders (never silently fails to display)
+#   2. The user sees a clear marker that more content exists upstream
+#   3. The server log retains the full content for support diagnostics
+_TEAMS_MAX_TEXT = 3500  # leaves headroom for the agent-name + truncation suffix
+_TEAMS_TRUNCATION_NOTICE = (
+    "\n\n_(Response truncated. The full response is too long for Teams. "
+    "See the agent playground for the complete output.)_"
+)
+
+
+def _truncate_for_teams(text: str) -> str:
+    """Truncate agent output to fit a single Adaptive Card TextBlock.
+
+    Preserves the head of the message (where the answer / opening
+    summary usually lives), drops the tail, and appends a clear
+    notice so the user knows content was cut. Full text remains in
+    the server logs via the caller's flow execution log.
+    """
+    if not text:
+        return text
+    if len(text) <= _TEAMS_MAX_TEXT:
+        return text
+    return text[:_TEAMS_MAX_TEXT].rstrip() + _TEAMS_TRUNCATION_NOTICE
+
+
 def _sanitize_error_for_teams(exc: Exception) -> str:
     """Map an internal exception to a user-safe Teams-visible message.
 
@@ -115,6 +144,22 @@ class AgentCoreTeamsBot(ActivityHandler):
         if not state:
             logger.info(f"No existing mapping for conversation {conversation_id}, resolving agent...")
             agent_id = await self._resolve_agent_from_channel_data(turn_context)
+            if agent_id == self.AMBIGUOUS_ROUTING:
+                # Multiple agents share the same bot — tell the user
+                # clearly rather than silently routing to the wrong one.
+                await turn_context.send_activity(
+                    Activity(
+                        type=ActivityTypes.message,
+                        text=(
+                            "I can't tell which agent this message is for — "
+                            "more than one agent is published under the same "
+                            "Teams bot. Please ask your administrator to "
+                            "publish each agent with a dedicated bot, or "
+                            "remove all but one published agent."
+                        ),
+                    )
+                )
+                return
             if agent_id:
                 state = await self.conversation_store.set_mapping(
                     conversation_id=conversation_id,
@@ -142,9 +187,12 @@ class AgentCoreTeamsBot(ActivityHandler):
                 input_text=user_text,
             )
 
-            # Send response as Adaptive Card
+            # Send response as Adaptive Card. Truncate long output so the
+            # card always fits inside Teams' ~28KB JSON / 4000-char TextBlock
+            # limits and renders reliably.
             agent_name = await self._get_agent_name(state.agent_id)
-            card = text_response_card(agent_name or "AgentCore", output_text)
+            safe_text = _truncate_for_teams(output_text)
+            card = text_response_card(agent_name or "AgentCore", safe_text)
             attachment = CardFactory.adaptive_card(card)
 
             await turn_context.send_activity(
@@ -247,12 +295,28 @@ class AgentCoreTeamsBot(ActivityHandler):
         logger.info(f"Flow completed. Output length: {len(output_text) if output_text else 0}")
         return output_text or "No output generated."
 
+    # Sentinel returned by _resolve_agent_from_channel_data when multiple
+    # agents share the same bot and we cannot disambiguate. The caller
+    # surfaces a user-facing message asking them to ask their admin to
+    # assign each agent a dedicated bot.
+    AMBIGUOUS_ROUTING = "__ambiguous_routing__"
+
     async def _resolve_agent_from_channel_data(self, turn_context: TurnContext) -> str | None:
         """Resolve agent_id for this conversation.
 
         Priority:
-        1. _agentcore_agent_id from channel_data (set by /messages endpoint via JWT appId lookup)
-        2. Database query for published agents (fallback for shared-bot mode)
+        1. ``_agentcore_agent_id`` from channel_data (set by
+           ``/messages`` endpoint via JWT ``appId`` lookup — this is
+           the deterministic, correct path for dedicated-bot setups).
+        2. Database query for published agents (only used when the
+           JWT-routing step couldn't pin a specific agent, e.g. the
+           bot is the global shared one).
+
+        For the fallback path, if multiple agents are published
+        against the same global bot we return ``AMBIGUOUS_ROUTING``
+        rather than silently guessing the most-recent one. Returning
+        the wrong agent's response is worse than asking the user to
+        reach out to their admin.
         """
         # Check for agent_id hint from JWT-based routing
         if turn_context and turn_context.activity and turn_context.activity.channel_data:
@@ -280,8 +344,18 @@ class AgentCoreTeamsBot(ActivityHandler):
                     logger.info(f"Resolved single published agent: {results[0].agent_id}")
                     return str(results[0].agent_id)
                 elif len(results) > 1:
-                    logger.warning(f"Multiple published Teams agents found ({len(results)}), using most recent")
-                    return str(results[0].agent_id)
+                    # Cannot guess between N published agents on the
+                    # same bot. Returning the most-recent silently
+                    # routes the user's question to the wrong agent
+                    # — much worse than the friction of a clear error.
+                    agent_ids = [str(r.agent_id) for r in results]
+                    logger.error(
+                        f"AMBIGUOUS Teams routing: {len(results)} published "
+                        f"agents share this bot ({agent_ids}). Refusing to "
+                        f"guess; the user is being asked to contact admin "
+                        f"for a dedicated bot."
+                    )
+                    return self.AMBIGUOUS_ROUTING
                 else:
                     logger.warning("No published Teams agents found in database")
                     return None
