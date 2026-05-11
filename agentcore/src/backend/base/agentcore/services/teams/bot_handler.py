@@ -62,6 +62,82 @@ def _truncate_for_teams(text: str) -> str:
     return text[:_TEAMS_MAX_TEXT].rstrip() + _TEAMS_TRUNCATION_NOTICE
 
 
+# ── Output sanitization (Teams-only defensive guard) ──────────────────────
+#
+# ``api/a2a.py:_extract_output_text`` has an exception-branch fallback that
+# returns ``str(run_outputs)`` — the Python repr of the raw output list.
+# For Teams the worst case looks like::
+#
+#     [VertexBuildResult(result_dict={'foo': 'bar'}, valid=True,
+#      vertex=<LangGraphVertex object at 0x7f9c12345678>)]
+#
+# Showing that as an Adaptive Card body looks exactly like the "raw code"
+# leak we want to avoid. We add a *Teams-only* defensive check here so
+# the A2A protocol path (and any other consumer of ``_extract_output_text``)
+# is unaffected — only the Adaptive Card that goes to a Teams user gets
+# sanitized.
+#
+# Detection is conservative: two unmistakable Python-repr signals. Both
+# never appear in natural-language LLM output:
+#
+#   1. ``object at 0x<hex>``      — Python default ``__repr__`` for objects
+#                                    without a custom ``__str__``.
+#   2. ``[<ClassName>(`` at start — list-of-namedtuples / dataclass repr,
+#                                    which is what ``str(run_outputs)``
+#                                    produces for VertexBuildResult lists.
+
+import re as _re
+
+_PYTHON_REPR_SIGNAL = _re.compile(
+    r"object at 0x[0-9a-fA-F]+"            # memory-address pattern
+    r"|^\s*\[\s*[A-Z][\w.]*\("              # list of class-call reprs
+    r"|^\s*<[A-Z][\w.]+\s",                  # leading <ClassName ...> repr
+)
+_OUTPUT_REPR_FALLBACK = (
+    "I processed your request but couldn't format the response. "
+    "Please try rephrasing your question."
+)
+
+
+def _looks_like_python_repr(text: str) -> bool:
+    """Return True iff ``text`` matches a Python ``repr()`` signature.
+
+    Used by Teams to decide whether the upstream output extractor fell
+    back to ``str(run_outputs)`` and is about to expose internal object
+    structure to the end user. Conservative: misses are far worse than
+    rare false positives on contrived inputs (a user asking "what does
+    `<Class object at 0x...>` mean?" would get the safe message, which
+    is acceptable since that question is exceedingly unlikely in a
+    customer-facing chat).
+    """
+    if not text:
+        return False
+    return bool(_PYTHON_REPR_SIGNAL.search(text))
+
+
+def _sanitize_agent_output_for_teams(text: str) -> str:
+    """Make agent output safe to display as a Teams Adaptive Card body.
+
+    Two-layer defence:
+
+      1. If the upstream extractor fell back to a Python ``repr()`` of
+         internal objects (memory addresses, class-call lists, leading
+         ``<Class ...>``), replace with a generic user-facing fallback
+         message. Full text stays in the server log via the call-site
+         ``logger.info``.
+      2. Otherwise, truncate long output to fit a single Adaptive Card
+         TextBlock (Teams' display cap is ~4000 chars).
+    """
+    if _looks_like_python_repr(text):
+        logger.warning(
+            f"Teams output sanitizer caught a Python repr leak "
+            f"(first 200 chars: {text[:200]!r}). Replacing with "
+            f"safe fallback."
+        )
+        return _OUTPUT_REPR_FALLBACK
+    return _truncate_for_teams(text)
+
+
 def _sanitize_error_for_teams(exc: Exception) -> str:
     """Map an internal exception to a user-safe Teams-visible message.
 
@@ -187,11 +263,16 @@ class AgentCoreTeamsBot(ActivityHandler):
                 input_text=user_text,
             )
 
-            # Send response as Adaptive Card. Truncate long output so the
-            # card always fits inside Teams' ~28KB JSON / 4000-char TextBlock
-            # limits and renders reliably.
+            # Send response as Adaptive Card. Run output through the
+            # Teams-only sanitizer so:
+            #   1. Python repr() leaks from the a2a extraction fallback
+            #      (``str(run_outputs)`` returning VertexBuildResult dumps,
+            #      ``<Object at 0x...>`` memory addresses, etc.) get
+            #      replaced with a safe generic message.
+            #   2. Long responses get truncated to fit Teams' ~4000-char
+            #      TextBlock cap.
             agent_name = await self._get_agent_name(state.agent_id)
-            safe_text = _truncate_for_teams(output_text)
+            safe_text = _sanitize_agent_output_for_teams(output_text)
             card = text_response_card(agent_name or "AgentCore", safe_text)
             attachment = CardFactory.adaptive_card(card)
 
