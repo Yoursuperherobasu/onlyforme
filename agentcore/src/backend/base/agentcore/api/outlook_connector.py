@@ -298,11 +298,8 @@ async def start_oauth(
         "state": state,
         "response_mode": "query",
         # Force the consent screen on every link so newly-added admin-consented
-        # scopes are reflected in the issued token. Without this, Microsoft's
-        # consumer STS caches a personal MSA user's previous consent and
-        # silently re-issues a token covering only the originally-consented
-        # subset (the bug we hit during 2026-05-11 UAT when Mail.Send was
-        # added to the app reg but kept getting refused).
+        # scopes are reflected in the issued token. Personal MSA tokens
+        # otherwise re-use cached consent and silently keep the old scope set.
         "prompt": "consent",
     })
     authorize_url = f"{base}?{params}"

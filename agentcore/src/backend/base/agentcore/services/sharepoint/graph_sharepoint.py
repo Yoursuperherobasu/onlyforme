@@ -346,10 +346,9 @@ class SharePointGraphClient:
         if drive_id is None:
             available = [d.get("name", "<unnamed>") for d in drives]
             if strict:
-                # Honest failure — the user named a library that doesn't
-                # exist on this site. Silently substituting another drive
-                # produces results that look right but reference the wrong
-                # data (the bug surfaced during code review 2026-05-11).
+                # Fail loud on a misspelled / missing library name. Silently
+                # substituting another drive produces results that look right
+                # but reference the wrong data.
                 msg = (
                     f"Library '{library_name}' not found on this SharePoint "
                     f"site. Available libraries: {', '.join(available) or '<none>'}"

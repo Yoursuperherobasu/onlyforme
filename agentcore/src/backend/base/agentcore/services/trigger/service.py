@@ -750,15 +750,15 @@ class TriggerService(Service):
         """Persist (or clear) a runtime warning on a SharePoint connector.
 
         Writes to ``provider_config._runtime_warning`` so the connector form
-        and the scheduler UI can render the actionable failure reason
-        instead of the user seeing "no files found" / silence. Mirrors the
-        Outlook ``mark-as-read`` warning pattern from iteration 3.
+        and the scheduler UI can surface the failure reason instead of
+        showing "no files found" / silence. Same pattern as the Outlook
+        mark-as-read warning.
 
-        Passing ``message=None`` clears any existing warning — used after a
-        successful scan to signal that the prior failure has resolved.
+        ``message=None`` clears any existing warning — used after a
+        successful scan to signal the prior failure has resolved.
 
-        Best-effort: any persistence failure is logged and swallowed so the
-        trigger lifecycle itself is never disrupted.
+        Best-effort: persistence errors are logged and swallowed so the
+        trigger lifecycle is never disrupted.
         """
         if not connector_id:
             return
