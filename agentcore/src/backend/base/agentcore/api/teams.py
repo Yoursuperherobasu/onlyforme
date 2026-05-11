@@ -637,12 +637,31 @@ async def unpublish_agent_from_teams(
 
         if teams_app.teams_app_external_id:
             graph_client = await teams_service.get_graph_client_for_user(str(current_user.id))
-            if graph_client:
-                await graph_client.delete_app_from_catalog(teams_app.teams_app_external_id)
-                updated_tokens = graph_client.get_token_data()
-                await teams_service.store_user_tokens(str(current_user.id), updated_tokens)
+            if not graph_client:
+                # Refuse to flip the DB row to UNPUBLISHED if we couldn't
+                # actually delete the app from the Teams catalog. Otherwise
+                # the row would say "gone" while the bot is still visible
+                # to every user in the org — a state we cannot undo from
+                # this endpoint. Force the user to reconnect Microsoft so
+                # we have a real token to call Graph delete with.
+                raise HTTPException(
+                    status_code=401,
+                    detail=(
+                        "Cannot unpublish: your Microsoft account is not "
+                        "connected, so I cannot remove the app from the "
+                        "Teams catalog. Reconnect your Microsoft account "
+                        "and try again. (Marking the database as "
+                        "unpublished without deleting from Teams would "
+                        "leave the bot visible to every user in your org.)"
+                    ),
+                )
+            await graph_client.delete_app_from_catalog(teams_app.teams_app_external_id)
+            updated_tokens = graph_client.get_token_data()
+            await teams_service.store_user_tokens(str(current_user.id), updated_tokens)
 
-        # Evict per-agent adapter from cache
+        # Evict per-agent adapter from cache (only after the catalog delete
+        # has succeeded; otherwise we'd lose the adapter while the bot is
+        # still receiving messages).
         if teams_app.bot_app_secret and teams_app.bot_app_id:
             teams_service._adapter_cache.pop(teams_app.bot_app_id, None)
 

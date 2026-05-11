@@ -22,6 +22,73 @@ if TYPE_CHECKING:
     from agentcore.services.teams.conversation_store import ConversationStore
 
 
+# Exception types whose ``str()`` representation is known to be safe to show
+# to an external Teams user — the message is descriptive and doesn't leak
+# internal detail. Anything else gets a generic message; the full traceback
+# still goes to the server log via ``logger.exception``.
+_SAFE_USER_FACING_TYPES = (
+    "ConnectorPermissionError",
+    "ValueError",
+    "PermissionError",
+)
+
+
+def _sanitize_error_for_teams(exc: Exception) -> str:
+    """Map an internal exception to a user-safe Teams-visible message.
+
+    Three rules:
+
+      * Known-safe exceptions (ConnectorPermissionError, ValueError,
+        PermissionError) → their str() is descriptive by design (the
+        connector helpers already produce *"Mail.Send permission not
+        granted on this connector's app registration"* style text).
+        Return it verbatim.
+      * httpx.HTTPStatusError → return a generic "external service"
+        message. The raw URL can carry query-string secrets and the
+        body is upstream-defined; don't pass either through to the
+        end user. Operators see the full detail in the server log.
+      * Anything else → return a generic message and let the
+        ``logger.exception`` call at the call site capture the full
+        traceback for ops.
+
+    Class name and Python typename are deliberately NOT included so a
+    Teams user never sees ``KeyError`` / ``AttributeError`` /
+    ``psycopg2.OperationalError`` (the last of which can include the
+    database DSN with credentials).
+    """
+    exc_type_name = type(exc).__name__
+    if exc_type_name in _SAFE_USER_FACING_TYPES:
+        text = str(exc).strip()
+        if text:
+            return text
+        # Fall through to generic on empty str (rare)
+    # httpx errors carry the URL — never echo
+    if exc_type_name in ("HTTPStatusError", "RequestError", "ConnectError",
+                          "ReadTimeout", "ConnectTimeout"):
+        return (
+            "The agent could not reach an external service. Please try "
+            "again in a moment. If this keeps happening, contact your "
+            "administrator."
+        )
+    # Database / driver errors can include DSNs with credentials
+    if any(
+        token in exc_type_name
+        for token in ("OperationalError", "ProgrammingError",
+                       "InterfaceError", "InternalError", "DataError",
+                       "IntegrityError", "DatabaseError")
+    ):
+        return (
+            "The agent service is temporarily unavailable. Please try "
+            "again in a moment."
+        )
+    # Catch-all for anything else (KeyError, AttributeError, RuntimeError…)
+    return (
+        "Something went wrong while processing your request. Please "
+        "try again. If this keeps happening, contact your "
+        "administrator."
+    )
+
+
 class AgentCoreTeamsBot(ActivityHandler):
     """Handles incoming Bot Framework activities and routes them to agentcore flows.
 
@@ -88,12 +155,16 @@ class AgentCoreTeamsBot(ActivityHandler):
             )
 
         except Exception as e:
+            # Full traceback for ops only — sanitized message for the user.
+            # We deliberately do NOT pass {e!s} into the card body because for
+            # some exception types (httpx errors carrying request URLs with
+            # query-string secrets, database driver errors carrying the DSN
+            # with credentials, deep stack traces) the str() representation
+            # leaks internal detail to an external Teams user.
             logger.exception(f"Error executing flow for conversation {conversation_id}: {e}")
             agent_name = await self._get_agent_name(state.agent_id)
-            card = error_card(
-                agent_name or "AgentCore",
-                f"An error occurred while processing your request: {e!s}",
-            )
+            user_facing = _sanitize_error_for_teams(e)
+            card = error_card(agent_name or "AgentCore", user_facing)
             attachment = CardFactory.adaptive_card(card)
             await turn_context.send_activity(
                 Activity(
