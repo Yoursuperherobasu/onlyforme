@@ -539,6 +539,32 @@ async def publish_agent_to_teams(
     if agent.user_id != current_user.id:
         raise HTTPException(status_code=403, detail="You don't own this agent")
 
+    # Validate the agent graph has Chat Input + Chat Output so the Teams bot
+    # has somewhere to deliver the user's message and read the response.
+    # Frontend already blocks this in the publish modal; this is the
+    # defensive backend check so the catalog never gets a non-conversational
+    # agent installed (which would fail at first message with an empty card).
+    _nodes = (agent.data or {}).get("nodes") or []
+    _node_types = {
+        (n.get("data") or {}).get("type")
+        for n in _nodes
+        if isinstance(n, dict)
+    }
+    if "ChatInput" not in _node_types or "ChatOutput" not in _node_types:
+        missing = [
+            n for n in ("ChatInput", "ChatOutput") if n not in _node_types
+        ]
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Agent is missing required node(s) for Teams publishing: "
+                f"{', '.join(missing)}. Teams agents need both a Chat Input "
+                f"and a Chat Output node so messages can flow in and "
+                f"responses can flow out. Add the missing node(s) in the "
+                f"agent builder and try again."
+            ),
+        )
+
     # Check if already published
     stmt = (
         select(TeamsApp)
