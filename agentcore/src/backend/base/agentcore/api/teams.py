@@ -47,11 +47,115 @@ from agentcore.services.permissions import (
     has_scope,
     is_graph_permission_error,
 )
+from agentcore.utils.crypto import (
+    decrypt_api_key_with_fallback,
+    derive_fernet_key,
+    encrypt_api_key,
+)
 
 router = APIRouter(prefix="/teams", tags=["Teams"])
 
 
 # === Helper functions for per-agent bot routing ===
+
+
+# ── bot_app_secret at-rest encryption ─────────────────────────────────────
+#
+# Per-agent bot client secrets must NOT be persisted as plaintext in the
+# ``teams_app.bot_app_secret`` column — anyone with DB read access (DBA,
+# backup operator, support staff with a leaked connection string) would
+# otherwise see the live Bot Framework credentials. We use the same
+# Fernet-at-rest pattern that ``mcp_registry_service.py`` and
+# ``model_registry_service.py`` use for similar secrets, so the hybrid
+# Key Vault / Fernet abstraction is consistent across the codebase.
+#
+# Heuristic detection (``_is_fernet_token``) means existing PUBLISHED rows
+# with plaintext secrets keep working without a big-bang migration: the
+# read path returns plaintext verbatim when no ``gAAAAA`` prefix is
+# observed, and the write path encrypts only newly-supplied values.
+
+
+def _bot_secret_encryption_key() -> str:
+    """Resolve the Fernet key used to encrypt bot_app_secret values at rest.
+
+    Resolution order mirrors the MCP / Model registries:
+        1. ``MODEL_REGISTRY_ENCRYPTION_KEY`` (explicit operator-set key).
+        2. Derived from ``WEBUI_SECRET_KEY`` via SHA-256 → base64url.
+        3. Built-in fallback (dev only).
+    """
+    key = os.getenv("MODEL_REGISTRY_ENCRYPTION_KEY", "")
+    if not key:
+        raw = os.getenv("WEBUI_SECRET_KEY", "default-agentcore-registry-key")
+        key = derive_fernet_key(raw)
+    return key
+
+
+def _is_fernet_token(value: str) -> bool:
+    """Heuristic: Fernet tokens are base64-encoded and start with ``gAAAAA``."""
+    return isinstance(value, str) and value.startswith("gAAAAA")
+
+
+def _encrypt_bot_secret_if_set(plain: str | None) -> str | None:
+    """Encrypt a bot_app_secret for at-rest storage.
+
+    Returns ``None`` for ``None`` / empty input so the global-bot path
+    (no per-agent secret) is untouched. Idempotent: if the input already
+    looks like a Fernet token (e.g. caller re-stored an existing value),
+    return it verbatim instead of double-encrypting.
+    """
+    if not plain:
+        return None
+    if _is_fernet_token(plain):
+        return plain
+    try:
+        return encrypt_api_key(plain, _bot_secret_encryption_key())
+    except Exception as exc:
+        # Never log the plaintext. Surface a clear configuration error so
+        # the operator can fix the encryption key rather than silently
+        # falling back to plaintext storage.
+        logger.error(f"bot_app_secret encryption failed: {exc!s}")
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Could not encrypt the per-agent bot secret. Check the "
+                "MODEL_REGISTRY_ENCRYPTION_KEY (or WEBUI_SECRET_KEY) "
+                "environment variable on the backend."
+            ),
+        ) from exc
+
+
+def _decrypt_bot_secret_if_encrypted(stored: str | None) -> str | None:
+    """Decrypt a bot_app_secret stored at rest.
+
+    Three cases — only the middle one does work:
+        * ``stored is None`` / empty → ``None`` (no per-agent secret;
+          caller will fall through to the global shared bot).
+        * Looks like Fernet (``gAAAAA…``) → decrypt and return plaintext.
+        * Plaintext (legacy row written before encryption was added) →
+          return verbatim. No migration needed; first re-publish will
+          rewrite it as encrypted.
+
+    Decryption failure is fatal at the call site — better than handing the
+    Bot Framework SDK an invalid app_password and getting an opaque
+    runtime auth error. The caller surfaces a sanitized user-visible
+    message via ``_sanitize_error_for_teams``.
+    """
+    if not stored:
+        return None
+    if not _is_fernet_token(stored):
+        return stored  # legacy plaintext row — keep working
+    try:
+        return decrypt_api_key_with_fallback(stored, _bot_secret_encryption_key())
+    except Exception as exc:
+        logger.error(f"bot_app_secret decryption failed: {exc!s}")
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Could not decrypt the per-agent bot secret. The encryption "
+                "key likely changed since this agent was published. Re-publish "
+                "the agent with its bot secret to re-encrypt the stored value."
+            ),
+        ) from exc
 
 
 def _extract_app_id_from_jwt(auth_header: str) -> str | None:
@@ -100,9 +204,14 @@ async def _resolve_adapter_for_app_id(teams_service, bot_app_id: str | None):
         teams_app = (await session.exec(stmt)).first()
 
         if teams_app and teams_app.bot_app_secret:
+            # Decrypt at this single consumer point — Bot Framework
+            # requires the plaintext app_password to validate incoming
+            # JWTs. Legacy plaintext rows pass through unchanged via the
+            # _is_fernet_token heuristic.
+            plaintext_secret = _decrypt_bot_secret_if_encrypted(teams_app.bot_app_secret)
             adapter = teams_service.get_adapter(
                 bot_app_id=bot_app_id,
-                bot_app_secret=teams_app.bot_app_secret,
+                bot_app_secret=plaintext_secret,
             )
             return adapter, str(teams_app.agent_id)
 
@@ -529,7 +638,11 @@ async def publish_agent_to_teams(
             agent_id=request.agent_id,
             teams_app_external_id=external_id,
             bot_app_id=bot_app_id,
-            bot_app_secret=bot_app_secret,
+            # Encrypt at this single write site. Stays None for the
+            # global-shared-bot path (no per-agent secret). Decryption
+            # happens in _resolve_adapter_for_app_id where Bot Framework
+            # needs the plaintext to validate JWTs.
+            bot_app_secret=_encrypt_bot_secret_if_set(bot_app_secret),
             display_name=display_name,
             short_description=short_description,
             status=TeamsPublishStatusEnum.PUBLISHED,
