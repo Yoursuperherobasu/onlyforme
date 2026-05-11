@@ -6,8 +6,9 @@ import { getURL } from "../../helpers/constants";
 import { UseRequestProcessor } from "../../services/request-processor";
 
 export const useGetTeamsOAuthStatus: useMutationFunctionType<
-  TeamsOAuthStatusResponse,
-  void
+  undefined,
+  void,
+  TeamsOAuthStatusResponse
 > = (options?) => {
   const { mutate } = UseRequestProcessor();
 

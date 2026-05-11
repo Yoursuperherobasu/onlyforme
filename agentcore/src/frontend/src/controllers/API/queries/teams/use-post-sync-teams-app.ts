@@ -10,8 +10,9 @@ interface SyncParams {
 }
 
 export const usePostSyncTeamsApp: useMutationFunctionType<
-  TeamsPublishResponse,
-  SyncParams
+  undefined,
+  SyncParams,
+  TeamsPublishResponse
 > = (options?) => {
   const { mutate, queryClient } = UseRequestProcessor();
 

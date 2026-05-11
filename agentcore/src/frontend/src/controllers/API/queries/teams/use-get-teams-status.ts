@@ -10,8 +10,9 @@ interface GetStatusParams {
 }
 
 export const useGetTeamsStatus: useMutationFunctionType<
-  TeamsAppStatusResponse,
-  GetStatusParams
+  undefined,
+  GetStatusParams,
+  TeamsAppStatusResponse
 > = (options?) => {
   const { mutate, queryClient } = UseRequestProcessor();
 

@@ -10,8 +10,9 @@ interface UnpublishParams {
 }
 
 export const useDeleteUnpublishFromTeams: useMutationFunctionType<
-  TeamsPublishResponse,
-  UnpublishParams
+  undefined,
+  UnpublishParams,
+  TeamsPublishResponse
 > = (options?) => {
   const { mutate, queryClient } = UseRequestProcessor();
 

@@ -9,8 +9,9 @@ import { getURL } from "../../helpers/constants";
 import { UseRequestProcessor } from "../../services/request-processor";
 
 export const usePostPublishToTeams: useMutationFunctionType<
-  TeamsPublishResponse,
-  TeamsPublishRequest
+  undefined,
+  TeamsPublishRequest,
+  TeamsPublishResponse
 > = (options?) => {
   const { mutate, queryClient } = UseRequestProcessor();
 
